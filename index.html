@@ -1,0 +1,1611 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>採用ブラックボックス診断® | 事前問診フォーム</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+* { font-family: 'Noto Sans JP', sans-serif; }
+body { background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 50%, #f5f0ff 100%); min-height: 100vh; }
+.glass-card { background: rgba(255,255,255,0.92); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.6); box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
+@keyframes fadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+.animate-in { animation: fadeIn 0.4s ease-out; }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 70% { box-shadow: 0 0 0 10px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
+.timer-pulse { animation: pulse-ring 1.5s infinite; }
+input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+</style>
+<script>
+// スタンドアロン版：URLパラメータから設定を取得
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  window.GAS_CONFIG = {
+    gasUrl: params.get('gasUrl') || 'https://script.google.com/macros/s/AKfycbyrLZqpP5VeXCebmnn_cI2jEjX7OS98YVGl3aED_94XF30h2DJz1EbBPhS7PKqhYwqCgg/exec',
+    customerId: params.get('id') || '',
+    deploymentMode: 'standalone'
+  };
+})();
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ========================================
+// 定数
+// ========================================
+const STUDENT_MATRIX = {
+  A: { label: 'A層', name: '上位・理系', description: 'アカデミック・エリート（名大・名工大院生等）', color: '#3b82f6' },
+  B: { label: 'B層', name: '中堅・理系', description: '産業の屋台骨（名城大理工・愛工大等）', color: '#10b981' },
+  C: { label: 'C層', name: '上位・文系', description: '意識高い系・東京志向（南山大・名大文系等）', color: '#8b5cf6' },
+  D: { label: 'D層', name: '中堅・文系', description: 'ボリュームゾーン・安定志向（愛大・中京大等）', color: '#f59e0b' },
+  E: { label: 'E層', name: '実務・理系', description: '現場・技術職志望（専門学校・中堅理工系）', color: '#06b6d4' },
+  F: { label: 'F層', name: '地域・文系', description: '地元・安定志望（地域密着大学・短大）', color: '#ec4899' },
+  G: { label: 'G層', name: '福祉・介護・保育', description: 'エッセンシャルワーカー（日福大等）', color: '#14b8a6' },
+  H: { label: 'H層', name: '建築・施工管理', description: '現場監督・インフラ（建築学科・専門学校）', color: '#f43f5e' }
+};
+
+const DEFAULT_RECRUITMENT_METHODS = {
+  labbase: { name: 'LabBase（ラボベース）', category: 'ダイレクトリクルーティング', phaseLabels: { awareness: '送信数', interest: '返信数', contact: '面談数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  offerbox: { name: 'OfferBox', category: 'ダイレクトリクルーティング', phaseLabels: { awareness: '送信数', interest: '返信数', contact: '面談数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  mynavi: { name: 'マイナビ', category: 'ナビサイト', phaseLabels: { awareness: 'PV数', interest: 'エントリー数', contact: '説明会/IS参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  rikunabi: { name: 'リクナビ', category: 'ナビサイト', phaseLabels: { awareness: 'PV数', interest: 'エントリー数', contact: '説明会/IS参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  onecareer: { name: 'One Career', category: '口コミ・情報サイト', phaseLabels: { awareness: 'PV数', interest: 'エントリー数', contact: '説明会参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  openwork: { name: 'OpenWork', category: '口コミ・情報サイト', phaseLabels: { awareness: 'PV数', interest: 'エントリー数', contact: '説明会参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  wantedly: { name: 'Wantedly', category: '口コミ・情報サイト', phaseLabels: { awareness: 'PV数', interest: 'エントリー数', contact: '説明会参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  university_fair: { name: '学内企業説明会', category: '大学連携', phaseLabels: { awareness: '着座数', interest: '興味喚起数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  career_center: { name: 'キャリアセンター連携', category: '大学連携', phaseLabels: { awareness: '着座数', interest: '興味喚起数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  professor_route: { name: '教授・研究室ルート', category: '大学連携', phaseLabels: { awareness: '着座数', interest: '興味喚起数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  mynavi_expo: { name: 'マイナビ合同説明会', category: '合同説明会', phaseLabels: { awareness: '着座数', interest: 'エントリー数', contact: '説明会参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  other_expo: { name: 'その他・合同説明会', category: '合同説明会', phaseLabels: { awareness: '着座数', interest: 'エントリー数', contact: '説明会参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  meidaisha: { name: '名大社（ジモト就職フェア）', category: '地域特化', phaseLabels: { awareness: '着座数', interest: 'エントリー数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  instagram: { name: 'Instagram', category: 'SNS・動画', phaseLabels: { awareness: 'リーチ数', interest: '反応数', contact: 'DM/問合せ数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  tiktok: { name: 'TikTok / YouTube Shorts', category: 'SNS・動画', phaseLabels: { awareness: 'リーチ数', interest: '反応数', contact: 'DM/問合せ数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  youtube: { name: 'YouTube', category: 'SNS・動画', phaseLabels: { awareness: 'リーチ数', interest: '反応数', contact: 'DM/問合せ数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  indeed: { name: 'Indeed', category: '求人サイト', phaseLabels: { awareness: '閲覧数', interest: '応募数', contact: '面談数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  medical_site: { name: 'コメディカルドットコム等', category: '業界特化', phaseLabels: { awareness: '閲覧数', interest: '応募数', contact: '面談数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  qualification_school: { name: '資格予備校ルート', category: '業界特化', phaseLabels: { awareness: '閲覧数', interest: '応募数', contact: '面談数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  internship_short: { name: '1dayインターンシップ', category: 'インターンシップ', phaseLabels: { awareness: '募集数', interest: '応募数', contact: '参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  internship_long: { name: '長期インターンシップ（1週間以上）', category: 'インターンシップ', phaseLabels: { awareness: '募集数', interest: '応募数', contact: '参加数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  practical_training: { name: '実習受け入れ', category: 'その他', phaseLabels: { awareness: '紹介数', interest: '興味喚起数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  referral: { name: '先輩・友人紹介（リファラル）', category: 'その他', phaseLabels: { awareness: '紹介数', interest: '興味喚起数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } },
+  company_briefing: { name: '自社説明会・オープンカンパニー', category: 'その他', phaseLabels: { awareness: '紹介数', interest: '興味喚起数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' } }
+};
+
+// Material Icon SVGパス
+// ソリッドアイコン（SVG）
+const SolidIcon = ({ name, className = "w-5 h-5", style }) => {
+  const paths = {
+    briefcase: 'M20 7h-4V5c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zM10 5h4v2h-4V5z',
+    graduationCap: 'M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82zM12 3L1 9l11 6 9-4.91V17h2V9L12 3z',
+    signal: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-1-4h2v2h-2v-2zm-1.07-9.25C10.15 5.53 10.98 5 12 5c1.38 0 2.5 1.12 2.5 2.5 0 1.5-2.5 2.5-2.5 4h-2c0-2.38 2.5-2.5 2.5-4 0-.55-.45-1-1-1s-1 .45-1 1H8.5c0-1.38 1.12-2.5 2.43-2.75z',
+    user: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
+    tie: 'M12 2L9 6l1.5 1.5L9 17l3 5 3-5-1.5-9.5L15 6l-3-4z',
+    chartBar: 'M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z',
+    clock: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z',
+    lightbulb: 'M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z',
+    warning: 'M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z',
+    prohibited: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z',
+    checkCircle: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
+    trophy: 'M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z',
+    save: 'M17 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z',
+    shield: 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z',
+    lock: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z',
+    info: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z',
+    dot: 'M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z'
+  };
+  return (
+    <svg className={className} style={style} viewBox="0 0 24 24" fill="currentColor">
+      <path d={paths[name] || paths.dot} />
+    </svg>
+  );
+};
+
+const MI = {
+  sales: 'M20 6h-2.18c.11-.31.18-.65.18-1 0-1.66-1.34-3-3-3-1.05 0-1.96.54-2.5 1.35l-.5.67-.5-.68C10.96 2.54 10.05 2 9 2 7.34 2 6 3.34 6 5c0 .35.07.69.18 1H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-5-2c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zM9 4c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm11 15H4v-2h16v2zm0-5H4V8h5.08L7 10.83 8.62 12 11 8.76l1-1.36 1 1.36L15.38 12 17 10.83 14.92 8H20v6z',
+  engineering: 'M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z',
+  it: 'M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z',
+  manufacturing: 'M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3h7zM7 9H4V5h3v4zm10 6h3v4h-3v-4zm0-10h3v4h-3V5z',
+  rd: 'M13 2v2C9.13 4 6 7.13 6 11h2c0-2.76 2.24-5 5-5v2l4-3.5L13 2zM7 13c0 2.76 2.24 5 5 5v2l4-3.5L12 13v2c-1.66 0-3-1.34-3-3H7zm10-2c0-2.76-2.24-5-5-5V4l-4 3.5L12 11V9c1.66 0 3 1.34 3 3h2z',
+  design: 'M22 9V7h-2V5c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2v-2h-2V9h2zm-4 10H4V5h14v14zM6 13h5v4H6v-4zm6-6h4v3h-4V7zM6 7h5v5H6V7zm6 4h4v6h-4v-6z',
+  admin: 'M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z',
+  accounting: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 8c0 1.1-.9 2-2 2h-2v2h4v2H9v-4c0-1.1.9-2 2-2h2V9H9V7h4c1.1 0 2 .9 2 2v2z',
+  hr: 'M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z',
+  planning: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z',
+  welfare: 'M12 2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 7h-6v13h-2v-6h-2v6H9V9H3V7h18v2z',
+  construction: 'M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z',
+  logistics: 'M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z',
+  service: 'M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z',
+  other: 'M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z'
+};
+
+const JobIcon = ({ type, className = "w-6 h-6" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d={MI[type] || MI.other} />
+  </svg>
+);
+
+const JOB_TYPES = [
+  { key: 'sales', label: '営業職' },
+  { key: 'engineering', label: '技術職（機械・電気等）' },
+  { key: 'it', label: 'IT・システムエンジニア' },
+  { key: 'manufacturing', label: '製造・生産管理' },
+  { key: 'rd', label: '研究開発' },
+  { key: 'design', label: '設計・CAD' },
+  { key: 'admin', label: '事務・管理' },
+  { key: 'accounting', label: '経理・財務' },
+  { key: 'hr', label: '人事・総務' },
+  { key: 'planning', label: '企画・マーケティング' },
+  { key: 'welfare', label: '福祉・介護・保育' },
+  { key: 'construction', label: '施工管理・建築' },
+  { key: 'logistics', label: '物流・配送' },
+  { key: 'service', label: '接客・サービス' },
+  { key: 'other', label: 'その他・総合職' }
+];
+
+const FUNNEL_PHASES = [
+  { key: 'awareness', label: '認知' },
+  { key: 'interest', label: '興味' },
+  { key: 'contact', label: '接触' },
+  { key: 'screening', label: '選考' },
+  { key: 'offer', label: '内々定' },
+  { key: 'acceptance', label: '承諾' }
+];
+
+const STEPS = [
+  { id: 'jobType', label: '採用職種', icon: 'briefcase', num: 1 },
+  { id: 'target', label: 'ターゲット学生', icon: 'graduationCap', num: 2 },
+  { id: 'method', label: '採用手法', icon: 'signal', num: 3 },
+  { id: 'staff', label: '担当者問診', icon: 'user', num: 4 },
+  { id: 'executive', label: '上層部問診', icon: 'tie', num: 5 },
+  { id: 'funnel', label: 'ファネル数値', icon: 'chartBar', num: 6 }
+];
+
+// ========================================
+// API通信（スタンドアロン版：fetch使用）
+// ========================================
+const GAS_URL = window.GAS_CONFIG.gasUrl;
+
+const gasGet = async (action, params = {}) => {
+  const url = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  try {
+    const res = await fetch(url.toString(), { redirect: 'follow' });
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return { success: false, error: 'Invalid JSON response' }; }
+  } catch (err) {
+    console.error(`[API GET] ${action}:`, err);
+    return { success: false, error: err.message };
+  }
+};
+
+const gasPost = async (action, body = {}) => {
+  try {
+    // Content-Type: text/plain でCORS preflightを回避
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, ...body }),
+      redirect: 'follow'
+    });
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return { success: false, error: 'Invalid JSON response' }; }
+  } catch (err) {
+    // POST CORS失敗時：GETフォールバック（小さいペイロード用）
+    console.warn(`[API POST] ${action} failed, trying GET fallback:`, err);
+    const url = new URL(GAS_URL);
+    url.searchParams.set('action', action);
+    url.searchParams.set('payload', JSON.stringify(body));
+    try {
+      const res = await fetch(url.toString(), { redirect: 'follow' });
+      const text = await res.text();
+      try { return JSON.parse(text); } catch { return { success: false, error: 'Fallback also failed' }; }
+    } catch (err2) {
+      console.error(`[API GET fallback] ${action}:`, err2);
+      return { success: false, error: err2.message };
+    }
+  }
+};
+
+const API = {
+  customerId: window.GAS_CONFIG?.customerId || '',
+  
+  async loadPreInput() {
+    return gasGet('getCustomerPreInput', { id: this.customerId });
+  },
+  
+  async savePreInput(preInputData) {
+    return gasPost('saveCustomerPreInput', { id: this.customerId, preInputData });
+  },
+  
+  async loadQuestionMaster() {
+    return gasGet('getQuestionMaster');
+  },
+  
+  async loadRecruitmentMethods() {
+    return gasGet('getRecruitmentMethods');
+  }
+};
+
+// ========================================
+// タイマーコンポーネント
+// ========================================
+const CountdownTimer = ({ totalSeconds, onTimeUp, isRunning }) => {
+  const [remaining, setRemaining] = useState(totalSeconds);
+  const intervalRef = useRef(null);
+  
+  useEffect(() => {
+    if (!isRunning) return;
+    setRemaining(totalSeconds);
+    intervalRef.current = setInterval(() => {
+      setRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(intervalRef.current);
+          onTimeUp();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(intervalRef.current);
+  }, [isRunning, totalSeconds]);
+  
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  const pct = (remaining / totalSeconds) * 100;
+  const isLow = remaining <= 60;
+  const isVeryLow = remaining <= 30;
+  
+  return (
+    <div className={`flex items-center gap-3 px-4 py-2 rounded-xl border-2 ${
+      isVeryLow ? 'bg-red-50 border-red-300 timer-pulse' : 
+      isLow ? 'bg-orange-50 border-orange-300' : 
+      'bg-blue-50 border-blue-200'
+    }`}>
+      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <div className="flex-1">
+        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-1000 ${
+            isVeryLow ? 'bg-red-500' : isLow ? 'bg-orange-500' : 'bg-blue-500'
+          }`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <span className={`font-mono font-bold text-lg min-w-[60px] text-right ${
+        isVeryLow ? 'text-red-600' : isLow ? 'text-orange-600' : 'text-blue-700'
+      }`}>
+        {String(minutes).padStart(2,'0')}:{String(seconds).padStart(2,'0')}
+      </span>
+    </div>
+  );
+};
+
+// ========================================
+// プログレスバー
+// ========================================
+const ProgressBar = ({ currentStep, totalSteps }) => (
+  <div className="glass-card rounded-2xl p-4 mb-6">
+    <div className="flex items-center justify-between mb-3">
+      {STEPS.map((step, i) => (
+        <React.Fragment key={step.id}>
+          <div className="flex flex-col items-center">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
+              i < currentStep ? 'bg-green-500 text-white' :
+              i === currentStep ? 'bg-blue-600 text-white ring-4 ring-blue-200' :
+              'bg-gray-200 text-gray-500'
+            }`}>
+              {i < currentStep ? <SolidIcon name="checkCircle" className="w-5 h-5" /> : step.num}
+            </div>
+            <span className={`text-[10px] mt-1 whitespace-nowrap ${
+              i === currentStep ? 'text-blue-700 font-bold' : 'text-gray-400'
+            }`}>{step.label}</span>
+          </div>
+          {i < STEPS.length - 1 && (
+            <div className={`flex-1 h-0.5 mx-1 rounded ${
+              i < currentStep ? 'bg-green-400' : 'bg-gray-200'
+            }`} />
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  </div>
+);
+
+// ========================================
+// Step 1: 採用職種選定
+// ========================================
+const StepJobType = ({ data, onChange }) => (
+  <div className="glass-card rounded-2xl p-6 animate-in">
+    <h2 className="text-xl font-bold text-gray-800 mb-2">採用したい職種を選択してください</h2>
+    <p className="text-sm text-gray-500 mb-6">該当する職種を1つ選択してください</p>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {JOB_TYPES.map(job => {
+        const selected = data.jobType === job.key;
+        return (
+          <button
+            key={job.key}
+            onClick={() => onChange({ ...data, jobType: job.key })}
+            className={`flex items-center gap-2 px-3 py-3 rounded-xl border-2 text-left transition-all ${
+              selected
+                ? 'border-blue-500 bg-blue-50 shadow-md'
+                : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+            }`}
+          >
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              selected ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-500'
+            }`}>
+              <JobIcon type={job.key} className="w-4 h-4" />
+            </div>
+            <span className={`font-medium text-xs whitespace-nowrap ${selected ? 'text-blue-800' : 'text-gray-700'}`}>{job.label}</span>
+            {selected && (
+              <svg className="w-5 h-5 text-blue-500 ml-auto flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+            )}
+          </button>
+        );
+      })}
+    </div>
+    {data.jobType === 'other' && (
+      <div className="mt-4">
+        <input
+          type="text"
+          value={data.jobTypeOther || ''}
+          onChange={e => onChange({ ...data, jobTypeOther: e.target.value })}
+          placeholder="その他の職種名を入力"
+          className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+      </div>
+    )}
+  </div>
+);
+
+// ========================================
+// Step 2: ターゲット学生
+// ========================================
+const StepTarget = ({ data, onChange }) => {
+  const jobLabels = data.jobType ? (JOB_TYPES.find(j => j.key === data.jobType)?.label || data.jobType) : '';
+  
+  return (
+    <div className="glass-card rounded-2xl p-6 animate-in">
+      <h2 className="text-xl font-bold text-gray-800 mb-2">ターゲット学生層の選択</h2>
+      <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl mb-4">
+        <p className="text-sm text-amber-800">
+          <span className="font-bold">採用職種：</span>{jobLabels || '未選択'}
+          <br />上記の職種に対して、ターゲットとする学生層を選択し、おおよその比率を入力してください。
+        </p>
+      </div>
+      
+      <p className="text-sm text-gray-500 mb-4">合計が100%になるように調整してください</p>
+      
+      <div className="space-y-2">
+        {Object.entries(STUDENT_MATRIX).map(([key, layer]) => {
+          const enabled = data.targetLayers?.[key]?.enabled || false;
+          const ratio = data.targetLayers?.[key]?.ratio || 0;
+          return (
+            <div key={key} className={`flex items-center gap-4 p-3 rounded-xl transition ${
+              enabled ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 hover:bg-gray-100'
+            }`}>
+              <label className="flex items-center gap-3 cursor-pointer flex-1">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={e => onChange({
+                    ...data,
+                    targetLayers: {
+                      ...data.targetLayers,
+                      [key]: { ...data.targetLayers?.[key], enabled: e.target.checked }
+                    }
+                  })}
+                  className="w-5 h-5 rounded border-gray-300 text-blue-600"
+                />
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg"
+                  style={{ backgroundColor: layer.color }}>
+                  {key}
+                </div>
+                <div className="flex-1">
+                  <div className="font-bold text-gray-800">{layer.name}</div>
+                  <div className="text-xs text-gray-500">{layer.description}</div>
+                </div>
+              </label>
+              {enabled && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={ratio || ''}
+                    onChange={e => onChange({
+                      ...data,
+                      targetLayers: {
+                        ...data.targetLayers,
+                        [key]: { ...data.targetLayers?.[key], enabled: true, ratio: parseInt(e.target.value) || 0 }
+                      }
+                    })}
+                    className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center font-bold"
+                  />
+                  <span className="text-gray-500">%</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      
+      {/* 合計表示 */}
+      {(() => {
+        const total = Object.values(data.targetLayers || {})
+          .filter(v => v?.enabled)
+          .reduce((sum, v) => sum + (v?.ratio || 0), 0);
+        return (
+          <div className={`mt-4 p-3 rounded-xl text-center font-bold ${
+            total === 100 ? 'bg-green-50 text-green-700 border border-green-200' :
+            total > 0 ? 'bg-orange-50 text-orange-700 border border-orange-200' :
+            'bg-gray-50 text-gray-500'
+          }`}>
+            合計: {total}% {total === 100 ? <SolidIcon name="checkCircle" className="w-4 h-4 inline text-green-600" /> : total > 0 ? '（100%にしてください）' : ''}
+          </div>
+        );
+      })()}
+    </div>
+  );
+};
+
+// ========================================
+// Step 3: 採用手法
+// ========================================
+const StepMethod = ({ data, onChange, methodMaster }) => {
+  const methods = methodMaster && Object.keys(methodMaster).length > 0 ? methodMaster : DEFAULT_RECRUITMENT_METHODS;
+  const categories = [...new Set(Object.values(methods).map(m => m.category))].sort();
+  
+  // 選択済み手法を優先順位順にソート
+  const activeMethods = Object.entries(data.recruitmentMethods || {})
+    .filter(([_, m]) => m?.active)
+    .sort((a, b) => (a[1].priority || 999) - (b[1].priority || 999));
+  
+  const movePriority = (key, direction) => {
+    const current = [...activeMethods];
+    const idx = current.findIndex(([k]) => k === key);
+    if (idx < 0) return;
+    const swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= current.length) return;
+    
+    // swap priorities
+    const updated = { ...data.recruitmentMethods };
+    const pA = updated[current[idx][0]].priority || (idx + 1);
+    const pB = updated[current[swapIdx][0]].priority || (swapIdx + 1);
+    updated[current[idx][0]] = { ...updated[current[idx][0]], priority: pB };
+    updated[current[swapIdx][0]] = { ...updated[current[swapIdx][0]], priority: pA };
+    onChange({ ...data, recruitmentMethods: updated });
+  };
+  
+  // チェック時に自動で優先順位を付与
+  const toggleMethod = (key, checked) => {
+    const updated = { ...data.recruitmentMethods };
+    if (checked) {
+      const maxPriority = Math.max(0, ...Object.values(updated).filter(m => m?.active).map(m => m.priority || 0));
+      updated[key] = { ...updated[key], active: true, priority: maxPriority + 1 };
+    } else {
+      updated[key] = { ...updated[key], active: false, priority: undefined };
+      // 残りの優先順位を詰める
+      const remaining = Object.entries(updated).filter(([_, m]) => m?.active).sort((a, b) => (a[1].priority || 999) - (b[1].priority || 999));
+      remaining.forEach(([k], i) => { updated[k] = { ...updated[k], priority: i + 1 }; });
+    }
+    onChange({ ...data, recruitmentMethods: updated });
+  };
+  
+  return (
+    <div className="glass-card rounded-2xl p-6 animate-in">
+      <h2 className="text-xl font-bold text-gray-800 mb-2">利用中の採用手法を選択</h2>
+      <p className="text-sm text-gray-500 mb-6">現在利用している、または利用を検討している手法をすべてチェックしてください</p>
+      
+      {categories.map(category => {
+        const catMethods = Object.entries(methods).filter(([_, m]) => m.category === category);
+        if (catMethods.length === 0) return null;
+        
+        return (
+          <div key={category} className="mb-5">
+            <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+              {category}
+            </h4>
+            <div className="space-y-1">
+              {catMethods.map(([key, method]) => {
+                const active = data.recruitmentMethods?.[key]?.active || false;
+                return (
+                  <label key={key} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition ${
+                    active ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 hover:bg-gray-100'
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={active}
+                      onChange={e => toggleMethod(key, e.target.checked)}
+                      className="w-5 h-5 rounded border-gray-300 text-blue-600"
+                    />
+                    <span className={`font-medium ${active ? 'text-blue-800' : 'text-gray-600'}`}>
+                      {method.name}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      
+      {/* 優先順位の並び替え */}
+      {activeMethods.length > 0 && (
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <h3 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+            <SolidIcon name="chartBar" className="w-4 h-4 text-indigo-500" />
+            注力度の優先順位
+          </h3>
+          <p className="text-xs text-gray-500 mb-3">上にあるほど優先度が高くなります。矢印ボタンで並べ替えてください。</p>
+          <div className="space-y-1.5">
+            {activeMethods.map(([key, methodData], idx) => {
+              const methodDef = methods[key] || {};
+              return (
+                <div key={key} className="flex items-center gap-2 p-2.5 bg-white border border-gray-200 rounded-xl">
+                  <span className="w-7 h-7 flex items-center justify-center bg-indigo-100 text-indigo-700 text-xs font-bold rounded-full flex-shrink-0">
+                    {idx + 1}
+                  </span>
+                  <span className="flex-1 text-sm font-medium text-gray-800 truncate">{methodDef.name || key}</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => movePriority(key, -1)}
+                      disabled={idx === 0}
+                      className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs transition ${
+                        idx === 0 ? 'text-gray-300' : 'text-gray-500 hover:bg-gray-100'
+                      }`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => movePriority(key, 1)}
+                      disabled={idx === activeMethods.length - 1}
+                      className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs transition ${
+                        idx === activeMethods.length - 1 ? 'text-gray-300' : 'text-gray-500 hover:bg-gray-100'
+                      }`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ========================================
+// Step 4 & 5: 問診（共通）
+// ========================================
+const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSeconds = 900, onQuizActive, onComplete, optional = false, optionalNote = '' }) => {
+  const [timerStarted, setTimerStarted] = useState(false);
+  const [timeUp, setTimeUp] = useState(false);
+  const [quizFinished, setQuizFinished] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [skipping, setSkipping] = useState(false);
+  const completedKey = `${roleKey}Completed`;
+  const skippedKey = `${roleKey}Skipped`;
+  const answersKey = `${roleKey}Answers`;
+  const answers = data[answersKey] || {};
+  const answeredCount = Object.keys(answers).filter(k => answers[k]).length;
+  
+  // 完了判定: フラグ + 実際に回答がある場合のみ「回答済み」とする
+  const isAlreadyCompleted = data[completedKey] === true && answeredCount > 0;
+  
+  // タイムアップまたは全問回答 → 自動確定（条件付きreturnの前に配置必須）
+  useEffect(() => {
+    if (!(timeUp || quizFinished) || confirming) return;
+    setConfirming(true);
+    const newData = { ...data, [completedKey]: true };
+    onChange(newData);
+    if (onQuizActive) onQuizActive(false);
+    if (onComplete) onComplete(newData);
+  }, [timeUp, quizFinished]);
+  
+  // 質問が0件の場合
+  if (!questions || questions.length === 0) {
+    return (
+      <div className="glass-card rounded-2xl p-6 animate-in text-center">
+        <div className="flex justify-center mb-4"><SolidIcon name="warning" className="w-16 h-16 text-amber-400" /></div>
+        <h2 className="text-xl font-bold text-gray-800 mb-2">{title}</h2>
+        <p className="text-gray-600 mb-2">
+          問診の設問が読み込まれていません。
+        </p>
+        <p className="text-sm text-gray-400">
+          「次へ」を押してスキップしてください。<br />
+          お打ち合わせ当日に問診を実施します。
+        </p>
+      </div>
+    );
+  }
+  
+  // 既に回答完了済みの場合
+  if (isAlreadyCompleted) {
+    return (
+      <div className="glass-card rounded-2xl p-6 animate-in text-center">
+        <div className="flex justify-center mb-4"><SolidIcon name="checkCircle" className="w-16 h-16 text-green-500" /></div>
+        <h2 className="text-xl font-bold text-gray-800 mb-2">{title} — 回答済み</h2>
+        <p className="text-gray-600 mb-2">
+          この問診は既に回答が完了しています。（{answeredCount}/{questions.length}問回答）
+        </p>
+        <p className="text-sm text-gray-400">
+          回答内容の変更はできません。「次へ」を押して進んでください。
+        </p>
+      </div>
+    );
+  }
+  
+  // スキップ済みの場合（任意問診のみ）
+  if (optional && data[skippedKey]) {
+    return (
+      <div className="glass-card rounded-2xl p-6 animate-in text-center">
+        <div className="flex justify-center mb-4"><SolidIcon name="info" className="w-16 h-16 text-gray-400" /></div>
+        <h2 className="text-xl font-bold text-gray-800 mb-2">{title} — スキップ済み</h2>
+        <p className="text-gray-600 mb-2">
+          この問診はスキップされました。
+        </p>
+        <p className="text-sm text-gray-400 mb-4">
+          「次へ」を押して進んでください。回答する場合は下のボタンを押してください。
+        </p>
+        <button
+          onClick={() => onChange({ ...data, [skippedKey]: false })}
+          className="text-xs px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition font-medium"
+        >
+          やっぱり回答する
+        </button>
+      </div>
+    );
+  }
+  
+  // 開始前の説明画面
+  if (!timerStarted) {
+    return (
+      <div className="glass-card rounded-2xl p-6 animate-in">
+        <h2 className="text-xl font-bold text-gray-800 mb-4">{title}</h2>
+        
+        {/* 任意問診の説明 */}
+        {optional && optionalNote && (
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl mb-4 space-y-2">
+            <p className="text-sm text-blue-800 font-bold flex items-center gap-1.5">
+              <SolidIcon name="info" className="w-4 h-4" />この問診は任意です
+            </p>
+            <p className="text-sm text-blue-700">{optionalNote}</p>
+          </div>
+        )}
+        
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl mb-4 space-y-2">
+          <p className="text-sm text-amber-800 font-bold flex items-center gap-1.5"><SolidIcon name="clock" className="w-4 h-4" />制限時間: {timerSeconds / 60}分</p>
+          <p className="text-sm text-amber-700">制限時間を過ぎると自動的に回答が締め切られます。</p>
+          <p className="text-sm text-amber-700">
+            <span className="font-bold inline-flex items-center gap-1"><SolidIcon name="lightbulb" className="w-4 h-4" />回答のヒント：</span>
+            直感で「こちらに近い」と思う方を選択してください。
+            <span className="font-bold text-amber-900">どちらにも回答できない場合は、選択せずに飛ばして構いません。</span>
+          </p>
+        </div>
+        
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl mb-6 space-y-2">
+          <p className="text-sm text-red-800 font-bold flex items-center gap-1.5"><SolidIcon name="warning" className="w-4 h-4" />以下の点にご注意ください</p>
+          <ul className="text-sm text-red-700 space-y-1">
+            <li className="flex items-start gap-2">
+              <SolidIcon name="prohibited" className="w-4 h-4 mt-0.5 text-red-500 flex-shrink-0" />
+              <span><span className="font-bold">途中保存はできません。</span>開始したら最後まで続けてください。</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <SolidIcon name="prohibited" className="w-4 h-4 mt-0.5 text-red-500 flex-shrink-0" />
+              <span><span className="font-bold">前のステップに戻ることはできません。</span>問診中は他の画面に移動できません。</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <SolidIcon name="prohibited" className="w-4 h-4 mt-0.5 text-red-500 flex-shrink-0" />
+              <span><span className="font-bold">回答完了後のやり直しはできません。</span>一度提出した回答は変更できません。</span>
+            </li>
+          </ul>
+        </div>
+        
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">全{questions.length}問の問診です</p>
+          <button
+            onClick={() => {
+              setTimerStarted(true);
+              if (onQuizActive) onQuizActive(true);
+            }}
+            className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-lg rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition shadow-lg hover:shadow-xl"
+          >
+            問診を開始する
+          </button>
+          {optional && (
+            <button
+              disabled={skipping}
+              onClick={() => {
+                if (skipping) return;
+                setSkipping(true);
+                const newData = { ...data, [skippedKey]: true };
+                onChange(newData);
+                if (onComplete) onComplete(newData);
+              }}
+              className="block mx-auto mt-4 text-sm px-6 py-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+            >
+              {skipping ? '保存中...' : 'この問診をスキップする →'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  
+  // タイムアップまたは全問回答完了
+  if (timeUp || quizFinished) {
+    return (
+      <div className="glass-card rounded-2xl p-6 animate-in text-center">
+        <div className="flex justify-center mb-4">
+          <svg className="w-12 h-12 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <circle cx="12" cy="12" r="10" className="opacity-25" />
+            <path d="M4 12a8 8 0 018-8" className="opacity-75" />
+          </svg>
+        </div>
+        <p className="text-gray-600 font-bold">回答を保存中...</p>
+      </div>
+    );
+  }
+  
+  // 問診回答画面
+  return (
+    <div className="animate-in">
+      <div className="glass-card rounded-2xl p-4 mb-4 sticky top-0 z-10">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-bold text-gray-800">{title}</h2>
+          <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+            {answeredCount}/{questions.length}問回答
+          </span>
+        </div>
+        <CountdownTimer
+          totalSeconds={timerSeconds}
+          isRunning={true}
+          onTimeUp={() => setTimeUp(true)}
+        />
+        <div className="flex items-center justify-between mt-2">
+          <p className="text-xs text-gray-400">
+            <span className="inline-flex items-center gap-1"><SolidIcon name="lightbulb" className="w-3.5 h-3.5" />どちらにも回答できない場合は選択せずに飛ばしてください</span>
+          </p>
+          <button
+            onClick={() => setQuizFinished(true)}
+            className="text-xs px-3 py-1 bg-green-100 text-green-700 rounded-full hover:bg-green-200 transition font-bold"
+          >
+            回答を終了する
+          </button>
+        </div>
+      </div>
+      
+      <div className="space-y-3">
+        {questions.map((q, idx) => {
+          const answer = answers[q.id];
+          return (
+            <div key={q.id} className="glass-card rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">
+                  Q{idx + 1}
+                </span>
+                {answer && (
+                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-600 rounded-full">回答済</span>
+                )}
+              </div>
+              <p className="text-sm font-medium text-gray-800 mb-3" style={{ whiteSpace: 'pre-line' }}>
+                {q.question}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => onChange({
+                    ...data,
+                    [answersKey]: { ...answers, [q.id]: answer === 'A' ? undefined : 'A' }
+                  })}
+                  className={`p-3 rounded-lg text-sm text-left transition border-2 ${
+                    answer === 'A'
+                      ? 'border-blue-500 bg-blue-100 text-blue-800'
+                      : 'border-gray-200 bg-white hover:border-blue-300'
+                  }`}
+                >
+                  <span className="font-bold mr-2">A.</span>{q.choiceA}
+                </button>
+                <button
+                  onClick={() => onChange({
+                    ...data,
+                    [answersKey]: { ...answers, [q.id]: answer === 'B' ? undefined : 'B' }
+                  })}
+                  className={`p-3 rounded-lg text-sm text-left transition border-2 ${
+                    answer === 'B'
+                      ? 'border-blue-500 bg-blue-100 text-blue-800'
+                      : 'border-gray-200 bg-white hover:border-blue-300'
+                  }`}
+                >
+                  <span className="font-bold mr-2">B.</span>{q.choiceB}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      
+      {/* 末尾の回答終了ボタン */}
+      <div className="text-center mt-6">
+        <button
+          onClick={() => setQuizFinished(true)}
+          className="px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-700 transition shadow-lg"
+        >
+          回答を終了する
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ========================================
+// Step 6: ファネル数値
+// ========================================
+const StepFunnel = ({ data, onChange, methodMaster }) => {
+  const methods = methodMaster && Object.keys(methodMaster).length > 0 ? methodMaster : DEFAULT_RECRUITMENT_METHODS;
+  const jobLabels = data.jobType ? (JOB_TYPES.find(j => j.key === data.jobType)?.label || data.jobType) : '';
+  const activeChannels = Object.entries(data.recruitmentMethods || {})
+    .filter(([_, m]) => m?.active)
+    .sort((a, b) => (a[1].priority || 999) - (b[1].priority || 999))
+    .map(([key, m], idx) => ({
+      key,
+      name: methods[key]?.name || key,
+      shortName: (methods[key]?.name || key).split('（')[0].substring(0, 8),
+      category: methods[key]?.category || DEFAULT_RECRUITMENT_METHODS[key]?.category || '',
+      priority: m.priority || (idx + 1)
+    }));
+  
+  const funnelData = data.funnelData || {};
+  const availableYears = funnelData.availableYears || ['25卒', '26卒', '27卒', '28卒', '29卒', '30卒'];
+  const selectedYear = funnelData.selectedYear || '27卒';
+  const yearData = funnelData.yearData?.[selectedYear] || {};
+  
+  const setSelectedYear = (year) => {
+    onChange({ ...data, funnelData: { ...funnelData, selectedYear: year } });
+  };
+  
+  // BB診断と同じフェーズキー
+  const phases = [
+    { key: 'awareness', label: '認知' },
+    { key: 'interest', label: '興味' },
+    { key: 'contact', label: '接触' },
+    { key: 'screening', label: '選考' },
+    { key: 'offer', label: '内々定' },
+    { key: 'acceptance', label: '承諾' }
+  ];
+  
+  const getPlaceholder = (phaseKey, channelKey) => {
+    // 1. GASマスターのphaseLabels
+    if (methods[channelKey]?.phaseLabels?.[phaseKey]) return methods[channelKey].phaseLabels[phaseKey];
+    // 2. ローカルDEFAULTのphaseLabels（GASに新列がない場合のフォールバック）
+    if (DEFAULT_RECRUITMENT_METHODS[channelKey]?.phaseLabels?.[phaseKey]) return DEFAULT_RECRUITMENT_METHODS[channelKey].phaseLabels[phaseKey];
+    // 3. 最終フォールバック
+    const FALLBACK = { awareness: '認知数', interest: '興味数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' };
+    return FALLBACK[phaseKey] || '数値を入力';
+  };
+  
+  // BB診断と同じ channelData 形式: {phase}_{channelKey}
+  const getChannelValue = (phaseKey, channelKey) => yearData.channelData?.[`${phaseKey}_${channelKey}`] ?? '';
+  
+  const setChannelValue = (phaseKey, channelKey, value) => {
+    const dataKey = `${phaseKey}_${channelKey}`;
+    const newChannelData = {
+      ...yearData.channelData,
+      [dataKey]: value === '' ? '' : (parseInt(value) || 0)
+    };
+    
+    // BB診断と同じキーで合計を再計算
+    const calcTotal = (pk) => activeChannels.reduce((sum, ch) => {
+      const v = newChannelData[`${pk}_${ch.key}`];
+      return sum + (parseInt(v) || 0);
+    }, 0);
+    
+    const totals = {
+      targetAwareness: calcTotal('awareness'),
+      interest: calcTotal('interest'),
+      applications: calcTotal('contact'),
+      screening: calcTotal('screening'),
+      offers: calcTotal('offer'),
+      acceptance: calcTotal('acceptance')
+    };
+    
+    onChange({
+      ...data,
+      funnelData: {
+        ...funnelData,
+        ...totals,
+        selectedYear: selectedYear,
+        yearData: {
+          ...funnelData.yearData,
+          [selectedYear]: {
+            ...yearData,
+            ...totals,
+            channelData: newChannelData
+          }
+        }
+      }
+    });
+  };
+  
+  const calcTotal = (phaseKey) => activeChannels.reduce((sum, ch) => {
+    const v = getChannelValue(phaseKey, ch.key);
+    return sum + (parseInt(v) || 0);
+  }, 0);
+  
+  return (
+    <div className="glass-card rounded-2xl p-6 animate-in">
+      <h2 className="text-xl font-bold text-gray-800 mb-2">採用ファネル数値</h2>
+      
+      <div className="p-3 bg-red-50 border border-red-200 rounded-xl mb-4">
+        <p className="text-sm text-red-800">
+          <span className="font-bold inline-flex items-center gap-1"><SolidIcon name="warning" className="w-4 h-4" />注意：</span>
+          以下は<span className="font-bold">「{jobLabels || '選択した職種'}」</span>を採用する際の移行数値です。
+          全社的な合計値ではなく、該当職種の採用に限った数値をご入力ください。
+        </p>
+      </div>
+      
+      {/* 年度選択 */}
+      <div className="flex items-center gap-3 mb-4">
+        <label className="text-sm font-bold text-gray-700">年度：</label>
+        <div className="flex gap-1 p-1 bg-gray-100 rounded-lg overflow-x-auto flex-1">
+          {availableYears.map(year => (
+            <button
+              key={year}
+              onClick={() => setSelectedYear(year)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition whitespace-nowrap ${
+                selectedYear === year
+                  ? 'bg-white text-blue-600 shadow-sm font-bold'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {year}
+              {funnelData.yearData?.[year]?.channelData && 
+               Object.keys(funnelData.yearData[year].channelData).length > 0 && (
+                <span className="ml-1 w-1.5 h-1.5 bg-green-500 rounded-full inline-block"></span>
+              )}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-blue-600 font-medium bg-blue-50 px-2 py-1 rounded whitespace-nowrap">
+          {selectedYear}編集中
+        </span>
+      </div>
+      
+      {/* 採用目標人数 */}
+      <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl">
+        <label className="block text-sm font-bold text-green-800 mb-2">採用目標人数（承諾目標）</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min="0"
+            value={yearData.targetHires ?? funnelData.targetHires ?? ''}
+            onChange={e => {
+              const v = e.target.value === '' ? '' : (parseInt(e.target.value) || 0);
+              onChange({
+                ...data,
+                funnelData: {
+                  ...funnelData,
+                  selectedYear: selectedYear,
+                  yearData: {
+                    ...funnelData.yearData,
+                    [selectedYear]: { ...yearData, targetHires: v }
+                  }
+                }
+              });
+            }}
+            placeholder="例: 5"
+            className="w-32 px-4 py-3 border border-gray-300 rounded-xl text-center text-lg font-bold focus:ring-2 focus:ring-green-500"
+          />
+          <span className="text-gray-600 font-medium">人</span>
+        </div>
+      </div>
+      
+      {activeChannels.length === 0 ? (
+        /* チャネル未選択時：合計入力フォーム */
+        <div>
+          <h3 className="text-sm font-bold text-gray-700 mb-3">各フェーズの合計人数</h3>
+          <p className="text-xs text-gray-500 mb-4">「採用手法」ステップで手法を選択すると、手法別の入力ができます。</p>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { key: 'targetAwareness', label: '認知', ph: '例: 10000' },
+              { key: 'interest', label: '興味', ph: '例: 1000' },
+              { key: 'applications', label: '接触', ph: '例: 200' },
+              { key: 'screening', label: '選考', ph: '例: 80' },
+              { key: 'offers', label: '内々定', ph: '例: 10' },
+              { key: 'acceptance', label: '承諾', ph: '例: 5' }
+            ].map(item => (
+              <div key={item.key}>
+                <label className="block text-xs font-bold text-gray-700 mb-1">{item.label}</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={yearData[item.key] ?? funnelData[item.key] ?? ''}
+                  onChange={e => {
+                    const v = e.target.value === '' ? '' : (parseInt(e.target.value) || 0);
+                    onChange({
+                      ...data,
+                      funnelData: {
+                        ...funnelData,
+                        [item.key]: v,
+                        selectedYear: selectedYear,
+                        yearData: {
+                          ...funnelData.yearData,
+                          [selectedYear]: { ...yearData, [item.key]: v }
+                        }
+                      }
+                    });
+                  }}
+                  placeholder={item.ph}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        /* チャネル選択時：BB診断と同じテーブル形式 */
+        <div>
+          <h3 className="text-sm font-bold text-gray-700 mb-1">採用手法別ファネル数値</h3>
+          <p className="text-xs text-gray-500 mb-4">各手法の数値を入力すると、合計が自動計算されます。不明な項目は空欄で構いません。</p>
+          
+          <div className="overflow-x-auto -mx-2 px-2">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="border border-gray-200 px-2 py-2 text-left font-bold text-gray-700 w-20 sticky left-0 bg-gray-50 z-10">フェーズ</th>
+                  <th className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-700 bg-blue-50 w-16">合計</th>
+                  {activeChannels.map(ch => (
+                    <th key={ch.key} className="border border-gray-200 px-1 py-2 text-center font-medium text-gray-600" style={{minWidth: '90px'}}>
+                      <div className="truncate text-xs" title={ch.name}>
+                        <span className="text-[10px] text-purple-500 mr-0.5">{ch.priority}位</span>
+                        {ch.shortName}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {phases.map(phase => (
+                  <tr key={phase.key}>
+                    <td className="border border-gray-200 px-2 py-2 font-bold text-gray-800 bg-gray-50 text-xs sticky left-0 z-10">
+                      {phase.label}
+                    </td>
+                    <td className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-600 bg-blue-50">
+                      {calcTotal(phase.key) || ''}
+                    </td>
+                    {activeChannels.map(ch => (
+                      <td key={ch.key} className="border border-gray-200 px-1 py-1">
+                        <input
+                          type="number"
+                          min="0"
+                          value={getChannelValue(phase.key, ch.key)}
+                          onChange={e => setChannelValue(phase.key, ch.key, e.target.value)}
+                          placeholder={getPlaceholder(phase.key, ch.key)}
+                          className="w-full px-1 py-1.5 border border-gray-200 rounded text-center text-xs focus:ring-2 focus:ring-blue-500 placeholder-gray-300"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          
+          {/* 合計サマリー */}
+          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+            <div className="grid grid-cols-6 gap-2 text-center">
+              {phases.map(phase => (
+                <div key={phase.key}>
+                  <div className="text-[10px] text-gray-500">{phase.label}</div>
+                  <div className="text-sm font-bold text-blue-700">{calcTotal(phase.key) || '-'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ========================================
+// 送信完了画面
+// ========================================
+const CompletionScreen = () => (
+  <div className="glass-card rounded-2xl p-8 text-center animate-in max-w-lg mx-auto">
+    <div className="flex justify-center mb-6"><SolidIcon name="checkCircle" className="w-20 h-20 text-blue-500" /></div>
+    <h2 className="text-2xl font-bold text-gray-800 mb-3">事前問診が完了しました！</h2>
+    <p className="text-gray-600 mb-6">
+      ご回答いただきありがとうございます。<br />
+      お打ち合わせ当日、この内容をもとに診断を実施いたします。
+    </p>
+    <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+      <p className="text-sm text-blue-800">
+        このページを閉じていただいて問題ありません。<br />
+        ご不明点は担当学生アドバイザーまでお問い合わせください。
+      </p>
+    </div>
+  </div>
+);
+
+// ========================================
+// メインApp
+// ========================================
+const App = () => {
+  const [currentStep, setCurrentStep] = useState(0);
+  const [data, setData] = useState({
+    jobType: '',
+    jobTypeOther: '',
+    targetLayers: {},
+    recruitmentMethods: {},
+    staffAnswers: {},
+    executiveAnswers: {},
+    funnelData: {},
+    status: '入力中'
+  });
+  const [questionMaster, setQuestionMaster] = useState(null);
+  const [methodMaster, setMethodMaster] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [navigating, setNavigating] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const [error, setError] = useState('');
+  const [privacyAgreed, setPrivacyAgreed] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [quizActive, setQuizActive] = useState(false);
+  
+  // 初期ロード
+  useEffect(() => {
+    (async () => {
+      try {
+        // 既存データをロード
+        const preRes = await API.loadPreInput();
+        if (preRes.success && preRes.data) {
+          // 回答が空なのに完了フラグが立っている不整合を修正
+          const loadedData = { ...preRes.data };
+          const staffHasAnswers = Object.keys(loadedData.staffAnswers || {}).filter(k => loadedData.staffAnswers[k]).length > 0;
+          const execHasAnswers = Object.keys(loadedData.executiveAnswers || {}).filter(k => loadedData.executiveAnswers[k]).length > 0;
+          if (loadedData.staffCompleted && !staffHasAnswers) loadedData.staffCompleted = false;
+          if (loadedData.executiveCompleted && !execHasAnswers) loadedData.executiveCompleted = false;
+          
+          setData(prev => ({ ...prev, ...loadedData }));
+          if (loadedData.status === '完了') {
+            setCompleted(true);
+          }
+        }
+        
+        // 問診マスターをロード
+        const qRes = await API.loadQuestionMaster();
+        if (qRes.success && qRes.data) {
+          setQuestionMaster(qRes.data);
+        }
+        
+        // 採用手法マスターをロード
+        const mRes = await API.loadRecruitmentMethods();
+        if (mRes.success && mRes.data) {
+          setMethodMaster(mRes.data);
+        }
+      } catch (e) {
+        console.error('ロードエラー:', e);
+        setError('データの読み込みに失敗しました。ページを再読み込みしてください。');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+  
+  // 質問を取得（roleKey: staff/executive）
+  const getQuestions = useCallback((roleKey) => {
+    if (!questionMaster) return [];
+    
+    // ベース質問（規模はsmallをデフォルト、実際にはコンサルタント側で設定）
+    const sizes = ['small', 'medium', 'large'];
+    let questions = [];
+    for (const size of sizes) {
+      const qs = questionMaster.base?.[size]?.[roleKey];
+      if (qs && qs.length > 0) {
+        questions = [...questions, ...qs];
+        break;
+      }
+    }
+    
+    // ターゲット層質問
+    const targetLayers = Object.keys(data.targetLayers || {}).filter(k => data.targetLayers[k]?.enabled);
+    targetLayers.forEach(layer => {
+      const qs = questionMaster.targetLayer?.[layer]?.[roleKey] || [];
+      questions = [...questions, ...qs];
+    });
+    
+    // 注力タイプ質問
+    ['surface', 'middle', 'deep'].forEach(depth => {
+      const qs = questionMaster.depth?.[depth]?.[roleKey] || [];
+      questions = [...questions, ...qs];
+    });
+    
+    // 採用手法別質問（アクティブなカテゴリのみ）
+    const mMaster = methodMaster && Object.keys(methodMaster).length > 0 ? methodMaster : DEFAULT_RECRUITMENT_METHODS;
+    const activeMethods = Object.keys(data.recruitmentMethods || {}).filter(k => data.recruitmentMethods[k]?.active);
+    const activeCategories = [...new Set(activeMethods.map(k => mMaster[k]?.category).filter(Boolean))];
+    activeCategories.forEach(cat => {
+      // 新フォーマット: カテゴリ名でダイレクト取得
+      const newQs = questionMaster.recruitmentMethod?.[cat]?.[roleKey] || [];
+      questions = [...questions, ...newQs];
+      // 旧フォーマット: 手法キーでカテゴリ一致するものも収集
+      Object.entries(questionMaster.recruitmentMethod || {}).forEach(([key, roles]) => {
+        if (mMaster[key] && mMaster[key].category === cat) {
+          const oldQs = roles?.[roleKey] || [];
+          questions = [...questions, ...oldQs];
+        }
+      });
+    });
+    
+    // ID重複排除
+    const seen = new Set();
+    return questions.filter(q => {
+      if (seen.has(q.id)) return false;
+      seen.add(q.id);
+      return true;
+    });
+  }, [questionMaster, data.targetLayers, data.recruitmentMethods, methodMaster]);
+  
+  // 自動保存
+  const saveProgress = useCallback(async (newData) => {
+    setSaving(true);
+    try {
+      await API.savePreInput(newData || data);
+    } catch (e) {
+      console.error('保存エラー:', e);
+    } finally {
+      setSaving(false);
+    }
+  }, [data]);
+  
+  // ステップ移動
+  const goNext = async () => {
+    if (navigating) return;
+    setNavigating(true);
+    try {
+      window.scrollTo(0, 0);
+      await saveProgress(data);
+      
+      if (currentStep >= STEPS.length - 1) {
+        const finalData = { ...data, status: '完了' };
+        setData(finalData);
+        await saveProgress(finalData);
+        setCompleted(true);
+      } else {
+        setCurrentStep(prev => prev + 1);
+      }
+    } finally {
+      setNavigating(false);
+    }
+  };
+  
+  const goPrev = () => {
+    if (navigating) return;
+    setNavigating(true);
+    window.scrollTo(0, 0);
+    setCurrentStep(prev => Math.max(0, prev - 1));
+    setTimeout(() => setNavigating(false), 300);
+  };
+  
+  // バリデーション
+  const canProceed = useMemo(() => {
+    switch (STEPS[currentStep]?.id) {
+      case 'jobType': return !!data.jobType;
+      case 'target': {
+        const enabledLayers = Object.values(data.targetLayers || {}).filter(v => v?.enabled);
+        return enabledLayers.length > 0;
+      }
+      case 'method': {
+        const activeMethods = Object.values(data.recruitmentMethods || {}).filter(v => v?.active);
+        return activeMethods.length > 0;
+      }
+      default: return true;
+    }
+  }, [currentStep, data]);
+  
+  // 質問セット（常に計算 - hooks順序保証のため条件分岐の前に配置）
+  const staffQuestions = useMemo(() => getQuestions('staff'), [getQuestions]);
+  const executiveQuestions = useMemo(() => getQuestions('executive'), [getQuestions]);
+  
+  // 問題セットが変わった場合、完了フラグをリセット
+  useEffect(() => {
+    if (!questionMaster || !started) return;
+    const checkAndReset = (roleKey, questions) => {
+      const completedKey = `${roleKey}Completed`;
+      const answersKey = `${roleKey}Answers`;
+      if (!data[completedKey]) return;
+      const answers = data[answersKey] || {};
+      const answeredIds = new Set(Object.keys(answers).filter(k => answers[k]));
+      const currentIds = new Set(questions.map(q => q.id));
+      const staleAnswers = [...answeredIds].filter(id => !currentIds.has(id));
+      if (staleAnswers.length > 0) {
+        setData(prev => ({ ...prev, [completedKey]: false, [answersKey]: {} }));
+      }
+    };
+    checkAndReset('staff', staffQuestions);
+    checkAndReset('executive', executiveQuestions);
+  }, [staffQuestions, executiveQuestions, questionMaster, started]);
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="glass-card rounded-2xl p-8 text-center max-w-md">
+          <div className="flex justify-center mb-4"><SolidIcon name="warning" className="w-14 h-14 text-amber-500" /></div>
+          <p className="text-red-600 font-bold mb-4">{error}</p>
+          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold">
+            再読み込み
+          </button>
+        </div>
+      </div>
+    );
+  }
+  
+  if (completed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <CompletionScreen />
+      </div>
+    );
+  }
+  
+  // 個人情報同意画面
+  if (!started) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-8">
+        <div className="glass-card rounded-2xl p-8 animate-in">
+          <div className="text-center mb-6">
+            <img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0iX+ODrOOCpOODpOODvF8xIiBkYXRhLW5hbWU9IuODrOOCpOODpOODvCAxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMTEuMDQgMzUyLjMiPgogIDxkZWZzPgogICAgPHN0eWxlPgogICAgICAuY2xzLTEgewogICAgICAgIGZpbGw6IG5vbmU7CiAgICAgIH0KCiAgICAgIC5jbHMtMiB7CiAgICAgICAgZmlsbDogIzAwMmUzYjsKICAgICAgfQoKICAgICAgLmNscy0zIHsKICAgICAgICBmaWxsOiAjZmZlMjAwOwogICAgICB9CgogICAgICAuY2xzLTQgewogICAgICAgIGZpbGw6ICNjZjJhMjc7CiAgICAgIH0KCiAgICAgIC5jbHMtNSB7CiAgICAgICAgZmlsbDogIzI2YThhYTsKICAgICAgfQoKICAgICAgLmNscy02IHsKICAgICAgICBmaWxsOiAjZmZmOwogICAgICAgIHN0cm9rZTogIzA0MDAwMDsKICAgICAgICBzdHJva2UtbWl0ZXJsaW1pdDogMTA7CiAgICAgIH0KICAgIDwvc3R5bGU+CiAgPC9kZWZzPgogIDxwYXRoIGNsYXNzPSJjbHMtMiIgZD0ibTE1NS40NSwxNzUuMzdjLTExLjg1LDAtMjEuNDksOS42NC0yMS40OSwyMS40OXM5LjY0LDIxLjQ5LDIxLjQ5LDIxLjQ5LDIxLjQ5LTkuNjQsMjEuNDktMjEuNDktOS42NC0yMS40OS0yMS40OS0yMS40OVptMCwzMy4xOGMtNi40NiwwLTExLjY5LTUuMjMtMTEuNjktMTEuNjlzNS4yMy0xMS42OSwxMS42OS0xMS42OSwxMS42OSw1LjIzLDExLjY5LDExLjY5LTUuMjMsMTEuNjktMTEuNjksMTEuNjlaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0xIiBkPSJtMTU1LjQ1LDIzMC45NWM5LjM0LDAsMTcuODEtMy43NiwyMy45Ny05Ljg0bC4yOS0uMDUuMDUtLjI5YzYuMDgtNi4xNyw5Ljg0LTE0LjYzLDkuODQtMjMuOTdzLTMuNzYtMTcuODEtOS44NC0yMy45N2wtLjA1LS4yOS0uMjktLjA1Yy02LjE3LTYuMDgtMTQuNjMtOS44NC0yMy45Ny05Ljg0cy0xNy44MSwzLjc2LTIzLjk3LDkuODRsLS4yOS4wNS0uMDUuMjljLTYuMDgsNi4xNy05Ljg0LDE0LjYzLTkuODQsMjMuOTdzMy43NiwxNy44MSw5Ljg0LDIzLjk3bC4wNS4yOS4yOS4wNWM2LjE3LDYuMDgsMTQuNjMsOS44NCwyMy45Nyw5Ljg0WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtMiIgZD0ibTE1NS40NSwxNjIuNjZjOS4zNCwwLDE3LjgxLDMuNzYsMjMuOTcsOS44NGwuMjkuMDUtNi4wNy0zMi44MmMtOS4xOCwzLjgzLTE3LjI3LDQuNjMtMTcuNjMsNC42NmwtLjU3LjA1LS41Ny0uMDVjLS4zNS0uMDMtOC40NS0uODItMTcuNjItNC42NmwtNi4wNywzMi44Mi4yOS0uMDVjNi4xNy02LjA4LDE0LjYzLTkuODQsMjMuOTctOS44NFoiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTIiIGQ9Im0xMjEuMywxOTYuOGMwLTkuMzQsMy43Ni0xNy44MSw5Ljg0LTIzLjk3bC4wNS0uMjlMMCwxOTYuOGwxMzEuMTksMjQuMjYtLjA1LS4yOWMtNi4wOC02LjE3LTkuODQtMTQuNjMtOS44NC0yMy45N1oiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTIiIGQ9Im0xNzkuNDIsMjIxLjEyYy02LjE3LDYuMDgtMTQuNjMsOS44NC0yMy45Nyw5Ljg0cy0xNy44MS0zLjc2LTIzLjk3LTkuODRsLS4yOS0uMDUsMjQuMjYsMTMxLjE5LDI0LjI2LTEzMS4xOS0uMjkuMDVaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0yIiBkPSJtMTg5LjU5LDE5Ni44YzAsOS4zNC0zLjc2LDE3LjgxLTkuODQsMjMuOTdsLS4wNS4yOSwxMzEuMTktMjQuMjYtMTMxLjE5LTI0LjI2LjA1LjI5YzYuMDgsNi4xNyw5Ljg0LDE0LjYzLDkuODQsMjMuOTdaIi8+CiAgPHBvbHlnb24gY2xhc3M9ImNscy00IiBwb2ludHM9IjEyOC4yMSAxNTUuMTUgODUuMjQgMTI1LjE4IDExNC43NyAxNjkuMzggMTI1Ljk2IDE2Ny4zMiAxMjguMjEgMTU1LjE1Ii8+CiAgPHBvbHlnb24gY2xhc3M9ImNscy00IiBwb2ludHM9IjExMy43OSAyMjQuMDQgODMuODIgMjY3LjAyIDEyOC4wMiAyMzcuNDggMTI1Ljk2IDIyNi4yOSAxMTMuNzkgMjI0LjA0Ii8+CiAgPHBvbHlnb24gY2xhc3M9ImNscy00IiBwb2ludHM9IjE4Mi42OSAyMzguNDYgMjI1LjY2IDI2OC40MyAxOTYuMTIgMjI0LjIzIDE4NC45NCAyMjYuMjkgMTgyLjY5IDIzOC40NiIvPgogIDxwb2x5Z29uIGNsYXNzPSJjbHMtNCIgcG9pbnRzPSIxODQuOTQgMTY3LjMyIDE5Ny4xIDE2OS41NyAyMjcuMDcgMTI2LjU5IDE4Mi44NyAxNTYuMTMgMTg0Ljk0IDE2Ny4zMiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE3MC4wOSwzMDYuNTdsLTIuOTUsMTUuOTdjNjAuMzItNS41NiwxMDguNDgtNTMuNzIsMTE0LjA0LTExNC4wNGwtMTUuOTcsMi45NWMtNi41Myw0OS40NC00NS42OCw4OC41OS05NS4xMiw5NS4xMloiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTQiIGQ9Im00NS42OCwyMTEuNDVsLTE1Ljk3LTIuOTVjNS41Niw2MC4zMiw1My43MiwxMDguNDgsMTE0LjA0LDExNC4wNGwtMi45NS0xNS45N2MtNDkuNDQtNi41My04OC41OS00NS42OC05NS4xMi05NS4xMloiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTYiIGQ9Im0xNTUuNDUsMTQ0LjQ0LTE4LjE5LTQuNzEiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTUiIGQ9Im0xNTQuODgsMTQ0LjM5Yy0uMzUtLjAzLTguNDUtLjgyLTE3LjYyLTQuNjZsLTYuMDcsMzIuODIuMjktLjA1YzYuMTctNi4wOCwxNC42My05Ljg0LDIzLjk3LTkuODR2LTE4LjIyaDBzLS41Ny0uMDUtLjU3LS4wNVoiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTUiIGQ9Im0xMzEuMTksMTcyLjZMMCwxOTYuODZoMTIxLjNjMC05LjM0LDMuNzYtMTcuODEsOS44NC0yMy45N2wuMDUtLjI5WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtNSIgZD0ibTE1NS40NSwyMzEuMDFoMHYxMjEuM2wyNC4zMS0xMzEuNDdjLTYuMTksNi4yOC0xNC44LDEwLjE4LTI0LjMxLDEwLjE4WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtNSIgZD0ibTE4OS43NCwxOTYuODZoMTIxLjNsLTEzMS40NywyNC4zMWM2LjI4LTYuMTksMTAuMTgtMTQuOCwxMC4xOC0yNC4zMVoiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xNTUuNDUsMTYyLjY2YzkuMzQsMCwxNy44MSwzLjc2LDIzLjk3LDkuODRsLjI5LjA1LTYuMDctMzIuODJjLTkuMTgsMy44My0xNy4yNyw0LjYzLTE3LjYzLDQuNjZsLS41Ny4wNS0uNTctLjA1Yy0uMzUtLjAzLTguNDUtLjgyLTE3LjYyLTQuNjZsLTYuMDcsMzIuODIuMjktLjA1YzYuMTctNi4wOCwxNC42My05Ljg0LDIzLjk3LTkuODRaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0zIiBkPSJtMTIxLjMsMTk2LjhjMC05LjM0LDMuNzYtMTcuODEsOS44NC0yMy45N2wuMDUtLjI5TDAsMTk2LjhsMTMxLjE5LDI0LjI2LS4wNS0uMjljLTYuMDgtNi4xNy05Ljg0LTE0LjYzLTkuODQtMjMuOTdaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0zIiBkPSJtMTc5LjQyLDIyMS4xMmMtNi4xNyw2LjA4LTE0LjYzLDkuODQtMjMuOTcsOS44NHMtMTcuODEtMy43Ni0yMy45Ny05Ljg0bC0uMjktLjA1LDI0LjI2LDEzMS4xOSwyNC4yNi0xMzEuMTktLjI5LjA1WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtMyIgZD0ibTE4OS41OSwxOTYuOGMwLDkuMzQtMy43NiwxNy44MS05Ljg0LDIzLjk3bC0uMDUuMjksMTMxLjE5LTI0LjI2LTEzMS4xOS0yNC4yNi4wNS4yOWM2LjA4LDYuMTcsOS44NCwxNC42Myw5Ljg0LDIzLjk3WiIvPgogIDxnPgogICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTU1LjQ1LDE3NS4zN2MtMTEuODUsMC0yMS40OSw5LjY0LTIxLjQ5LDIxLjQ5czkuNjQsMjEuNDksMjEuNDksMjEuNDksMjEuNDktOS42NCwyMS40OS0yMS40OS05LjY0LTIxLjQ5LTIxLjQ5LTIxLjQ5Wm0wLDMzLjE4Yy02LjQ2LDAtMTEuNjktNS4yMy0xMS42OS0xMS42OXM1LjIzLTExLjY5LDExLjY5LTExLjY5LDExLjY5LDUuMjMsMTEuNjksMTEuNjktNS4yMywxMS42OS0xMS42OSwxMS42OVoiLz4KICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTEyMS4zLDE5Ni44aDBzLTkwLjc4LDAtOTAuNzgsMGw5NS43My0xNy43YzEuMzgtMi4yOCwzLjAyLTQuMzgsNC44OS02LjI3bC4wNS0uMjlMMCwxOTYuOGwxMzEuMTksMjQuMjYtLjA1LS4yOWMtNi4wOC02LjE3LTkuODQtMTQuNjMtOS44NC0yMy45N1oiLz4KICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE3My4wOSwyMjYuMDRsLTE3LjY0LDk1LjR2LTkwLjQ5Yy05LjM0LDAtMTcuODEtMy43Ni0yMy45Ny05Ljg0bC0uMjktLjA1LDI0LjI2LDEzMS4xOSwyNC4yNi0xMzEuMTktLjI5LjA1Yy0xLjksMS44OC00LjAzLDMuNTMtNi4zMyw0LjkyWiIvPgogICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTc5LjcxLDE3Mi41NWwuMDUuMjljNi4wOCw2LjE3LDkuODQsMTQuNjMsOS44NCwyMy45NywwLC4wMiwwLC4wNCwwLC4wNWg5MC41NWwtOTUuNSwxNy42NmMtMS4zOCwyLjI3LTMuMDIsNC4zNy00Ljg4LDYuMjZsLS4wNS4yOSwxMzEuMTktMjQuMjYtMTMxLjE5LTI0LjI2WiIvPgogICAgPGc+CiAgICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE3My42NCwxMzkuNzNjLTkuMTgsMy44My0xNy4yNyw0LjYzLTE3LjYzLDQuNjZsLS41Ny4wNS0uNTctLjA1cy0uMTUtLjAyLS4zMS0uMDNsLjA5LDE4LjMyYy4yNiwwLC41Mi0uMDIuNzgtLjAyLDkuMzQsMCwxNy44MSwzLjc2LDIzLjk3LDkuODRsLjI5LjA1LTYuMDctMzIuODJaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE0Mi42OSwxNDEuNzFjLTEuNzMtLjU1LTMuNTYtMS4yLTUuNDQtMS45OWwtNi4wNywzMi44Mi4yOS0uMDVjMS45NS0xLjkzLDQuMTQtMy42Miw2LjUxLTUuMDNsNC43MS0yNS43NVoiLz4KICAgIDwvZz4KICA8L2c+CiAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMjgxLjE4LDE4NS4xN2MtMy4yMy0zNS4wMi0yMC44NC02NS45My00Ni44NC04Ni43OWwzLjY0LDI0LjEtLjQyLjEzYzE0LjY5LDE2LjIzLDI0LjY0LDM2LjgyLDI3LjY1LDU5LjYxbDE1Ljk3LDIuOTVaIi8+CiAgPGc+CiAgICA8cG9seWdvbiBjbGFzcz0iY2xzLTQiIHBvaW50cz0iMjUyLjEyIDQwLjg2IDIzMi44OCAzMi43MyAyMzIuODggNDguNCAyNTIuMTIgNDAuODYiLz4KICAgIDxnPgogICAgICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xMDUuOTgsNTkuMzVzMTIuNjktMjguOTUsNDkuNDQtMjcuNjJMMTU1LjQ1LDAsNTguNzcsNDAuODZsNDcuMjEsMTguNDhaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTIyOC40OCwxMDEuMmwtMi40NS0xNi4yMWMyLjg4LTEuNjMsNC44Mi00LjcyLDQuODItOC4yNiwwLTQuMTUtMi42Ny03LjY4LTYuMzgtOC45NnYtMjEuNDJoLS4wM3MwLTE3LjE5LDAtMTcuMTlMMTU1LjQ1LDBsLjAyLDMxLjczYzM2Ljc1LTEuMzQsNDkuNDQsMjcuNjIsNDkuNDQsMjcuNjJsMTMuMDItNS4xdjEzLjY1Yy0zLjU0LDEuMzgtNi4wNCw0LjgxLTYuMDQsOC44NCwwLDMuNDEsMS44LDYuNCw0LjUsOC4wN2wtMi40OCwxNi4zOS0yLjU0LDE2LjgxYzMuMS45Niw2LjQsMS40Nyw5LjgyLDEuNDdzNi43Mi0uNTIsOS44Mi0xLjQ3bC0yLjU0LTE2LjgxWiIvPgogICAgICA8Zz4KICAgICAgICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xMTUuODUsNjguOTFjNS45Ny00LjEyLDEzLTYuMywyMC4zMy02LjMsNi45MywwLDEzLjY1LDEuOTMsMTkuNTIsNS40M3YtMzAuMTZzLS4wNCwwLS4wNiwwYy0yNS40MiwwLTQ2LjAyLDE2LjMxLTQ2LjAyLDM2LjQzLDAsLjAyLDAsLjA1LDAsLjA3LDEuODQtMi4wNSwzLjkzLTMuODgsNi4yMy01LjQ3WiIvPgogICAgICAgIDxwYXRoIGNsYXNzPSJjbHMtMyIgZD0ibTE0Ny44MywxMzcuNTljMi41MS44LDUuMTIsMS4yMiw3LjgxLDEuMjIuMDIsMCwuMDQsMCwuMDYsMHYtNC4xNmMtMi41LDEuMjktNS4xNCwyLjI4LTcuODcsMi45NFoiLz4KICAgICAgPC9nPgogICAgICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xNTUuNjQsMTM4Ljgxcy4wNCwwLC4wNiwwdi02NS4wOWMtMTEuMDItNy45LTI1Ljg0LTguNzEtMzcuMTUtLjktMy4zLDIuMjgtNi4wMiw1LjA5LTguMTMsOC4yNi4xOC43NS4zOCwxLjQ5LjYyLDIuMjItMi4zOSwxLjA2LTQuMzIsMi43My01LjUsNC45Ni0zLjYyLDYuODYsMS4xNCwxNi40NywxMC42MiwyMS40NywxLjMuNjksMi42MiwxLjI1LDMuOTQsMS42OS4zOCwyLjg1LDEuMzEsNS4zNCwyLjU4LDcuMTMsMi4xNCwzLjYzLDYuMDksNy44NSwxMS4xNywxMS42NSw0LjM2LDMuMjUsOC43OCw1LjYyLDEyLjUzLDYuODcsMi45NCwxLjEzLDYuMDUsMS43Myw5LjI3LDEuNzNaIi8+CiAgICAgIDxnPgogICAgICAgIDxnPgogICAgICAgICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTk1LjU1LDY4LjkxYy01Ljk3LTQuMTItMTMtNi4zLTIwLjMzLTYuMy02LjkzLDAtMTMuNjUsMS45My0xOS41Miw1LjQzdi0zMC4xNnMuMDQsMCwuMDYsMGMyNS40MiwwLDQ2LjAyLDE2LjMxLDQ2LjAyLDM2LjQzLDAsLjAyLDAsLjA1LDAsLjA3LTEuODQtMi4wNS0zLjkzLTMuODgtNi4yMy01LjQ3WiIvPgogICAgICAgICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTYzLjU3LDEzNy41OWMtMi41MS44LTUuMTIsMS4yMi03LjgxLDEuMjItLjAyLDAtLjA0LDAtLjA2LDB2LTQuMTZjMi41LDEuMjksNS4xNCwyLjI4LDcuODcsMi45NFoiLz4KICAgICAgICA8L2c+CiAgICAgICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTU1Ljc2LDEzOC44MXMtLjA0LDAtLjA2LDB2LTY1LjA5YzExLjAyLTcuOSwyNS44NC04LjcxLDM3LjE1LS45LDMuMywyLjI4LDYuMDIsNS4wOSw4LjEzLDguMjYtLjE4Ljc1LS4zOCwxLjQ5LS42MiwyLjIyLDIuMzksMS4wNiw0LjMyLDIuNzMsNS41LDQuOTYsMy42Miw2Ljg2LTEuMTQsMTYuNDctMTAuNjIsMjEuNDctMS4zLjY5LTIuNjIsMS4yNS0zLjk0LDEuNjktLjM4LDIuODUtMS4zMSw1LjM0LTIuNTgsNy4xMy0yLjE0LDMuNjMtNi4wOSw3Ljg1LTExLjE3LDExLjY1LTQuMzYsMy4yNS04Ljc4LDUuNjItMTIuNTMsNi44Ny0yLjk0LDEuMTMtNi4wNSwxLjczLTkuMjcsMS43M1oiLz4KICAgICAgPC9nPgogICAgICA8cGF0aCBjbGFzcz0iY2xzLTQiIGQ9Im05OS42OSw4NS40Yy40NC0uODQuOTYtMS42MiwxLjU0LTIuMzctLjAxLS4wNC0uMDItLjA4LS4wMy0uMTItMzkuMDgsMTguNzgtNjcuMDgsNTcuMDktNzEuMjQsMTAyLjJsMTUuOTctMi45NWM0LjU1LTM0LjQzLDI0LjkzLTYzLjg2LDUzLjU4LTgwLjc3LTIuMzEtNS4zMi0yLjQzLTExLjAzLjE5LTE1Ljk5WiIvPgogICAgPC9nPgogIDwvZz4KPC9zdmc+" alt="Gakusapo" className="h-16 mx-auto mb-4" style={{ height: '64px', margin: '0 auto 16px' }} />
+            <h1 className="text-2xl font-bold text-gray-800">採用ブラックボックス診断<sup className="text-xs">®</sup></h1>
+            <p className="text-sm text-gray-500 mt-1">事前問診フォーム</p>
+          </div>
+          
+          <div className="p-5 bg-gray-50 border border-gray-200 rounded-xl mb-6">
+            <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              本診断について
+            </h3>
+            <p className="text-sm text-gray-700 leading-relaxed mb-4">
+              本フォームは、貴社の採用活動における「見えていない課題（ブラックボックス）」を数値化・可視化するための専門ツールです。
+              お打ち合わせ当日に<span className="font-bold text-blue-700">貴社だけの具体的な「解決策」</span>をご提示するため、現状の数値や課題感について、ありのままをご回答ください。
+            </p>
+            <div className="flex flex-col gap-2 text-sm text-gray-700">
+              <div className="flex items-center gap-2">
+                <SolidIcon name="clock" className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                <span><span className="font-bold">所要時間：</span>20〜30分程度（設問数：約50問）</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <SolidIcon name="save" className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                <span><span className="font-bold">途中保存：</span>回答内容は一時保存が可能です。中断する場合は「保存」ボタンを押してください。</span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="p-5 bg-blue-50 border border-blue-200 rounded-xl mb-6">
+            <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              情報の取り扱いについて
+            </h3>
+            <ul className="text-sm text-gray-700 space-y-2">
+              <li className="flex items-start gap-2">
+                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
+                <span>ご入力いただく情報には、貴社の採用戦略・人員計画・予算配分など、<span className="font-bold">企業の機密性の高い情報</span>が含まれます。</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
+                <span>これらの情報は、株式会社Gakusapoが<span className="font-bold">厳重に管理</span>し、本診断の目的以外には一切使用いたしません。</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
+                <span>第三者への提供・開示は行いません。診断完了後、ご希望に応じてデータの削除にも対応いたします。</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
+                <span>AI（生成AI）を活用した分析を行う場合がありますが、入力データがAIの学習に使用されることはありません。</span>
+              </li>
+            </ul>
+          </div>
+          
+          <label className={`flex items-start gap-3 p-4 border-2 rounded-xl cursor-pointer transition mb-6 ${
+            privacyAgreed ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200 hover:border-blue-300'
+          }`}>
+            <input
+              type="checkbox"
+              checked={privacyAgreed}
+              onChange={(e) => setPrivacyAgreed(e.target.checked)}
+              className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+            />
+            <span className="text-sm text-gray-800 leading-relaxed">
+              上記の情報の取り扱いについて確認し、
+              <span className="font-bold text-blue-700">個人情報および企業情報の取り扱いに同意</span>
+              のうえ、事前問診を開始します。
+            </span>
+          </label>
+          
+          <button
+            disabled={!privacyAgreed}
+            onClick={() => setStarted(true)}
+            className={`w-full py-4 rounded-xl font-bold text-lg transition shadow-lg ${
+              privacyAgreed
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 hover:shadow-xl'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            {privacyAgreed ? '問診を開始する →' : '上記に同意してください'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      {/* ヘッダー */}
+      <div className="text-center mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">
+          採用ブラックボックス診断<sup className="text-xs">®</sup>
+        </h1>
+        <p className="text-sm text-gray-500 mt-1">事前問診フォーム</p>
+        {saving && (
+          <span className="inline-block mt-2 text-xs text-blue-500 bg-blue-50 px-3 py-1 rounded-full">
+            保存中...
+          </span>
+        )}
+      </div>
+      
+      <ProgressBar currentStep={currentStep} totalSteps={STEPS.length} />
+      
+      {/* Step Content */}
+      {STEPS[currentStep]?.id === 'jobType' && (
+        <StepJobType data={data} onChange={setData} />
+      )}
+      {STEPS[currentStep]?.id === 'target' && (
+        <StepTarget data={data} onChange={setData} />
+      )}
+      {STEPS[currentStep]?.id === 'method' && (
+        <StepMethod data={data} onChange={setData} methodMaster={methodMaster} />
+      )}
+      {STEPS[currentStep]?.id === 'staff' && (
+        <StepQuestionnaire
+          data={data}
+          onChange={setData}
+          roleKey="staff"
+          questions={staffQuestions}
+          title="採用担当者 問診"
+          timerSeconds={900}
+          onQuizActive={setQuizActive}
+          onComplete={async (newData) => {
+            setNavigating(true);
+            setData(newData);
+            await saveProgress(newData);
+            setCurrentStep(prev => prev + 1);
+            window.scrollTo(0, 0);
+            setNavigating(false);
+          }}
+        />
+      )}
+      {STEPS[currentStep]?.id === 'executive' && (
+        <StepQuestionnaire
+          data={data}
+          onChange={setData}
+          roleKey="executive"
+          questions={executiveQuestions}
+          title="上層部（経営者・役員）問診"
+          timerSeconds={900}
+          optional={true}
+          optionalNote="より正確な診断結果をお求めの場合はご回答ください。スキップしても送信可能です。"
+          onQuizActive={setQuizActive}
+          onComplete={async (newData) => {
+            setNavigating(true);
+            setData(newData);
+            await saveProgress(newData);
+            setCurrentStep(prev => prev + 1);
+            window.scrollTo(0, 0);
+            setNavigating(false);
+          }}
+        />
+      )}
+      {STEPS[currentStep]?.id === 'funnel' && (
+        <StepFunnel data={data} onChange={setData} methodMaster={methodMaster} />
+      )}
+      
+      {/* ナビゲーション（問診回答中・遷移中は非表示） */}
+      {!quizActive && (() => {
+        const stepId = STEPS[currentStep]?.id;
+        const isQuizStep = stepId === 'staff' || stepId === 'executive';
+        const answersKey = stepId === 'staff' ? 'staffAnswers' : 'executiveAnswers';
+        const hasAnswers = isQuizStep && Object.keys(data[answersKey] || {}).filter(k => data[answersKey][k]).length > 0;
+        const isQuizCompleted = isQuizStep && data[`${stepId}Completed`] === true && hasAnswers;
+        const isQuizSkipped = isQuizStep && data[`${stepId}Skipped`] === true;
+        const isQuizNotStarted = isQuizStep && !isQuizCompleted && !isQuizSkipped;
+        // 問診ステップで未完了かつ未スキップの場合: 問診コンポーネントが遷移を管理するためナビ非表示
+        if (isQuizNotStarted) return null;
+        
+        // 問診完了済み or 通常ステップ: ナビ表示
+        const staffHasAnswers = Object.keys(data.staffAnswers || {}).filter(k => data.staffAnswers[k]).length > 0;
+        const backDisabled = navigating || currentStep === 0 || (stepId === 'executive' && !(data.staffCompleted && staffHasAnswers));
+        const nextDisabled = navigating || !canProceed;
+        return (
+          <div className="flex justify-between items-center mt-6 mb-10">
+            <button
+              onClick={goPrev}
+              disabled={backDisabled}
+              className={`px-6 py-3 rounded-xl font-bold transition ${
+                backDisabled
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-sm'
+              }`}
+            >
+              ← 前へ
+            </button>
+            
+            <span className="text-sm text-gray-400">
+              {navigating ? (
+                <span className="inline-flex items-center gap-2 text-blue-500">
+                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <circle cx="12" cy="12" r="10" className="opacity-25" />
+                    <path d="M4 12a8 8 0 018-8" className="opacity-75" />
+                  </svg>
+                  保存中...
+                </span>
+              ) : (
+                `${currentStep + 1} / ${STEPS.length}`
+              )}
+            </span>
+            
+            <button
+              onClick={goNext}
+              disabled={nextDisabled}
+              className={`px-6 py-3 rounded-xl font-bold transition shadow-lg ${
+                nextDisabled
+                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  : currentStep >= STEPS.length - 1
+                    ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
+              }`}
+            >
+              {currentStep >= STEPS.length - 1 ? <span className="inline-flex items-center gap-1.5">送信する<SolidIcon name="checkCircle" className="w-5 h-5" /></span> : '次へ →'}
+            </button>
+          </div>
+        );
+      })()}
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
