@@ -6,7 +6,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v41: PDF出力時のドット・棒グラフ数字・凡例ズレ修正(実DOM書換方式) -->
+  <!-- v41: PDF出力ズレ修正 - table→flex, translateY→lineHeight, arbitrary値→inline -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -132,7 +132,8 @@ body {
 
 /* セクションラベル */
 .section-label {
-  display: table;
+  display: flex;
+  align-items: center;
   font-size: 12px;
   color: #64748b;
   margin-bottom: 12px;
@@ -141,15 +142,16 @@ body {
 }
 
 .section-label-dot {
-  display: table-cell;
-  vertical-align: middle;
+  display: flex;
+  align-items: center;
   width: 16px;
   padding-right: 8px;
+  flex-shrink: 0;
 }
 
 .section-label-text {
-  display: table-cell;
-  vertical-align: middle;
+  display: flex;
+  align-items: center;
 }
 
 /* ============================================
@@ -658,21 +660,22 @@ input[type="range"]::-moz-range-thumb {
   letter-spacing: 0.05em;
 }
 
-/* レジェンド用テーブルレイアウト */
+/* レジェンド用フレックスレイアウト */
 .legend-item-inline {
-  display: inline-table;
+  display: inline-flex;
+  align-items: center;
   vertical-align: middle;
 }
 
 .legend-dot-cell {
-  display: table-cell;
-  vertical-align: middle;
+  display: flex;
+  align-items: center;
   padding-right: 4px;
 }
 
 .legend-text-cell {
-  display: table-cell;
-  vertical-align: middle;
+  display: flex;
+  align-items: center;
 }
 
 /* PDF出力時: 左カラムの2カードを1カードに見せて右カラムと境界を揃える */
@@ -693,22 +696,7 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: none;
 }
 
-/* PDF出力時: html2canvasがtable-cellのvertical-alignを正しく処理できないためflexboxに切替 */
-.pdf-export-mode .legend-item-inline {
-  display: inline-flex;
-  align-items: center;
-}
-
-.pdf-export-mode .legend-dot-cell {
-  display: flex;
-  align-items: center;
-  padding-right: 4px;
-}
-
-.pdf-export-mode .legend-text-cell {
-  display: flex;
-  align-items: center;
-}
+/* PDF出力時: section-label/legendは既にflexboxのため追加修正不要 */
 
 /* ============================================
    10. 印刷用スタイル
@@ -6111,7 +6099,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
       <div className="flex-1">
         {/* X軸目盛り */}
         <div className="flex items-center mb-2 ml-12">
-          <div className="flex-1 flex justify-between text-[10px] text-gray-400">
+          <div className="flex-1 flex justify-between text-gray-400" style={{ fontSize: '10px' }}>
             <span>0</span>
             <span>{Math.round(globalMax / 2)}</span>
             <span>{globalMax}</span>
@@ -6133,8 +6121,8 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                 <div className="flex-1 space-y-0.5">
                   {/* 実績値（上段）- カラーバー */}
                   <div 
-                    className="h-[18px] overflow-hidden relative"
-                    style={{ backgroundColor: barBgColors[idx], borderRadius: '4px' }}
+                    className="overflow-hidden relative"
+                    style={{ backgroundColor: barBgColors[idx], borderRadius: '4px', height: '18px' }}
                   >
                     <div 
                       className="h-full"
@@ -6146,16 +6134,16 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                       }}
                     />
                     <span 
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-medium"
-                      style={{ color: actualTextOverlap ? '#ffffff' : '#6b7280' }}
+                      className="absolute right-1.5 top-0 font-medium"
+                      style={{ color: actualTextOverlap ? '#ffffff' : '#6b7280', fontSize: '10px', lineHeight: '18px' }}
                     >
                       {Math.round(item.actual * animationProgress)}
                     </span>
                   </div>
                   {/* 目標目安（下段）- グレーの棒グラフ（上段の半分の太さ） */}
                   <div 
-                    className="h-[9px] bg-gray-100 overflow-hidden relative"
-                    style={{ borderRadius: '4px' }}
+                    className="bg-gray-100 overflow-hidden relative"
+                    style={{ borderRadius: '4px', height: '9px' }}
                   >
                     <div 
                       className="h-full"
@@ -6167,8 +6155,8 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                       }}
                     />
                     <span 
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px]"
-                      style={{ color: targetTextOverlap ? '#d1d5db' : '#9ca3af' }}
+                      className="absolute right-1.5 top-0"
+                      style={{ color: targetTextOverlap ? '#d1d5db' : '#9ca3af', fontSize: '9px', lineHeight: '9px' }}
                     >
                       {Math.round(item.target * animationProgress)}
                     </span>
@@ -6180,13 +6168,13 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
         </div>
         
         {/* 凡例 */}
-        <div className="text-center mt-3 text-[10px] text-gray-600 font-bold">
+        <div className="text-center mt-3 text-gray-600 font-bold" style={{ fontSize: '10px' }}>
           上段：実績値　　下段：目標目安{targetHires > 0 && `（目標${targetHires}人から逆算）`}
         </div>
       </div>
       
       {/* 右側：歩留まり情報（仕切り付き） */}
-      <div className="w-44 pl-3 border-l border-gray-300 text-[10px]">
+      <div className="w-44 pl-3 border-l border-gray-300" style={{ fontSize: '10px' }}>
         <div className="font-bold text-gray-800 mb-2">【歩留まり率業界平均値】</div>
         <div className="space-y-1 text-gray-600">
           <div>認知→興味：{industryAverages.awarenessToInterest}%（実績 {actualRates.awarenessToInterest}%）</div>
@@ -16156,72 +16144,6 @@ const App = () => {
       sheetRef.current.classList.add('pdf-export-mode');
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      // === html2canvas互換性のためのDOM直接修正 ===
-      // html2canvasはtable-cell/vertical-align/transform:translateYを正しく処理できないため
-      // キャプチャ前に実DOMをflex配置に書き換え、キャプチャ後に復元する
-      const pdfDomFixes = []; // {element, prop, original} の配列（復元用）
-      
-      const saveFix = (el, prop, newVal) => {
-        pdfDomFixes.push({ element: el, prop, original: el.style.getPropertyValue(prop) });
-        el.style.setProperty(prop, newVal);
-      };
-      
-      // Fix A: section-label ドット (table/table-cell → flex)
-      sheetRef.current.querySelectorAll('.section-label').forEach(el => {
-        saveFix(el, 'display', 'flex');
-        saveFix(el, 'align-items', 'center');
-      });
-      sheetRef.current.querySelectorAll('.section-label-dot').forEach(el => {
-        saveFix(el, 'display', 'flex');
-        saveFix(el, 'align-items', 'center');
-        saveFix(el, 'flex-shrink', '0');
-      });
-      sheetRef.current.querySelectorAll('.section-label-text').forEach(el => {
-        saveFix(el, 'display', 'flex');
-        saveFix(el, 'align-items', 'center');
-      });
-      
-      // Fix B: legend ドット (担当者/上層部)
-      sheetRef.current.querySelectorAll('.legend-item-inline').forEach(el => {
-        saveFix(el, 'display', 'inline-flex');
-        saveFix(el, 'align-items', 'center');
-      });
-      sheetRef.current.querySelectorAll('.legend-dot-cell').forEach(el => {
-        saveFix(el, 'display', 'flex');
-        saveFix(el, 'align-items', 'center');
-      });
-      sheetRef.current.querySelectorAll('.legend-text-cell').forEach(el => {
-        saveFix(el, 'display', 'flex');
-        saveFix(el, 'align-items', 'center');
-      });
-      
-      // Fix C: 棒グラフ内の数字 (absolute + translateY(-50%) → top:0/bottom:0 + flex)
-      sheetRef.current.querySelectorAll('*').forEach(el => {
-        const cls = typeof el.className === 'string' ? el.className : '';
-        if (cls.includes('-translate-y-1/2') && cls.includes('absolute')) {
-          saveFix(el, 'top', '0');
-          saveFix(el, 'bottom', '0');
-          saveFix(el, 'transform', 'none');
-          saveFix(el, '-webkit-transform', 'none');
-          saveFix(el, 'display', 'flex');
-          saveFix(el, 'align-items', 'center');
-          saveFix(el, 'line-height', '1');
-        }
-      });
-      
-      // Fix D: Tailwind CDN arbitrary values のcomputedStyleインライン化
-      // text-[10px], text-[9px]等のランタイム生成スタイルをインラインに固定
-      sheetRef.current.querySelectorAll('*').forEach(el => {
-        const cs = window.getComputedStyle(el);
-        const fontSize = cs.fontSize;
-        // 通常のTailwind sizeでない arbitrary value (9px, 10px, 11px等) を固定
-        if (fontSize && (fontSize === '9px' || fontSize === '10px' || fontSize === '11px')) {
-          saveFix(el, 'font-size', fontSize);
-        }
-      });
-      
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
       // グラデーション背景を持つ要素を一時的に単色に変換
       const gradientElements = [];
       sheetRef.current.querySelectorAll('*').forEach(el => {
@@ -16406,15 +16328,6 @@ const App = () => {
         }
       });
       
-      // === html2canvas互換性修正の復元 ===
-      for (const { element, prop, original } of pdfDomFixes) {
-        if (original) {
-          element.style.setProperty(prop, original);
-        } else {
-          element.style.removeProperty(prop);
-        }
-      }
-      
       // 元のcanvasを復元
       for (const { img, canvas, parent } of canvasReplacements) {
         if (img.parentNode) {
@@ -16463,18 +16376,6 @@ const App = () => {
       
       // エラー時の復元処理
       if (sheetRef.current) {
-        // html2canvas互換性修正の復元
-        if (typeof pdfDomFixes !== 'undefined') {
-          for (const { element, prop, original } of pdfDomFixes) {
-            try {
-              if (original) {
-                element.style.setProperty(prop, original);
-              } else {
-                element.style.removeProperty(prop);
-              }
-            } catch(e2) {}
-          }
-        }
         // SVG画像を元に戻す
         for (const { img, originalSrc } of svgImageReplacements) {
           if (img && img.parentNode) {
