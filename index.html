@@ -6,7 +6,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v41: PDF出力時のドット・棒グラフ数字・カード位置ズレ修正 -->
+  <!-- v41: PDF出力時のドット・棒グラフ数字・凡例ズレ修正(実DOM書換方式) -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -642,13 +642,8 @@ input[type="range"]::-moz-range-thumb {
   overflow: visible !important;
 }
 
-.pdf-export-mode .diagnosis-sheet,
-.pdf-export-mode .section-card,
-.pdf-export-mode .section-card > * {
-  overflow: visible !important;
-}
-
 .pdf-export-mode * {
+  overflow: visible !important;
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
 }
@@ -713,49 +708,6 @@ input[type="range"]::-moz-range-thumb {
 .pdf-export-mode .legend-text-cell {
   display: flex;
   align-items: center;
-}
-
-/* PDF出力時: section-labelのドット位置もflexboxに切替 */
-.pdf-export-mode .section-label {
-  display: flex !important;
-  align-items: center !important;
-}
-
-.pdf-export-mode .section-label-dot {
-  display: flex !important;
-  align-items: center !important;
-  width: 16px;
-  padding-right: 8px;
-  flex-shrink: 0;
-}
-
-.pdf-export-mode .section-label-text {
-  display: flex !important;
-  align-items: center !important;
-}
-
-/* PDF出力時: 棒グラフ内数字のtransform: translateY(-50%)をflexboxに切替 */
-.pdf-export-mode .h-\[18px\] {
-  display: flex !important;
-  align-items: center !important;
-  position: relative !important;
-}
-
-.pdf-export-mode .h-\[9px\] {
-  display: flex !important;
-  align-items: center !important;
-  position: relative !important;
-}
-
-.pdf-export-mode .h-\[18px\] > span[class*="absolute"],
-.pdf-export-mode .h-\[9px\] > span[class*="absolute"] {
-  position: absolute !important;
-  right: 6px !important;
-  top: 0 !important;
-  bottom: 0 !important;
-  transform: none !important;
-  display: flex !important;
-  align-items: center !important;
 }
 
 /* ============================================
@@ -16204,6 +16156,72 @@ const App = () => {
       sheetRef.current.classList.add('pdf-export-mode');
       await new Promise(resolve => setTimeout(resolve, 100));
       
+      // === html2canvas互換性のためのDOM直接修正 ===
+      // html2canvasはtable-cell/vertical-align/transform:translateYを正しく処理できないため
+      // キャプチャ前に実DOMをflex配置に書き換え、キャプチャ後に復元する
+      const pdfDomFixes = []; // {element, prop, original} の配列（復元用）
+      
+      const saveFix = (el, prop, newVal) => {
+        pdfDomFixes.push({ element: el, prop, original: el.style.getPropertyValue(prop) });
+        el.style.setProperty(prop, newVal);
+      };
+      
+      // Fix A: section-label ドット (table/table-cell → flex)
+      sheetRef.current.querySelectorAll('.section-label').forEach(el => {
+        saveFix(el, 'display', 'flex');
+        saveFix(el, 'align-items', 'center');
+      });
+      sheetRef.current.querySelectorAll('.section-label-dot').forEach(el => {
+        saveFix(el, 'display', 'flex');
+        saveFix(el, 'align-items', 'center');
+        saveFix(el, 'flex-shrink', '0');
+      });
+      sheetRef.current.querySelectorAll('.section-label-text').forEach(el => {
+        saveFix(el, 'display', 'flex');
+        saveFix(el, 'align-items', 'center');
+      });
+      
+      // Fix B: legend ドット (担当者/上層部)
+      sheetRef.current.querySelectorAll('.legend-item-inline').forEach(el => {
+        saveFix(el, 'display', 'inline-flex');
+        saveFix(el, 'align-items', 'center');
+      });
+      sheetRef.current.querySelectorAll('.legend-dot-cell').forEach(el => {
+        saveFix(el, 'display', 'flex');
+        saveFix(el, 'align-items', 'center');
+      });
+      sheetRef.current.querySelectorAll('.legend-text-cell').forEach(el => {
+        saveFix(el, 'display', 'flex');
+        saveFix(el, 'align-items', 'center');
+      });
+      
+      // Fix C: 棒グラフ内の数字 (absolute + translateY(-50%) → top:0/bottom:0 + flex)
+      sheetRef.current.querySelectorAll('*').forEach(el => {
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (cls.includes('-translate-y-1/2') && cls.includes('absolute')) {
+          saveFix(el, 'top', '0');
+          saveFix(el, 'bottom', '0');
+          saveFix(el, 'transform', 'none');
+          saveFix(el, '-webkit-transform', 'none');
+          saveFix(el, 'display', 'flex');
+          saveFix(el, 'align-items', 'center');
+          saveFix(el, 'line-height', '1');
+        }
+      });
+      
+      // Fix D: Tailwind CDN arbitrary values のcomputedStyleインライン化
+      // text-[10px], text-[9px]等のランタイム生成スタイルをインラインに固定
+      sheetRef.current.querySelectorAll('*').forEach(el => {
+        const cs = window.getComputedStyle(el);
+        const fontSize = cs.fontSize;
+        // 通常のTailwind sizeでない arbitrary value (9px, 10px, 11px等) を固定
+        if (fontSize && (fontSize === '9px' || fontSize === '10px' || fontSize === '11px')) {
+          saveFix(el, 'font-size', fontSize);
+        }
+      });
+      
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
       // グラデーション背景を持つ要素を一時的に単色に変換
       const gradientElements = [];
       sheetRef.current.querySelectorAll('*').forEach(el => {
@@ -16388,6 +16406,15 @@ const App = () => {
         }
       });
       
+      // === html2canvas互換性修正の復元 ===
+      for (const { element, prop, original } of pdfDomFixes) {
+        if (original) {
+          element.style.setProperty(prop, original);
+        } else {
+          element.style.removeProperty(prop);
+        }
+      }
+      
       // 元のcanvasを復元
       for (const { img, canvas, parent } of canvasReplacements) {
         if (img.parentNode) {
@@ -16436,6 +16463,18 @@ const App = () => {
       
       // エラー時の復元処理
       if (sheetRef.current) {
+        // html2canvas互換性修正の復元
+        if (typeof pdfDomFixes !== 'undefined') {
+          for (const { element, prop, original } of pdfDomFixes) {
+            try {
+              if (original) {
+                element.style.setProperty(prop, original);
+              } else {
+                element.style.removeProperty(prop);
+              }
+            } catch(e2) {}
+          }
+        }
         // SVG画像を元に戻す
         for (const { img, originalSrc } of svgImageReplacements) {
           if (img && img.parentNode) {
