@@ -6,7 +6,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v41: PDF出力ズレ修正 - foreignObjectRendering:trueでネイティブCSS描画 -->
+  <!-- v41: PDF出力ズレ修正 - html2canvas→dom-to-imageに置換 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -51,6 +51,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <!-- Google Sign-In (v34) -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -16312,34 +16313,32 @@ const App = () => {
       await Promise.all(imagePromises);
       await new Promise(resolve => setTimeout(resolve, 500)); // 追加の待機時間
       
-      // html2canvasでキャプチャ
-      // foreignObjectRendering: trueでブラウザのネイティブレンダリングを使用
-      // SVG→PNG変換、canvas→img変換は事前に済んでいるためCORS問題を回避
-      const capturedCanvas = await html2canvas(sheetRef.current, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        imageTimeout: 30000,
-        foreignObjectRendering: true, // ブラウザのCSS解釈をそのまま使い、レイアウトズレを解消
-        onclone: (clonedDoc) => {
-          // クローンされたドキュメント内の画像を確認
-          const clonedImages = clonedDoc.querySelectorAll('img');
-          clonedImages.forEach(img => {
-            if (img.src && img.src.startsWith('data:image/svg+xml')) {
-              // SVG画像が正しく読み込まれているか確認
-              if (!img.complete || img.naturalWidth === 0) {
-                console.warn('SVG image not loaded:', img.src.substring(0, 50));
-              } else {
-                if (DEBUG_MODE) {
-                  debugLog('SVG image loaded successfully:', img.naturalWidth, 'x', img.naturalHeight);
-                }
-              }
-            }
-          });
+      // dom-to-imageでキャプチャ（ブラウザのネイティブCSS描画を使用）
+      const scale = 2;
+      const sheetWidth = sheetRef.current.offsetWidth;
+      const sheetHeight = sheetRef.current.offsetHeight;
+      
+      const imgData = await domtoimage.toPng(sheetRef.current, {
+        width: sheetWidth * scale,
+        height: sheetHeight * scale,
+        bgcolor: '#ffffff',
+        style: {
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          width: sheetWidth + 'px',
+          height: sheetHeight + 'px'
         }
       });
+      
+      // 画像サイズを取得
+      const tempImg = new Image();
+      tempImg.src = imgData;
+      await new Promise((resolve, reject) => {
+        tempImg.onload = resolve;
+        tempImg.onerror = reject;
+      });
+      const imgWidth = tempImg.width;
+      const imgHeight = tempImg.height;
       
       // 元のcanvasを復元
       for (const { img, canvas, parent } of canvasReplacements) {
@@ -16371,15 +16370,12 @@ const App = () => {
       
       const pdfWidth = 297;
       const pdfHeight = 210;
-      const imgWidth = capturedCanvas.width;
-      const imgHeight = capturedCanvas.height;
       const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
       const finalWidth = imgWidth * ratio;
       const finalHeight = imgHeight * ratio;
       const offsetX = (pdfWidth - finalWidth) / 2;
       const offsetY = (pdfHeight - finalHeight) / 2;
       
-      const imgData = capturedCanvas.toDataURL('image/png', 1.0);
       pdf.addImage(imgData, 'PNG', offsetX, offsetY, finalWidth, finalHeight);
       pdf.save(`採用BB診断_${currentData.companyName || '企業名未設定'}_${currentData.diagnosisDate}.pdf`);
       
