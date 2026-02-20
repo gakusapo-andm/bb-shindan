@@ -3970,22 +3970,31 @@ const GASDataManager = {
       }
   },
   
-  // 採用手法マスターを読み込み
+  // 採用手法マスターを読み込み（スプレッドシートから取得）
   loadMethodMaster: async () => {
       try {
-        // v34: authFetch使用
-        try {
-          const mmResult = await authFetch('getRecruitmentMethods');
-          if (mmResult.success && mmResult.data) {
-            _gasMethodMaster = mmResult.data;
-            console.log('採用手法マスターをGASから読み込み:', mmResult.data);
-            try { localStorage.setItem('gakusapo_method_master', JSON.stringify(mmResult.data)); } catch (e) {}
-          }
-          return mmResult.data || null;
-        } catch (err) {
-          console.error('採用手法マスター読み込みエラー:', err);
-          return null;
+        const mmResult = await authFetch('getRecruitmentMethods');
+        if (mmResult.success && mmResult.data && Object.keys(mmResult.data).length > 0) {
+          _gasMethodMaster = mmResult.data;
+          console.log('[マスター] 採用手法マスター読み込み完了:', Object.keys(mmResult.data).length, '件');
+          try { localStorage.setItem('gakusapo_method_master', JSON.stringify(mmResult.data)); } catch (e) {}
+          return mmResult.data;
         }
+        // GAS側 initializeDefaultData がログイン時に自動投入するため、通常ここには来ない
+        console.warn('[マスター] 採用手法マスターがスプレッドシートから取得できませんでした。GAS側の初期化を確認してください。');
+        // localStorageキャッシュをフォールバックとして使用
+        try {
+          const cached = localStorage.getItem('gakusapo_method_master');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed && Object.keys(parsed).length > 0) {
+              _gasMethodMaster = parsed;
+              console.log('[マスター] localStorageキャッシュから採用手法マスターを復元:', Object.keys(parsed).length, '件');
+              return parsed;
+            }
+          }
+        } catch (e) {}
+        return null;
       } catch (err) {
         console.error('採用手法マスター読み込みエラー:', err);
         return null;
@@ -4025,22 +4034,31 @@ const GASDataManager = {
       }
   },
   
-  // 媒体利用率マスターを読み込み
+  // 媒体利用率マスターを読み込み（スプレッドシートから取得）
   loadMediaUsageMaster: async () => {
       try {
-        // v34: authFetch使用
-        try {
-          const muResult = await authFetch('getLayerMediaUsage');
-          if (muResult.success && muResult.data) {
-            _gasMediaUsageMaster = muResult.data;
-            console.log('媒体利用率マスターをGASから読み込み:', muResult.data);
-            try { localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(muResult.data)); } catch (e) {}
-          }
-          return muResult.data || null;
-        } catch (err) {
-          console.error('媒体利用率マスター読み込みエラー:', err);
-          return null;
+        const muResult = await authFetch('getLayerMediaUsage');
+        if (muResult.success && muResult.data && Object.keys(muResult.data).length > 0) {
+          _gasMediaUsageMaster = muResult.data;
+          console.log('[マスター] 媒体利用率マスター読み込み完了:', Object.keys(muResult.data).length, '層');
+          try { localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(muResult.data)); } catch (e) {}
+          return muResult.data;
         }
+        // GAS側 initializeDefaultData がログイン時に自動投入するため、通常ここには来ない
+        console.warn('[マスター] 媒体利用率マスターがスプレッドシートから取得できませんでした。');
+        // localStorageキャッシュをフォールバックとして使用
+        try {
+          const cached = localStorage.getItem('gakusapo_layer_media_usage');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed && Object.keys(parsed).length > 0) {
+              _gasMediaUsageMaster = parsed;
+              console.log('[マスター] localStorageキャッシュから媒体利用率マスターを復元');
+              return parsed;
+            }
+          }
+        } catch (e) {}
+        return null;
       } catch (err) {
         console.error('媒体利用率マスター読み込みエラー:', err);
         return null;
@@ -11066,6 +11084,324 @@ const LoginScreen = ({ onLogin }) => {
 };
 
 // ========================================
+// メンバー管理パネル
+// ========================================
+
+const MemberManagementPanel = () => {
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [processing, setProcessing] = useState(false);
+  
+  // 新規追加フォーム
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newRole, setNewRole] = useState('member');
+  
+  // 編集中のメンバー
+  const [editingEmail, setEditingEmail] = useState(null);
+  const [editName, setEditName] = useState('');
+  
+  // 確認ダイアログ
+  const [confirmAction, setConfirmAction] = useState(null); // { type, email, name }
+  
+  const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+  
+  const loadMembers = async () => {
+    if (!isGasMode) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const res = await authFetch('getMembers');
+      if (res?.success) setMembers(res.members || []);
+      else setError(res?.error || 'メンバーの読み込みに失敗しました');
+    } catch (err) {
+      setError('通信エラー: ' + err.message);
+    }
+    setLoading(false);
+  };
+  
+  useEffect(() => { loadMembers(); }, []);
+  
+  const handleAdd = async () => {
+    if (!newEmail.trim()) { setError('Gmailアドレスを入力してください'); return; }
+    if (!newName.trim()) { setError('名前を入力してください'); return; }
+    setProcessing(true);
+    setError(null);
+    try {
+      const res = await authPost('addMember', { memberData: { email: newEmail.trim(), name: newName.trim(), role: newRole } });
+      if (res.success) {
+        setSuccess(`${newName.trim()} を追加しました（学生No: ${res.studentId}）`);
+        setNewEmail(''); setNewName(''); setNewRole('member'); setShowAddForm(false);
+        await loadMembers();
+      } else {
+        setError(res.error || '追加に失敗しました');
+      }
+    } catch (err) { setError(err.message); }
+    setProcessing(false);
+    setTimeout(() => setSuccess(null), 3000);
+  };
+  
+  const handleUpdateName = async (email) => {
+    if (!editName.trim()) return;
+    setProcessing(true); setError(null);
+    try {
+      const res = await authPost('updateMember', { email, updates: { name: editName.trim() } });
+      if (res.success) {
+        setSuccess('名前を更新しました');
+        setEditingEmail(null);
+        await loadMembers();
+      } else { setError(res.error); }
+    } catch (err) { setError(err.message); }
+    setProcessing(false);
+    setTimeout(() => setSuccess(null), 3000);
+  };
+  
+  const handleToggleActive = async (email, currentActive) => {
+    setProcessing(true); setError(null);
+    try {
+      const action = currentActive ? 'disableMember' : 'enableMember';
+      const res = await authPost(action, { email });
+      if (res.success) {
+        setSuccess(currentActive ? '無効化しました' : '有効化しました');
+        await loadMembers();
+      } else { setError(res.error); }
+    } catch (err) { setError(err.message); }
+    setProcessing(false);
+    setConfirmAction(null);
+    setTimeout(() => setSuccess(null), 3000);
+  };
+  
+  const handleDelete = async (email) => {
+    setProcessing(true); setError(null);
+    try {
+      const res = await authPost('deleteMember', { email });
+      if (res.success) {
+        setSuccess('メンバーを削除しました');
+        await loadMembers();
+      } else { setError(res.error); }
+    } catch (err) { setError(err.message); }
+    setProcessing(false);
+    setConfirmAction(null);
+    setTimeout(() => setSuccess(null), 3000);
+  };
+  
+  const handleToggleRole = async (email, currentRole) => {
+    const newRoleVal = currentRole === 'admin' ? 'member' : 'admin';
+    setProcessing(true); setError(null);
+    try {
+      const res = await authPost('updateMember', { email, updates: { role: newRoleVal } });
+      if (res.success) {
+        setSuccess(`権限を「${newRoleVal === 'admin' ? '管理者' : 'メンバー'}」に変更しました`);
+        await loadMembers();
+      } else { setError(res.error); }
+    } catch (err) { setError(err.message); }
+    setProcessing(false);
+    setTimeout(() => setSuccess(null), 3000);
+  };
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <svg className="w-6 h-6 animate-spin text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+          <circle cx="12" cy="12" r="10" className="opacity-25" /><path d="M4 12a8 8 0 018-8" className="opacity-75" />
+        </svg>
+        <span className="ml-2 text-sm text-gray-500">メンバー情報を読み込み中...</span>
+      </div>
+    );
+  }
+  
+  const activeMembers = members.filter(m => m.active);
+  const inactiveMembers = members.filter(m => !m.active);
+  
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-gray-800">メンバー管理</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Gmail・名前・学生Noの管理（{activeMembers.length}名 有効）</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={loadMembers} disabled={processing}
+            className="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+            更新
+          </button>
+          <button onClick={() => setShowAddForm(!showAddForm)} disabled={processing}
+            className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+            + メンバー追加
+          </button>
+        </div>
+      </div>
+      
+      {/* 通知 */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg flex justify-between items-center">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 ml-2 text-lg leading-none">&times;</button>
+        </div>
+      )}
+      {success && (
+        <div className="bg-green-50 border border-green-200 text-green-700 text-sm px-3 py-2 rounded-lg">{success}</div>
+      )}
+      
+      {/* 新規追加フォーム */}
+      {showAddForm && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
+          <div className="text-sm font-medium text-indigo-800">新しいメンバーを追加</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Gmail アドレス *</label>
+              <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="example@gmail.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">名前 *</label>
+              <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="山田 太郎"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">権限</label>
+              <select value={newRole} onChange={e => setNewRole(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none bg-white">
+                <option value="member">メンバー</option>
+                <option value="admin">管理者</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button onClick={handleAdd} disabled={processing}
+              className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+              {processing ? '追加中...' : '追加する'}
+            </button>
+            <button onClick={() => { setShowAddForm(false); setNewEmail(''); setNewName(''); setNewRole('member'); }}
+              className="px-4 py-2 text-sm bg-white text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+              キャンセル
+            </button>
+          </div>
+          <div className="text-xs text-indigo-600">※ 学生Noは自動で採番されます</div>
+        </div>
+      )}
+      
+      {/* メンバー一覧テーブル */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">学生No</th>
+              <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">名前</th>
+              <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Gmail</th>
+              <th className="text-center px-4 py-2.5 text-xs font-medium text-gray-500">権限</th>
+              <th className="text-center px-4 py-2.5 text-xs font-medium text-gray-500">状態</th>
+              <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {members.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">メンバーがいません</td></tr>
+            ) : members.map((m, i) => (
+              <tr key={i} className={`${!m.active ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'} transition-colors`}>
+                <td className="px-4 py-2.5">
+                  <span className="font-mono text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">{m.studentId}</span>
+                </td>
+                <td className="px-4 py-2.5">
+                  {editingEmail === m.email ? (
+                    <div className="flex gap-1.5 items-center">
+                      <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleUpdateName(m.email); if (e.key === 'Escape') setEditingEmail(null); }}
+                        className="px-2 py-1 border border-indigo-300 rounded text-sm w-32 focus:ring-1 focus:ring-indigo-300 outline-none" autoFocus />
+                      <button onClick={() => handleUpdateName(m.email)} className="text-indigo-600 hover:text-indigo-800 text-xs">保存</button>
+                      <button onClick={() => setEditingEmail(null)} className="text-gray-400 hover:text-gray-600 text-xs">取消</button>
+                    </div>
+                  ) : (
+                    <span className="font-medium text-gray-800 cursor-pointer hover:text-indigo-600"
+                      onClick={() => { setEditingEmail(m.email); setEditName(m.name); }}>
+                      {m.name || '(未設定)'}
+                      <svg className="w-3 h-3 inline ml-1 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-gray-500 text-xs">{m.email}</td>
+                <td className="px-4 py-2.5 text-center">
+                  <button onClick={() => { if (m.studentId !== '0001') handleToggleRole(m.email, m.role); }}
+                    disabled={m.studentId === '0001' || processing}
+                    className={`text-xs px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                      m.role === 'admin' ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    } ${m.studentId === '0001' ? 'cursor-not-allowed opacity-70' : ''}`}>
+                    {m.role === 'admin' ? '管理者' : 'メンバー'}
+                  </button>
+                </td>
+                <td className="px-4 py-2.5 text-center">
+                  <span className={`text-xs px-2 py-0.5 rounded ${m.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                    {m.active ? '有効' : '無効'}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  {m.studentId !== '0001' && (
+                    <div className="flex gap-1 justify-end">
+                      <button onClick={() => setConfirmAction({ type: m.active ? 'disable' : 'enable', email: m.email, name: m.name })}
+                        disabled={processing}
+                        className={`text-xs px-2 py-1 rounded transition-colors ${
+                          m.active ? 'text-orange-600 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'
+                        }`}>
+                        {m.active ? '無効化' : '有効化'}
+                      </button>
+                      <button onClick={() => setConfirmAction({ type: 'delete', email: m.email, name: m.name })}
+                        disabled={processing}
+                        className="text-xs px-2 py-1 rounded text-red-500 hover:bg-red-50 transition-colors">
+                        削除
+                      </button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      
+      {/* 確認ダイアログ */}
+      {confirmAction && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]" onClick={() => setConfirmAction(null)}>
+          <div className="bg-white rounded-xl p-5 max-w-sm mx-4 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-sm font-medium text-gray-800 mb-3">
+              {confirmAction.type === 'delete' 
+                ? `「${confirmAction.name}」を削除しますか？` 
+                : confirmAction.type === 'disable'
+                ? `「${confirmAction.name}」を無効化しますか？`
+                : `「${confirmAction.name}」を有効化しますか？`}
+            </div>
+            {confirmAction.type === 'delete' && (
+              <div className="text-xs text-red-600 mb-3 bg-red-50 px-3 py-2 rounded-lg">この操作は取り消せません。メンバーシートから行が削除されます。</div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmAction(null)} className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">キャンセル</button>
+              <button onClick={() => {
+                  if (confirmAction.type === 'delete') handleDelete(confirmAction.email);
+                  else handleToggleActive(confirmAction.email, confirmAction.type === 'disable');
+                }}
+                disabled={processing}
+                className={`px-4 py-2 text-sm text-white rounded-lg transition-colors disabled:opacity-50 ${
+                  confirmAction.type === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}>
+                {processing ? '処理中...' : '実行'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      <div className="text-xs text-gray-400 px-1">
+        ※ 学生No 0001（管理者）は権限変更・無効化・削除ができません。<br/>
+        ※ 名前をクリックすると編集できます。権限バッジをクリックすると管理者/メンバーを切り替えできます。
+      </div>
+    </div>
+  );
+};
+
+// ========================================
 // 引き継ぎ管理パネル
 // ========================================
 
@@ -12080,8 +12416,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
               {[
                 { id: 'api', icon: 'key', label: 'API設定' },
                 { id: 'login', icon: 'lock', label: 'ログイン設定' },
-                { id: 'handover', icon: 'handover', label: '引き継ぎ管理' },
-                { id: 'datamanage', icon: 'folder', label: 'データ管理' }
+                { id: 'members', icon: 'users', label: 'メンバー管理' },
+                { id: 'handover', icon: 'handover', label: '引き継ぎ管理' }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -12108,14 +12444,14 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                       </svg>
                     )}
-                    {tab.icon === 'folder' && (
-                      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-4 h-4">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                      </svg>
-                    )}
                     {tab.icon === 'handover' && (
                       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-4 h-4">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    )}
+                    {tab.icon === 'users' && (
+                      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                       </svg>
                     )}
                   </span>
@@ -12880,7 +13216,6 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                 <div className="text-sm font-medium text-green-800 mb-1">採用手法詳細設定</div>
                 <div className="text-xs text-green-700">
                   利用可能な採用手法（媒体）を管理します。カスタム媒体の追加や、既存媒体の編集ができます。
-                  <span className="ml-2 text-green-600">※CSVインポート/エクスポートは「データ管理」から</span>
                 </div>
               </div>
               
@@ -14373,1605 +14708,15 @@ function fullSyncCustomers(customers) {
             </div>
           )}
           
+          {/* メンバー管理 */}
+          {activeSection === 'members' && (
+            <MemberManagementPanel />
+          )}
+          
           {/* 引き継ぎ管理 */}
           {activeSection === 'handover' && (
             <HandoverPanel />
           )}
-          
-          {/* データ管理 */}
-          {activeSection === 'datamanage' && (
-            <div className="space-y-6">
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                <div className="text-sm font-medium text-blue-800 mb-1">データ管理</div>
-                <div className="text-xs text-blue-700">
-                  顧客データの同期や各種マスターデータのCSVインポート/エクスポートを行えます。
-                </div>
-              </div>
-              
-              {/* 歩留まり率マスター */}
-              <div className="border border-emerald-200 rounded-xl overflow-hidden">
-                <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                    <div className="text-sm font-medium text-emerald-700">歩留まり率マスター</div>
-                  </div>
-                  <div className="text-xs text-emerald-600 mt-1">地域・業種・従業員数・採用手法カテゴリ別の歩留まり率平均値</div>
-                </div>
-                <div className="p-4">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => {
-                        let csv = '地域,業種,従業員数,採用手法カテゴリ,認知→興味,興味→応募,応募→選考,選考→内定,内々定→承諾\n';
-                        getMethodCategoryList().forEach(method => {
-                          REGION_LIST.forEach(region => {
-                            INDUSTRY_LIST.forEach(industry => {
-                              COMPANY_SIZE_LIST.forEach(size => {
-                                const yieldData = getYieldData(region.key, industry.key, size.key, yieldMaster, method.key);
-                                if (yieldData) {
-                                  csv += `${region.label},${industry.label},${size.label},${method.key},${yieldData.awarenessToInterest},${yieldData.interestToApplication},${yieldData.applicationToScreening},${yieldData.screeningToOffer},${yieldData.offerToAcceptance}\n`;
-                                }
-                              });
-                            });
-                          });
-                        });
-                        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = '歩留まり率マスター.csv';
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition flex items-center gap-1"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      エクスポート
-                    </button>
-                    <label className="px-4 py-2 text-sm bg-white border border-emerald-600 text-emerald-600 rounded-lg hover:bg-emerald-50 transition cursor-pointer flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                      インポート
-                      <input
-                        type="file"
-                        accept=".csv"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files[0];
-                          if (!file) return;
-                          
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            try {
-                              const text = event.target.result;
-                              const lines = text.split('\n');
-                              
-                              const newYieldData = {};
-                              let importedCount = 0;
-                              
-                              lines.slice(1).forEach(line => {
-                                if (!line.trim()) return;
-                                
-                                const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-                                
-                                // 新形式（9列: 地域,業種,規模,手法カテゴリ,5rates）と旧形式（8列: 地域,業種,規模,5rates）の両対応
-                                const hasMethodCol = cols.length >= 9;
-                                if (cols.length < 8) return;
-                                
-                                let regionLabel, industryLabel, sizeLabel, methodCat, a2i, i2a, a2s, s2o, o2a;
-                                if (hasMethodCol) {
-                                  [regionLabel, industryLabel, sizeLabel, methodCat, a2i, i2a, a2s, s2o, o2a] = cols;
-                                } else {
-                                  [regionLabel, industryLabel, sizeLabel, a2i, i2a, a2s, s2o, o2a] = cols;
-                                  methodCat = 'ナビサイト';
-                                }
-                                
-                                const region = REGION_LIST.find(r => r.label === regionLabel);
-                                const industry = INDUSTRY_LIST.find(i => i.label === industryLabel);
-                                const size = COMPANY_SIZE_LIST.find(s => s.label === sizeLabel);
-                                const method = methodCat || 'ナビサイト';
-                                
-                                if (region && industry && size) {
-                                  // 4次元構造: method → region → industry → size
-                                  if (!newYieldData[method]) newYieldData[method] = {};
-                                  if (!newYieldData[method][region.key]) newYieldData[method][region.key] = {};
-                                  if (!newYieldData[method][region.key][industry.key]) newYieldData[method][region.key][industry.key] = {};
-                                  newYieldData[method][region.key][industry.key][size.key] = {
-                                    awarenessToInterest: parseFloat(a2i) || 0,
-                                    interestToApplication: parseFloat(i2a) || 0,
-                                    applicationToScreening: parseFloat(a2s) || 0,
-                                    screeningToOffer: parseFloat(s2o) || 0,
-                                    offerToAcceptance: parseFloat(o2a) || 0
-                                  };
-                                  importedCount++;
-                                }
-                              });
-                              
-                              if (importedCount > 0) {
-                                // GASモードかつ管理者の場合はスプレッドシートにも保存
-                                const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
-                                const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
-                                
-                                if (isGasMode && isAdmin) {
-                                  GASDataManager.saveYieldMaster(newYieldData).then(() => {
-                                    alert(`歩留まり率マスターをインポートしました\n取り込み件数: ${importedCount}件\n\n※スプレッドシートにも保存しました。全メンバーに反映されます。\n\nページを再読み込みして反映します。`);
-                                    window.location.reload();
-                                  });
-                                } else {
-                                  // ローカルにのみ保存
-                                  localStorage.setItem('gakusapo_yield_master', JSON.stringify(newYieldData));
-                                  alert(`歩留まり率マスターをインポートしました\n取り込み件数: ${importedCount}件\n\nページを再読み込みして反映します。`);
-                                  window.location.reload();
-                                }
-                              } else {
-                                alert('有効なデータが見つかりませんでした');
-                              }
-                            } catch (err) {
-                              alert('CSVの読み込みに失敗しました: ' + err.message);
-                            }
-                          };
-                          reader.readAsText(file);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                  </div>
-                  <div className="mt-3 p-2 bg-emerald-50 rounded text-xs text-emerald-600">
-                    <div className="font-medium">CSVフォーマット</div>
-                    <code className="block mt-1">地域,業種,従業員数,採用手法カテゴリ,認知→興味,興味→応募,応募→選考,選考→内定,内々定→承諾</code>
-                  </div>
-                </div>
-              </div>
-              
-              {/* 媒体利用率マスター */}
-              <div className="border border-blue-200 rounded-xl overflow-hidden">
-                <div className="bg-blue-50 px-4 py-3 border-b border-blue-200">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                    </svg>
-                    <div className="text-sm font-medium text-blue-700">媒体利用率マスター</div>
-                  </div>
-                  <div className="text-xs text-blue-600 mt-1">学生層別（A〜H層）の媒体利用率</div>
-                </div>
-                <div className="p-4">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => {
-                        const mediaUsage = layerMediaUsage || DEFAULT_LAYER_MEDIA_USAGE;
-                        let csv = '学生層,媒体キー,利用率(%)\n';
-                        
-                        Object.entries(mediaUsage).forEach(([layer, methods]) => {
-                          Object.entries(methods).forEach(([methodKey, rate]) => {
-                            csv += `${layer},${methodKey},${rate}\n`;
-                          });
-                        });
-                        
-                        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = '媒体利用率マスター.csv';
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-1"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      エクスポート
-                    </button>
-                    <label className="px-4 py-2 text-sm bg-white border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition cursor-pointer flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                      インポート
-                      <input
-                        type="file"
-                        accept=".csv"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files[0];
-                          if (!file) return;
-                          
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            try {
-                              const text = event.target.result;
-                              const lines = text.split('\n');
-                              
-                              const newMediaUsage = { ...layerMediaUsage };
-                              let importedCount = 0;
-                              
-                              lines.slice(1).forEach(line => {
-                                if (!line.trim()) return;
-                                
-                                const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-                                if (cols.length < 3) return;
-                                
-                                const [layer, methodKey, rate] = cols;
-                                
-                                if (layer && methodKey && ['A','B','C','D','E','F','G','H'].includes(layer.toUpperCase())) {
-                                  const layerKey = layer.toUpperCase();
-                                  if (!newMediaUsage[layerKey]) newMediaUsage[layerKey] = {};
-                                  newMediaUsage[layerKey][methodKey] = parseFloat(rate) || 0;
-                                  importedCount++;
-                                }
-                              });
-                              
-                              if (importedCount > 0) {
-                                // stateを更新（保存ボタンで確定）
-                                setLayerMediaUsage(newMediaUsage);
-                                alert(`媒体利用率マスターをインポートしました\n取り込み件数: ${importedCount}件\n\n※「保存」ボタンで確定してください`);
-                              } else {
-                                alert('有効なデータが見つかりませんでした');
-                              }
-                            } catch (err) {
-                              alert('CSVの読み込みに失敗しました: ' + err.message);
-                            }
-                          };
-                          reader.readAsText(file);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                  </div>
-                  <div className="mt-3 p-2 bg-blue-50 rounded text-xs text-blue-700">
-                    <div className="font-medium">CSVフォーマット</div>
-                    <code className="block mt-1">学生層,媒体キー,利用率(%)</code>
-                    <code className="block text-blue-600">A,labbase,35</code>
-                  </div>
-                </div>
-              </div>
-              
-              {/* 採用手法マスター */}
-              <div className="border border-purple-200 rounded-xl overflow-hidden">
-                <div className="bg-purple-50 px-4 py-3 border-b border-purple-200">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                    </svg>
-                    <div className="text-sm font-medium text-purple-700">採用手法マスター</div>
-                  </div>
-                  <div className="text-xs text-purple-600 mt-1">利用可能な採用手法（媒体）の一覧</div>
-                </div>
-                <div className="p-4">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => {
-                        const METHODS = methodMaster || DEFAULT_RECRUITMENT_METHODS;
-                        const headers = ['ツールID', 'ツール名', 'カテゴリ', '説明'];
-                        const rows = [];
-                        
-                        Object.entries(METHODS).forEach(([key, method]) => {
-                          rows.push([
-                            key,
-                            method.name,
-                            method.category,
-                            method.description
-                          ].map(v => `"${(v || '').replace(/"/g, '""')}"`).join(','));
-                        });
-                        
-                        const csv = [headers.join(','), ...rows].join('\n');
-                        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = '採用手法マスター.csv';
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition flex items-center gap-1"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      エクスポート
-                    </button>
-                    <label className="px-4 py-2 text-sm bg-white border border-purple-600 text-purple-600 rounded-lg hover:bg-purple-50 transition cursor-pointer flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                      インポート
-                      <input
-                        type="file"
-                        accept=".csv"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files[0];
-                          if (!file) return;
-                          
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            try {
-                              const text = event.target.result;
-                              const lines = text.split('\n');
-                              
-                              const newMaster = { ...(methodMaster || DEFAULT_RECRUITMENT_METHODS) };
-                              let addedCount = 0;
-                              let updatedCount = 0;
-                              
-                              lines.slice(1).forEach(line => {
-                                if (!line.trim()) return;
-                                
-                                const cols = [];
-                                let current = '';
-                                let inQuotes = false;
-                                for (let i = 0; i < line.length; i++) {
-                                  const char = line[i];
-                                  if (char === '"') {
-                                    inQuotes = !inQuotes;
-                                  } else if (char === ',' && !inQuotes) {
-                                    cols.push(current.trim());
-                                    current = '';
-                                  } else {
-                                    current += char;
-                                  }
-                                }
-                                cols.push(current.trim());
-                                
-                                const [toolId, toolName, category, description] = cols;
-                                
-                                if (toolId && toolName && category) {
-                                  const key = toolId.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
-                                  const isNew = !newMaster[key];
-                                  
-                                  newMaster[key] = {
-                                    name: toolName.trim(),
-                                    category: category.trim(),
-                                    description: (description || '').trim(),
-                                    targetLayers: newMaster[key]?.targetLayers || []
-                                  };
-                                  
-                                  if (isNew) addedCount++;
-                                  else updatedCount++;
-                                }
-                              });
-                              
-                              if (addedCount + updatedCount > 0) {
-                                // stateを更新（保存ボタンで確定）
-                                setMethodMaster(newMaster);
-                                alert(`マスターデータをインポートしました\n新規追加: ${addedCount}件\n更新: ${updatedCount}件\n\n※「保存」ボタンで確定してください`);
-                              } else {
-                                alert('有効なデータが見つかりませんでした');
-                              }
-                            } catch (err) {
-                              alert('CSVの読み込みに失敗しました: ' + err.message);
-                            }
-                          };
-                          reader.readAsText(file);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    {Object.keys(methodMaster || {}).length !== Object.keys(DEFAULT_RECRUITMENT_METHODS).length && (
-                      <button
-                        onClick={() => {
-                          if (confirm('マスターデータをデフォルトに戻しますか？')) {
-                            setMethodMaster(DEFAULT_RECRUITMENT_METHODS);
-                          }
-                        }}
-                        className="px-4 py-2 text-sm bg-gray-100 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-200 transition"
-                      >
-                        デフォルトに戻す
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-3 text-xs text-gray-500">
-                    現在の登録数: <strong className="text-purple-600">{Object.keys(methodMaster || DEFAULT_RECRUITMENT_METHODS).length}</strong>件
-                  </div>
-                  <div className="mt-3 p-2 bg-purple-50 rounded text-xs text-purple-700">
-                    <div className="font-medium">CSVフォーマット</div>
-                    <code className="block mt-1">ツールID,ツール名,カテゴリ,説明</code>
-                    <code className="block text-purple-600">new_tool,新しいツール,新カテゴリ,ツールの説明文</code>
-                  </div>
-                </div>
-              </div>
-              
-              {/* 質問マスター */}
-              <div className="border border-orange-200 rounded-xl overflow-hidden">
-                <div className="bg-orange-50 px-4 py-3 border-b border-orange-200">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <div className="text-sm font-medium text-orange-700">質問マスター</div>
-                  </div>
-                  <div className="text-xs text-orange-600 mt-1">診断で使用する質問項目の一覧（ベース・業種別・ターゲット層・注力タイプ・採用手法別）</div>
-                </div>
-                <div className="p-4">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => {
-                        const master = getQuestionMasterFromStorage();
-                        const escapeCSV = (str) => {
-                          if (!str) return '';
-                          return '"' + String(str).replace(/"/g, '""') + '"';
-                        };
-                        
-                        // 英語→日本語変換マップ
-                        const sizeToJP = { micro: '～30名', small: '31～100名', medium: '101～300名', large: '301～1000名', enterprise: '1001名以上' };
-                        const depthToJP = { surface: '表層部', middle: '中層部', deep: '深層部' };
-                        const roleToJP = { staff: '担当者', executive: '上層部', student: '学生' };
-                        const axisTypeToJP = { mindset: '土台', evaluation: '伝達力' };
-                        const axisKeyToJP = {
-                          // 評価軸6軸
-                          recognition: '認知到達力', specificity: '具体性', differentiation: '差別化力',
-                          visionEmpathy: '共感・ビジョン力', selectionUX: '選考UX', dialogue: '対話力',
-                          // マインドセット5軸
-                          structure: '採用体制', ownership: '自責', management: '経営関与',
-                          marketUnderstanding: '市場理解', planning: '計画性',
-                          // 後方互換性（旧軸名）
-                          credibility: '信頼性', visionPresentation: '将来像提示力', empathyBuilding: '共感形成力'
-                        };
-                        
-                        let csv = 'セクション,人数規模,業種,ターゲット層,注力タイプ,採用手法,対象者,ID,質問,学生向け質問,選択肢A,選択肢B,学生向け選択肢A,学生向け選択肢B,正解,点数,軸タイプ,軸,ギャップチェック\n';
-                        
-                        // ベース質問
-                        Object.entries(master.base || {}).forEach(([size, roles]) => {
-                          Object.entries(roles).forEach(([role, questions]) => {
-                            questions.forEach(q => {
-                              csv += `ベース,${sizeToJP[size] || size},,,,${roleToJP[role]},${q.id},${escapeCSV(q.question)},${escapeCSV(q.studentQuestion || '')},${escapeCSV(q.choiceA)},${escapeCSV(q.choiceB)},${escapeCSV(q.studentChoiceA || '')},${escapeCSV(q.studentChoiceB || '')},${q.correctAnswer},${q.points || 3},${axisTypeToJP[q.axisType] || q.axisType},${axisKeyToJP[q.axisKey] || q.axisKey},${q.gapCheck ? 'TRUE' : 'FALSE'}\n`;
-                            });
-                          });
-                        });
-                        
-                        // 業種別質問
-                        Object.entries(master.industry || {}).forEach(([industry, sizes]) => {
-                          Object.entries(sizes).forEach(([size, roles]) => {
-                            Object.entries(roles).forEach(([role, questions]) => {
-                              questions.forEach(q => {
-                                csv += `業種別,${sizeToJP[size] || size},${industry},,,${roleToJP[role]},${q.id},${escapeCSV(q.question)},${escapeCSV(q.studentQuestion || '')},${escapeCSV(q.choiceA)},${escapeCSV(q.choiceB)},${escapeCSV(q.studentChoiceA || '')},${escapeCSV(q.studentChoiceB || '')},${q.correctAnswer},${q.points || 3},${axisTypeToJP[q.axisType] || q.axisType},${axisKeyToJP[q.axisKey] || q.axisKey},${q.gapCheck ? 'TRUE' : 'FALSE'}\n`;
-                              });
-                            });
-                          });
-                        });
-                        
-                        // ターゲット層別質問
-                        Object.entries(master.targetLayer || {}).forEach(([layer, roles]) => {
-                          Object.entries(roles).forEach(([role, questions]) => {
-                            questions.forEach(q => {
-                              csv += `ターゲット層,,,${layer},,${roleToJP[role]},${q.id},${escapeCSV(q.question)},${escapeCSV(q.studentQuestion || '')},${escapeCSV(q.choiceA)},${escapeCSV(q.choiceB)},${escapeCSV(q.studentChoiceA || '')},${escapeCSV(q.studentChoiceB || '')},${q.correctAnswer},${q.points || 3},${axisTypeToJP[q.axisType] || q.axisType},${axisKeyToJP[q.axisKey] || q.axisKey},${q.gapCheck ? 'TRUE' : 'FALSE'}\n`;
-                            });
-                          });
-                        });
-                        
-                        // 注力タイプ別質問
-                        Object.entries(master.depth || {}).forEach(([depthPhase, roles]) => {
-                          Object.entries(roles).forEach(([role, questions]) => {
-                            questions.forEach(q => {
-                              csv += `注力タイプ,,,,${depthToJP[depthPhase] || depthPhase},${roleToJP[role]},${q.id},${escapeCSV(q.question)},${escapeCSV(q.studentQuestion || '')},${escapeCSV(q.choiceA)},${escapeCSV(q.choiceB)},${escapeCSV(q.studentChoiceA || '')},${escapeCSV(q.studentChoiceB || '')},${q.correctAnswer},${q.points || 3},${axisTypeToJP[q.axisType] || q.axisType},${axisKeyToJP[q.axisKey] || q.axisKey},${q.gapCheck ? 'TRUE' : 'FALSE'}\n`;
-                            });
-                          });
-                        });
-                        
-                        // 採用手法別質問（キーがカテゴリ名 or 旧手法キーの両方に対応）
-                        Object.entries(master.recruitmentMethod || {}).forEach(([key, roles]) => {
-                          const categoryName = (methodMaster || DEFAULT_RECRUITMENT_METHODS)[key]?.category || key;
-                          Object.entries(roles).forEach(([role, questions]) => {
-                            questions.forEach(q => {
-                              csv += `採用手法別,,,,,${categoryName},${roleToJP[role]},${q.id},${escapeCSV(q.question)},${escapeCSV(q.studentQuestion || '')},${escapeCSV(q.choiceA)},${escapeCSV(q.choiceB)},${escapeCSV(q.studentChoiceA || '')},${escapeCSV(q.studentChoiceB || '')},${q.correctAnswer},${q.points || 3},${axisTypeToJP[q.axisType] || q.axisType},${axisKeyToJP[q.axisKey] || q.axisKey},${q.gapCheck ? 'TRUE' : 'FALSE'}\n`;
-                            });
-                          });
-                        });
-                        
-                        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = '質問マスター.csv';
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      className="px-4 py-2 text-sm bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition flex items-center gap-1"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      エクスポート
-                    </button>
-                    <label className="px-4 py-2 text-sm bg-white border border-orange-600 text-orange-600 rounded-lg hover:bg-orange-50 transition cursor-pointer flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                      インポート
-                      <input
-                        type="file"
-                        accept=".csv"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files[0];
-                          if (!file) return;
-                          
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            try {
-                              const text = event.target.result;
-                              
-                              // 改行を含むCSVを正しくパースする関数
-                              const parseCSV = (csvText) => {
-                                const rows = [];
-                                let currentRow = [];
-                                let currentCell = '';
-                                let inQuotes = false;
-                                
-                                for (let i = 0; i < csvText.length; i++) {
-                                  const char = csvText[i];
-                                  const nextChar = csvText[i + 1];
-                                  
-                                  if (inQuotes) {
-                                    if (char === '"' && nextChar === '"') {
-                                      currentCell += '"';
-                                      i++;
-                                    } else if (char === '"') {
-                                      inQuotes = false;
-                                    } else {
-                                      currentCell += char;
-                                    }
-                                  } else {
-                                    if (char === '"') {
-                                      inQuotes = true;
-                                    } else if (char === ',') {
-                                      currentRow.push(currentCell.trim());
-                                      currentCell = '';
-                                    } else if (char === '\n' || (char === '\r' && nextChar === '\n')) {
-                                      currentRow.push(currentCell.trim());
-                                      if (currentRow.length > 1 || currentRow[0] !== '') {
-                                        rows.push(currentRow);
-                                      }
-                                      currentRow = [];
-                                      currentCell = '';
-                                      if (char === '\r') i++;
-                                    } else if (char !== '\r') {
-                                      currentCell += char;
-                                    }
-                                  }
-                                }
-                                
-                                if (currentCell || currentRow.length > 0) {
-                                  currentRow.push(currentCell.trim());
-                                  if (currentRow.length > 1 || currentRow[0] !== '') {
-                                    rows.push(currentRow);
-                                  }
-                                }
-                                
-                                return rows;
-                              };
-                              
-                              const rows = parseCSV(text);
-                              const newMaster = { base: {}, industry: {}, targetLayer: {}, depth: {}, recruitmentMethod: {} };
-                              let importedCount = 0;
-                              
-                              rows.slice(1).forEach(columns => {
-                                if (columns.length < 14) return;
-                                
-                                let section, size, industry, layer, depthPhase, methodKey, role, id, question, studentQuestion, choiceA, choiceB, studentChoiceA, studentChoiceB, correct, scoreType, points, axisType, axisKey, gapCheck, hint;
-                                
-                                if (columns.length >= 21) {
-                                  [section, size, industry, layer, depthPhase, methodKey, role, id, question, studentQuestion, choiceA, choiceB, studentChoiceA, studentChoiceB, correct, scoreType, points, axisType, axisKey, gapCheck, hint] = columns;
-                                } else if (columns.length >= 20) {
-                                  [section, size, industry, layer, depthPhase, role, id, question, studentQuestion, choiceA, choiceB, studentChoiceA, studentChoiceB, correct, scoreType, points, axisType, axisKey, gapCheck, hint] = columns;
-                                  methodKey = '';
-                                } else {
-                                  [section, size, industry, layer, depthPhase, role, id, question, studentQuestion, choiceA, choiceB, correct, scoreType, points, axisType, axisKey, gapCheck, hint] = columns;
-                                  methodKey = '';
-                                  studentChoiceA = '';
-                                  studentChoiceB = '';
-                                }
-                                
-                                const roleKey = { '担当者': 'staff', '上層部': 'executive', '学生': 'student' }[role];
-                                if (!roleKey) return;
-                                
-                                // 人数規模の日本語→英語キー変換
-                                const sizeKeyMap = {
-                                  '～30名': 'micro', 'micro': 'micro',
-                                  '31～100名': 'small', 'small': 'small',
-                                  '101～300名': 'medium', 'medium': 'medium',
-                                  '301～1000名': 'large', 'large': 'large',
-                                  '1001名以上': 'enterprise', 'enterprise': 'enterprise',
-                                  // 質問マスター用の3段階も対応
-                                  '100名以下': 'small', '101～300名': 'medium', '301名以上': 'large'
-                                };
-                                const sizeKey = sizeKeyMap[size] || size;
-                                
-                                // ターゲット層は A〜H をそのまま使用（大文字統一）
-                                const layerKey = layer ? layer.toUpperCase() : layer;
-                                
-                                const pointsNum = parseInt(points) || 2;
-                                const questionObj = {
-                                  id: id || `q_${Date.now()}_${Math.random()}`,
-                                  question,
-                                  studentQuestion: studentQuestion || '',
-                                  choiceA,
-                                  choiceB,
-                                  studentChoiceA: studentChoiceA || '',
-                                  studentChoiceB: studentChoiceB || '',
-                                  correctAnswer: correct,
-                                  scoreType: scoreType === 'bonus' ? 'bonus' : 'penalty',
-                                  points: pointsNum,
-                                  penaltyPoints: pointsNum,
-                                  axisType,
-                                  axisKey,
-                                  gapCheck: gapCheck === 'TRUE' || gapCheck === 'true' || gapCheck === '1',
-                                  hint: hint || ''
-                                };
-                                
-                                if (section === 'ベース' && sizeKey) {
-                                  if (!newMaster.base[sizeKey]) newMaster.base[sizeKey] = { staff: [], executive: [], student: [] };
-                                  newMaster.base[sizeKey][roleKey].push(questionObj);
-                                  importedCount++;
-                                } else if (section === '業種別' && industry && sizeKey) {
-                                  if (!newMaster.industry[industry]) newMaster.industry[industry] = {};
-                                  if (!newMaster.industry[industry][sizeKey]) newMaster.industry[industry][sizeKey] = { staff: [], executive: [], student: [] };
-                                  newMaster.industry[industry][sizeKey][roleKey].push(questionObj);
-                                  importedCount++;
-                                } else if (section === 'ターゲット層' && layerKey) {
-                                  if (!newMaster.targetLayer[layerKey]) newMaster.targetLayer[layerKey] = { staff: [], executive: [], student: [] };
-                                  newMaster.targetLayer[layerKey][roleKey].push(questionObj);
-                                  importedCount++;
-                                } else if ((section === '注力タイプ' || section === '注力タイプ別') && depthPhase) {
-                                  const depthKey = { '表層部': 'surface', '中層部': 'middle', '深層部': 'deep', 'surface': 'surface', 'middle': 'middle', 'deep': 'deep' }[depthPhase] || depthPhase;
-                                  if (!newMaster.depth[depthKey]) newMaster.depth[depthKey] = { staff: [], executive: [], student: [] };
-                                  newMaster.depth[depthKey][roleKey].push(questionObj);
-                                  importedCount++;
-                                } else if ((section === '採用手法別' || section === '採用手法') && methodKey) {
-                                  const mMasterRef = methodMaster || DEFAULT_RECRUITMENT_METHODS;
-                                  const catName = mMasterRef[methodKey]?.category || methodKey;
-                                  if (!newMaster.recruitmentMethod[catName]) newMaster.recruitmentMethod[catName] = { staff: [], executive: [], student: [] };
-                                  newMaster.recruitmentMethod[catName][roleKey].push(questionObj);
-                                  importedCount++;
-                                }
-                              });
-                              
-                              if (importedCount > 0) {
-                                localStorage.setItem('gakusapo_question_master', JSON.stringify(newMaster));
-                                
-                                // GASモードかつ管理者の場合はスプレッドシートにも保存
-                                const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
-                                const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
-                                if (isGasMode && isAdmin && typeof GASDataManager !== 'undefined') {
-                                  GASDataManager.saveQuestionMaster(newMaster);
-                                }
-                                
-                                alert(`質問マスターをインポートしました\n取り込み件数: ${importedCount}件\n\n${isGasMode && isAdmin ? '※スプレッドシートにも保存しました。全メンバーに反映されます。\n\n' : ''}ページを再読み込みして反映します。`);
-                                window.location.reload();
-                              } else {
-                                alert('有効なデータが見つかりませんでした');
-                              }
-                            } catch (err) {
-                              alert('CSVの読み込みに失敗しました: ' + err.message);
-                            }
-                          };
-                          reader.readAsText(file);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    <button
-                      onClick={() => {
-                        if (confirm('質問マスターをデフォルトに戻しますか？')) {
-                          localStorage.removeItem('gakusapo_question_master');
-                          alert('デフォルトに戻しました。ページを再読み込みすると反映されます。');
-                        }
-                      }}
-                      className="px-4 py-2 text-sm bg-gray-100 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-200 transition"
-                    >
-                      デフォルトに戻す
-                    </button>
-                  </div>
-                  <div className="mt-3 p-2 bg-orange-50 rounded text-xs text-orange-700">
-                    <div className="font-medium">CSVフォーマット（21列）</div>
-                    <code className="block mt-1 text-[10px]">セクション,人数規模,業種,ターゲット層,注力タイプ,採用手法,対象者,ID,質問,...</code>
-                  </div>
-                </div>
-              </div>
-              
-              {/* 注意事項 */}
-              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
-                <div className="text-sm font-medium text-yellow-800 mb-1 flex items-center gap-1"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>注意</div>
-                <ul className="text-xs text-yellow-700 space-y-1">
-                  <li>・CSVインポート後は自動的にページが再読み込みされ、変更が反映されます</li>
-                </ul>
-              </div>
-              
-              {/* 区切り線 */}
-              <div className="border-t border-gray-300 my-6"></div>
-              
-              {/* スプレッドシート連携 */}
-              <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                <div className="text-sm font-medium text-green-800 mb-1">スプレッドシート連携（マスターデータ）</div>
-                <div className="text-xs text-green-700">
-                  Googleスプレッドシートからマスターデータを一括同期できます。チームでのデータ共有に便利です。
-                </div>
-              </div>
-              
-              {/* スプレッドシートURL設定 */}
-              <div className="border border-gray-200 rounded-xl overflow-hidden">
-                <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                  <div className="text-sm font-medium text-gray-700">🔗 スプレッドシート接続設定</div>
-                </div>
-                <div className="p-4 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      GASウェブアプリURL（マスターデータ用）
-                    </label>
-                    <input
-                      type="text"
-                      value={localSettings.masterSpreadsheetUrl || ''}
-                      onChange={(e) => setLocalSettings(prev => ({ ...prev, masterSpreadsheetUrl: e.target.value }))}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
-                      placeholder="https://script.google.com/macros/s/..."
-                    />
-                    <p className="mt-2 text-xs text-gray-500">
-                      ※顧客データ用とは別のスプレッドシートを使用することを推奨します
-                    </p>
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <button
-                      onClick={async () => {
-                        if (!localSettings.masterSpreadsheetUrl) {
-                          alert('URLを入力してください');
-                          return;
-                        }
-                        try {
-                          const success = await MasterDataSpreadsheetManager.testConnection(localSettings.masterSpreadsheetUrl);
-                          alert(success ? '【成功】接続成功！' : '【失敗】 接続に失敗しました。URLを確認してください。');
-                        } catch (e) {
-                          alert('【失敗】 接続エラー: ' + e.message);
-                        }
-                      }}
-                      disabled={!localSettings.masterSpreadsheetUrl}
-                      className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition"
-                    >
-                      接続テスト
-                    </button>
-                  </div>
-                </div>
-              </div>
-              
-              {/* 同期ボタン */}
-              {localSettings.masterSpreadsheetUrl && (
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                    <div className="text-sm font-medium text-gray-700 flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      マスターデータ同期
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">スプレッドシートから最新のマスターデータを取得します</div>
-                  </div>
-                  <div className="p-4 space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={async () => {
-                          try {
-                            const data = await MasterDataSpreadsheetManager.fetchRecruitmentMethods(localSettings.masterSpreadsheetUrl);
-                            if (data && Object.keys(data).length > 0) {
-                              setMethodMaster(data);
-                              alert(`【成功】 採用手法マスターを同期しました（${Object.keys(data).length}件）\n\n※「保存」ボタンで確定してください`);
-                            } else {
-                              alert('データが見つかりませんでした');
-                            }
-                          } catch (e) {
-                            alert('【失敗】 同期エラー: ' + e.message);
-                          }
-                        }}
-                        className="px-4 py-3 text-sm bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                        </svg>
-                        <span>採用手法マスター</span>
-                      </button>
-                      
-                      <button
-                        onClick={async () => {
-                          try {
-                            const data = await MasterDataSpreadsheetManager.fetchLayerMediaUsage(localSettings.masterSpreadsheetUrl);
-                            if (data) {
-                              setLayerMediaUsage(data);
-                              alert(`【成功】 媒体利用率マスターを同期しました\n\n※「保存」ボタンで確定してください`);
-                            } else {
-                              alert('データが見つかりませんでした');
-                            }
-                          } catch (e) {
-                            alert('【失敗】 同期エラー: ' + e.message);
-                          }
-                        }}
-                        className="px-4 py-3 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                        </svg>
-                        <span>媒体利用率マスター</span>
-                      </button>
-                      
-                      <button
-                        onClick={async () => {
-                          try {
-                            const data = await MasterDataSpreadsheetManager.fetchQuestionMaster(localSettings.masterSpreadsheetUrl);
-                            if (DEBUG_MODE) {
-                              debugLog('=== 質問マスター同期デバッグ ===');
-                              debugLog('取得したデータ全体:', data);
-                              debugLog('recruitmentMethodの内容:', data?.recruitmentMethod);
-                              debugLog('recruitmentMethodのキー:', Object.keys(data?.recruitmentMethod || {}));
-                              debugLog('=== デバッグ終了 ===');
-                            }
-                            if (data) {
-                              setQuestionMaster(data);
-                              const rmCount = Object.keys(data?.recruitmentMethod || {}).length;
-                              alert(`【成功】 質問マスターを同期しました\n\n採用手法別質問: ${rmCount}カテゴリ分\n\n※「保存」ボタンで確定してください`);
-                            } else {
-                              alert('データが見つかりませんでした');
-                            }
-                          } catch (e) {
-                            alert('【失敗】 同期エラー: ' + e.message);
-                          }
-                        }}
-                        className="px-4 py-3 text-sm bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition flex items-center justify-center gap-2"
-                      >
-                        <span>❓</span>
-                        <span>質問マスター</span>
-                      </button>
-                      
-                      <button
-                        onClick={async () => {
-                          try {
-                            if (DEBUG_MODE) {
-                              debugLog('=== 歩留まり率マスター同期開始 ===');
-                            }
-                            const data = await MasterDataSpreadsheetManager.fetchYieldRates(localSettings.masterSpreadsheetUrl);
-                            if (DEBUG_MODE) {
-                              debugLog('=== 歩留まり率マスター同期デバッグ ===');
-                              debugLog('取得したデータ:', data);
-                              debugLog('データ型:', typeof data);
-                              debugLog('業種キー:', Object.keys(data || {}));
-                              debugLog('=== デバッグ終了 ===');
-                            }
-                            if (data && Object.keys(data).length > 0) {
-                              setYieldMaster(data);
-                              const industryCount = Object.keys(data).length;
-                              let sizeCount = 0;
-                              Object.values(data).forEach(ind => { sizeCount += Object.keys(ind || {}).length; });
-                              alert(`【成功】 歩留まり率マスターを同期しました\n\n業種数: ${industryCount}\n規模パターン数: ${sizeCount}\n\n※「保存」ボタンで確定してください`);
-                            } else {
-                              alert('【警告】データが見つかりませんでした\n\n以下を確認してください：\n1. スプレッドシートに「歩留まりマスター」シートが存在するか\n2. GASを再デプロイしたか（新しいバージョンで）\n3. シートにデータが入っているか\n\nコンソール（F12）で詳細を確認できます');
-                            }
-                          } catch (e) {
-                            console.error('歩留まり率マスター同期エラー:', e);
-                            alert('【失敗】 同期エラー: ' + e.message + '\n\nGASを再デプロイしてください（新しいバージョンで）\n\nコンソール（F12）で詳細を確認できます');
-                          }
-                        }}
-                        className="px-4 py-3 text-sm bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                        </svg>
-                        <span>歩留まり率マスター</span>
-                      </button>
-                      
-                      <button
-                        onClick={async () => {
-                          try {
-                            let successCount = 0;
-                            let errors = [];
-                            const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
-                            const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
-                            
-                            // 採用手法マスター
-                            try {
-                              const methodData = await MasterDataSpreadsheetManager.fetchRecruitmentMethods(localSettings.masterSpreadsheetUrl);
-                              if (methodData && Object.keys(methodData).length > 0) {
-                                setMethodMaster(methodData);
-                                successCount++;
-                              }
-                            } catch (e) { errors.push('採用手法: ' + e.message); }
-                            
-                            // 媒体利用率マスター
-                            try {
-                              const mediaData = await MasterDataSpreadsheetManager.fetchLayerMediaUsage(localSettings.masterSpreadsheetUrl);
-                              if (mediaData) {
-                                setLayerMediaUsage(mediaData);
-                                successCount++;
-                              }
-                            } catch (e) { errors.push('媒体利用率: ' + e.message); }
-                            
-                            // 質問マスター
-                            try {
-                              const questionData = await MasterDataSpreadsheetManager.fetchQuestionMaster(localSettings.masterSpreadsheetUrl);
-                              if (questionData) {
-                                setQuestionMaster(questionData);
-                                // GASモードかつ管理者の場合はスプレッドシートにも保存
-                                if (isGasMode && isAdmin && typeof GASDataManager !== 'undefined') {
-                                  GASDataManager.saveQuestionMaster(questionData);
-                                }
-                                successCount++;
-                              }
-                            } catch (e) { errors.push('質問: ' + e.message); }
-                            
-                            // 歩留まり率マスター
-                            try {
-                              const yieldData = await MasterDataSpreadsheetManager.fetchYieldRates(localSettings.masterSpreadsheetUrl);
-                              if (yieldData) {
-                                setYieldMaster(yieldData);
-                                // GASモードかつ管理者の場合はスプレッドシートにも保存
-                                if (isGasMode && isAdmin && typeof GASDataManager !== 'undefined') {
-                                  GASDataManager.saveYieldMaster(yieldData);
-                                }
-                                successCount++;
-                              }
-                            } catch (e) { errors.push('歩留まり率: ' + e.message); }
-                            
-                            let message = `【成功】 ${successCount}件のマスターを同期しました`;
-                            if (errors.length > 0) {
-                              message += `\n\n【警告】エラー:\n${errors.join('\n')}`;
-                            }
-                            message += '\n\n※「保存」ボタンで確定してください';
-                            alert(message);
-                          } catch (e) {
-                            alert('【失敗】 同期エラー: ' + e.message);
-                          }
-                        }}
-                        className="px-4 py-3 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                        <span>すべて同期</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* GASコード */}
-              <div className="border border-gray-200 rounded-xl overflow-hidden">
-                <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-                  <div className="text-sm font-medium text-gray-700 flex items-center gap-1">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                    </svg>
-                    GASコード（マスターデータ用）
-                  </div>
-                  <button
-                    onClick={() => {
-                      const gasCode = `// Gakusapo マスターデータ用 GAS コード
-// スプレッドシートに以下のシートを作成してください:
-// - 「採用手法マスター」シート: ツールID, ツール名, カテゴリ, 説明, ターゲット層
-// - 「媒体利用率マスター」シート: 層, 媒体キー, 利用率
-// - 「質問マスター」シート: セクション, サイズ/業種/層, 対象者, ID, 質問文, 選択A, 選択B, 正解, スコア方式, 点数, 軸タイプ, 軸キー
-// - 「歩留まりマスター」シート: 地域, 業種, 規模, 認知→興味, 興味→応募, 応募→選考, 選考→内定, 内定→承諾
-// - 「顧客データ」シート: 自動生成されます
-
-// JSONレスポンス生成の共通化
-function createJSONResponse(data) {
-  return ContentService.createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function doGet(e) {
-  // eがundefinedの場合のデフォルト処理
-  const params = e?.parameter || {};
-  const action = params.action || 'ping';
-  
-  try {
-    let result;
-    switch (action) {
-      case 'ping':
-        result = { success: true, message: 'pong', timestamp: new Date().toISOString() };
-        break;
-      case 'getRecruitmentMethods':
-        result = { success: true, data: getRecruitmentMethods() };
-        break;
-      case 'getLayerMediaUsage':
-        result = { success: true, data: getLayerMediaUsage() };
-        break;
-      case 'getQuestionMaster':
-        result = { success: true, data: getQuestionMaster() };
-        break;
-      case 'getYieldMaster':
-        result = { success: true, data: getYieldMaster() };
-        break;
-      case 'getAll':
-        result = { 
-          success: true, 
-          data: {
-            recruitmentMethods: getRecruitmentMethods(),
-            layerMediaUsage: getLayerMediaUsage(),
-            questionMaster: getQuestionMaster(),
-            yieldMaster: getYieldMaster()
-          }
-        };
-        break;
-      default:
-        result = { success: false, error: 'Unknown action: ' + action };
-    }
-    
-    return createJSONResponse(result);
-  } catch (error) {
-    return createJSONResponse({
-      success: false,
-      error: error.message,
-      stack: error.stack
-    });
-  }
-}
-
-function doPost(e) {
-  if (!e || !e.postData) {
-    return createJSONResponse({
-      success: false,
-      error: 'No POST data received'
-    });
-  }
-  
-  try {
-    const requestData = JSON.parse(e.postData.contents);
-    const action = requestData.action;
-    
-    let result;
-    switch (action) {
-      case 'saveCustomer':
-        result = saveCustomer(requestData.customer);
-        break;
-      case 'getCustomers':
-        result = { success: true, data: getCustomers() };
-        break;
-      case 'deleteCustomer':
-        result = deleteCustomer(requestData.customerId);
-        break;
-      default:
-        result = { success: false, error: 'Unknown action: ' + action };
-    }
-    
-    return createJSONResponse(result);
-  } catch (error) {
-    return createJSONResponse({
-      success: false,
-      error: error.message
-    });
-  }
-}
-
-function getRecruitmentMethods() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('採用手法マスター');
-  if (!sheet) return {};
-  
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return {};
-  
-  const result = {};
-  
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const key = String(row[0] || '').trim();
-    if (!key) continue;
-    
-    result[key] = {
-      name: String(row[1] || ''),
-      category: String(row[2] || 'その他'),
-      description: String(row[3] || ''),
-      targetLayers: row[4] ? String(row[4]).split(',').map(s => s.trim()) : []
-    };
-  }
-  
-  return result;
-}
-
-function getLayerMediaUsage() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('媒体利用率マスター');
-  if (!sheet) return null;
-  
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return null;
-  
-  const result = {};
-  
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const layer = String(row[0] || '').trim();
-    const mediaKey = String(row[1] || '').trim();
-    const usage = parseFloat(row[2]) || 0;
-    
-    if (!layer || !mediaKey) continue;
-    
-    if (!result[layer]) result[layer] = {};
-    result[layer][mediaKey] = usage;
-  }
-  
-  return result;
-}
-
-function getQuestionMaster() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('質問マスター');
-  if (!sheet) return null;
-  
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return null;
-  
-  // 手法マスターを取得（methodKey→カテゴリ名変換に使用）
-  const methodMaster = getRecruitmentMethods() || {};
-  
-  const result = {
-    base: {},
-    industry: {},
-    targetLayer: {},
-    depth: {},
-    recruitmentMethod: {}
-  };
-  
-  // 日本語→英語変換マップ（GASコードと完全一致）
-  const sectionMap = {
-    'base': 'base', 
-    'ベース': 'base',
-    'ベース（規模別）': 'base',
-    'industry': 'industry', 
-    '業種': 'industry', 
-    '業種別': 'industry', 
-    '業種固有': 'industry',
-    'targetlayer': 'targetLayer', 
-    'layer': 'targetLayer', 
-    'ターゲット': 'targetLayer', 
-    'ターゲット層': 'targetLayer', 
-    'ターゲット層別': 'targetLayer',
-    '層': 'targetLayer',
-    'depth': 'depth',
-    '注力タイプ': 'depth',
-    '注力タイプ別': 'depth',
-    'フェーズ': 'depth',
-    'フェーズ別': 'depth',
-    'recruitmentmethod': 'recruitmentMethod',
-    '採用手法': 'recruitmentMethod',
-    '採用手法別': 'recruitmentMethod',
-    '手法': 'recruitmentMethod',
-    '手法別': 'recruitmentMethod'
-  };
-  
-  // 質問マスター規模マッピング（3段階）
-  const sizeMap = {
-    'small': 'small', 
-    '小': 'small', 
-    '小規模': 'small', 
-    'S': 'small',
-    '100名以下': 'small',
-    'medium': 'medium', 
-    '中': 'medium', 
-    '中規模': 'medium', 
-    'M': 'medium',
-    '101～300名': 'medium',
-    '101〜300名': 'medium',
-    'large': 'large', 
-    '大': 'large', 
-    '大規模': 'large', 
-    'L': 'large',
-    '301名以上': 'large'
-  };
-  
-  const roleMap = {
-    'staff': 'staff', 
-    '担当者': 'staff', 
-    '採用担当者': 'staff', 
-    '担当': 'staff',
-    'executive': 'executive', 
-    '上層部': 'executive', 
-    '経営者': 'executive', 
-    '役員': 'executive',
-    '経営者・役員': 'executive',
-    'student': 'student', 
-    '学生': 'student'
-  };
-  
-  // ターゲット層マッピング
-  const layerMap = {
-    'A層（上位・理系）': 'A', 'A層': 'A', 'A': 'A',
-    'B層（中堅・理系）': 'B', 'B層': 'B', 'B': 'B',
-    'C層（上位・文系）': 'C', 'C層': 'C', 'C': 'C',
-    'D層（中堅・文系）': 'D', 'D層': 'D', 'D': 'D',
-    'E層（実務・理系）': 'E', 'E層': 'E', 'E': 'E',
-    'F層（地域・文系）': 'F', 'F層': 'F', 'F': 'F',
-    'G層（福祉・医療）': 'G', 'G層': 'G', 'G': 'G',
-    'H層（建築・施工）': 'H', 'H層': 'H', 'H': 'H'
-  };
-  
-  // スコア方式マッピング
-  const scoreTypeMap = {
-    'penalty': 'penalty',
-    'bonus': 'bonus',
-    'マインドセット（減点）': 'penalty',
-    '評価軸（加点）': 'bonus'
-  };
-  
-  // 軸タイプマッピング
-  const axisTypeMap = {
-    'mindset': 'mindset',
-    'evaluation': 'evaluation',
-    'depth': 'depth',
-    'マインドセット（減点）': 'mindset',
-    '評価軸（加点）': 'bonus',
-    '注力タイプ': 'depth',
-    'なし': null,
-    '-': null,
-    '': null
-  };
-  
-  // 軸キーマッピング
-  const axisKeyMap = {
-    // マインドセット5軸
-    '計画性': 'planning',
-    '組織体制': 'structure',
-    '採用体制': 'structure',
-    '市場理解': 'marketUnderstanding',
-    '経営関与': 'management',
-    '当事者意識': 'ownership',
-    '自責': 'ownership',
-    // 評価軸6軸
-    '認知到達力': 'recognition',
-    '認知度': 'recognition',
-    '具体性': 'specificity',
-    '具体性スコア': 'specificity',
-    '差別化': 'differentiation',
-    '差別化力': 'differentiation',
-    '独自性': 'differentiation',
-    '共感': 'visionEmpathy',
-    '共感性': 'visionEmpathy',
-    '共感力': 'visionEmpathy',
-    '共感・ビジョン力': 'visionEmpathy',
-    'ビジョン': 'visionEmpathy',
-    'ビジョン共感': 'visionEmpathy',
-    '将来像': 'visionEmpathy',
-    '選考体験': 'selectionUX',
-    '選考UX': 'selectionUX',
-    '対話姿勢': 'dialogue',
-    '対話力': 'dialogue',
-    // 後方互換性（旧軸名→正しい軸名に変換）
-    '信頼性': 'differentiation',
-    'credibility': 'differentiation',
-    '将来像提示力': 'visionEmpathy',
-    'visionPresentation': 'visionEmpathy',
-    '共感形成力': 'visionEmpathy',
-    'empathyBuilding': 'visionEmpathy'
-  };
-  
-  // 注力タイプ（depth）マッピング - 列2用
-  const depthPhaseMap = {
-    'surface': 'surface',
-    '表層': 'surface',
-    '表層部': 'surface',
-    '認知': 'surface',
-    '母集団形成': 'surface',
-    'middle': 'middle',
-    '中層': 'middle',
-    '中層部': 'middle',
-    '選考': 'middle',
-    '動機づけ': 'middle',
-    'deep': 'deep',
-    '深層': 'deep',
-    '深層部': 'deep',
-    '内定': 'deep',
-    '定着': 'deep'
-  };
-  
-  // 注力タイプ（depth）マッピング - 列13用（depthKey）
-  const depthKeyMap = {
-    'surface': 'surface',
-    '表層部': 'surface',
-    '表層': 'surface',
-    'middle': 'middle',
-    '中層部': 'middle',
-    '中層': 'middle',
-    'deep': 'deep',
-    '深層部': 'deep',
-    '深層': 'deep'
-  };
-  
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const rawSection = String(row[0] || '').trim();
-    const section = sectionMap[rawSection] || sectionMap[rawSection.toLowerCase()] || rawSection.toLowerCase();
-    const sizeOrIndustryOrLayer = String(row[1] || '').trim();
-    const rawRole = String(row[2] || 'staff').trim();
-    const role = roleMap[rawRole] || roleMap[rawRole.toLowerCase()] || rawRole.toLowerCase();
-    
-    if (!section || !sizeOrIndustryOrLayer) continue;
-    
-    // スコア方式を変換
-    const rawScoreType = String(row[8] || 'penalty').trim();
-    const scoreType = scoreTypeMap[rawScoreType] || rawScoreType.toLowerCase();
-    
-    // 軸タイプを変換
-    const rawAxisType = String(row[10] || 'mindset').trim();
-    const axisType = axisTypeMap[rawAxisType] || rawAxisType.toLowerCase();
-    
-    // 軸キーを変換（「なし」や空の場合はnull）
-    const rawAxisKey = String(row[11] || '').trim();
-    const axisKey = (rawAxisKey === '' || rawAxisKey === 'なし' || rawAxisKey === '-') 
-      ? null 
-      : (axisKeyMap[rawAxisKey] || rawAxisKey);
-    
-    // depthKey（列14）を変換 - 全セクション共通で使用可能
-    const rawDepthKey = String(row[13] || '').trim();
-    const depthKey = (rawDepthKey === '' || rawDepthKey === 'なし' || rawDepthKey === '-')
-      ? null
-      : (depthKeyMap[rawDepthKey] || depthKeyMap[rawDepthKey.toLowerCase()] || rawDepthKey.toLowerCase() || null);
-    
-    // 軸タイプを再判定（軸キーがnullでdepthKeyがある場合は'depth'に設定）
-    let finalAxisType = axisType;
-    if ((!axisKey || axisKey === null) && depthKey) {
-      finalAxisType = 'depth';
-    }
-    
-    const question = {
-      id: String(row[3] || 'q_' + i),
-      question: String(row[4] || ''),
-      choiceA: String(row[5] || 'はい'),
-      choiceB: String(row[6] || 'いいえ'),
-      correctAnswer: String(row[7] || 'A').toUpperCase(),
-      scoreType: scoreType,
-      points: parseInt(row[9]) || 2,
-      penaltyPoints: parseInt(row[9]) || 2,
-      axisType: finalAxisType,
-      axisKey: axisKey,
-      depthKey: depthKey,
-      gapCheck: String(row[14] || '').toUpperCase() === 'TRUE' || String(row[14] || '') === '1'
-    };
-    
-    if (!question.question) continue;
-    
-    if (section === 'base') {
-      // サイズ名を変換
-      const size = sizeMap[sizeOrIndustryOrLayer] || sizeMap[sizeOrIndustryOrLayer.toLowerCase()] || sizeOrIndustryOrLayer.toLowerCase();
-      if (!result.base[size]) {
-        result.base[size] = {};
-      }
-      if (!result.base[size][role]) {
-        result.base[size][role] = [];
-      }
-      result.base[size][role].push(question);
-      
-    } else if (section === 'industry') {
-      const industryName = sizeOrIndustryOrLayer;
-      if (!result.industry[industryName]) {
-        result.industry[industryName] = {};
-      }
-      const rawSize = String(row[12] || 'small').trim();
-      const size = sizeMap[rawSize] || sizeMap[rawSize.toLowerCase()] || rawSize.toLowerCase();
-      if (!result.industry[industryName][size]) {
-        result.industry[industryName][size] = {};
-      }
-      if (!result.industry[industryName][size][role]) {
-        result.industry[industryName][size][role] = [];
-      }
-      result.industry[industryName][size][role].push(question);
-      
-    } else if (section === 'targetLayer') {
-      // ターゲット層を変換（"A層（上位・理系）" → "A"）
-      const layer = layerMap[sizeOrIndustryOrLayer] || sizeOrIndustryOrLayer;
-      if (!result.targetLayer[layer]) {
-        result.targetLayer[layer] = {};
-      }
-      if (!result.targetLayer[layer][role]) {
-        result.targetLayer[layer][role] = [];
-      }
-      result.targetLayer[layer][role].push(question);
-      
-    } else if (section === 'depth') {
-      // 注力タイプ別（depth）- 列2でフェーズを指定
-      const phase = depthPhaseMap[sizeOrIndustryOrLayer] || depthPhaseMap[sizeOrIndustryOrLayer.toLowerCase()] || sizeOrIndustryOrLayer.toLowerCase();
-      if (!result.depth[phase]) {
-        result.depth[phase] = {};
-      }
-      if (!result.depth[phase][role]) {
-        result.depth[phase][role] = [];
-      }
-      // depthセクションの場合、axisTypeを'depth'に設定し、depthKeyは列14の値または列2のフェーズを使用
-      question.axisType = 'depth';
-      question.depthKey = question.depthKey || phase;
-      result.depth[phase][role].push(question);
-      
-    } else if (section === 'recruitmentMethod') {
-      // 採用手法別 - 列2で手法キーまたはカテゴリ名を指定
-      const rawKey = String(sizeOrIndustryOrLayer || '').trim();
-      // 手法キーならカテゴリ名に変換、カテゴリ名ならそのまま
-      const categoryName = methodMaster[rawKey]?.category || methodMaster[rawKey.toLowerCase()]?.category || rawKey;
-      if (!result.recruitmentMethod[categoryName]) {
-        result.recruitmentMethod[categoryName] = {};
-      }
-      if (!result.recruitmentMethod[categoryName][role]) {
-        result.recruitmentMethod[categoryName][role] = [];
-      }
-      // カテゴリ名を質問に追加
-      question.methodCategory = categoryName;
-      result.recruitmentMethod[categoryName][role].push(question);
-    }
-  }
-  
-  return result;
-}
-
-function getYieldMaster() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('歩留まりマスター');
-  if (!sheet) return null;
-  
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return null;
-  
-  const result = {};
-  
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const region = String(row[0] || 'aichi').trim().toLowerCase();
-    const industry = String(row[1] || '').trim();
-    const size = String(row[2] || 'small').trim().toLowerCase();
-    
-    if (!industry) continue;
-    
-    if (!result[region]) result[region] = {};
-    if (!result[region][industry]) result[region][industry] = {};
-    
-    result[region][industry][size] = {
-      awarenessToInterest: parseFloat(row[3]) || 20,
-      interestToApplication: parseFloat(row[4]) || 25,
-      applicationToScreening: parseFloat(row[5]) || 25,
-      screeningToOffer: parseFloat(row[6]) || 40,
-      offerToAcceptance: parseFloat(row[7]) || 80
-    };
-  }
-  
-  return result;
-}
-
-// 注意: この関数はマスターデータ用の簡易版です
-// 顧客データ用の完全版は最初のGASコードブロックにあります
-function saveCustomer(customer) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName('顧客データ');
-  
-  if (!sheet) {
-    sheet = ss.insertSheet('顧客データ');
-    sheet.appendRow([
-      'ID', '会社名', '業種', '従業員数', 'ターゲット層', 
-      '最終スコア', 'ランク', '診断タイプ', 
-      '更新日時', 'データJSON'
-    ]);
-  }
-  
-  const customerId = customer.id || 'c_' + new Date().getTime();
-  const data = sheet.getDataRange().getValues();
-  
-  let existingRow = -1;
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === customerId) {
-      existingRow = i + 1;
-      break;
-    }
-  }
-  
-  const rowData = [
-    customerId,
-    customer.companyName || '',
-    customer.industry || '',
-    customer.companySize || '',
-    JSON.stringify(customer.targetLayers || {}),
-    customer.finalScore || 0,
-    customer.rank || 'D',
-    customer.diagnosisType || '',
-    new Date().toISOString(),
-    JSON.stringify(customer)
-  ];
-  
-  if (existingRow > 0) {
-    sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
-  } else {
-    sheet.appendRow(rowData);
-  }
-  
-  return { success: true, customerId: customerId };
-}
-
-// 注意: この関数はマスターデータ用の簡易版です
-// 顧客データ用の完全版（getAllCustomers）は最初のGASコードブロックにあります
-function getCustomers() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('顧客データ');
-  if (!sheet) return [];
-  
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  
-  const customers = [];
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row[0]) continue;
-    
-    try {
-      const customerData = JSON.parse(row[9] || '{}');
-      customerData.id = row[0];
-      customers.push(customerData);
-    } catch (e) {
-      customers.push({
-        id: row[0],
-        companyName: row[1],
-        industry: row[2],
-        companySize: row[3],
-        finalScore: row[5],
-        rank: row[6]
-      });
-    }
-  }
-  
-  return customers;
-}
-
-// 注意: この関数はマスターデータ用の簡易版です
-// 顧客データ用の完全版（診断回答も削除）は最初のGASコードブロックにあります
-function deleteCustomer(customerId) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('顧客データ');
-  if (!sheet) return { success: false, error: 'Sheet not found' };
-  
-  const data = sheet.getDataRange().getValues();
-  
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === customerId) {
-      sheet.deleteRow(i + 1);
-      return { success: true };
-    }
-  }
-  
-  return { success: false, error: 'Customer not found' };
-}
-
-// テスト用関数
-function testDoGet() {
-  const result = doGet({ parameter: { action: 'ping' } });
-  Logger.log('結果: ' + result.getContent());
-}`;
-                      navigator.clipboard.writeText(gasCode);
-                      alert('GASコードをコピーしました！\n\nスプレッドシートの「拡張機能」→「Apps Script」に貼り付けてください。');
-                    }}
-                    className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-                  >
-                    コードをコピー
-                  </button>
-                </div>
-                <div className="p-4">
-                  <div className="text-xs text-gray-600 space-y-2">
-                    <p><strong>セットアップ手順：</strong></p>
-                    <ol className="list-decimal list-inside space-y-1">
-                      <li>Googleスプレッドシートを新規作成</li>
-                      <li>以下のシートを作成：
-                        <ul className="ml-4 mt-1 space-y-0.5">
-                          <li>・「採用手法マスター」: ツールID, ツール名, カテゴリ, 説明, ターゲット層</li>
-                          <li>・「媒体利用率マスター」: 層, 媒体キー, 利用率</li>
-                          <li>・「質問マスター」: セクション, サイズ/業種/層, 対象者, ID, 質問文, 選択A, 選択B, 正解, スコア方式, 点数, 軸タイプ, 軸キー</li>
-                          <li>・「歩留まりマスター」: 地域, 業種, 規模, 認知→興味, 興味→応募, 応募→選考, 選考→内定, 内定→承諾</li>
-                          <li>・「顧客データ」: 自動生成されます</li>
-                        </ul>
-                      </li>
-                      <li>「拡張機能」→「Apps Script」を開く</li>
-                      <li>上のボタンでコードをコピーして貼り付け</li>
-                      <li>「デプロイ」→「新しいデプロイ」→「ウェブアプリ」</li>
-                      <li>アクセス権限を「全員」に設定してデプロイ</li>
-                      <li>表示されたURLを上の入力欄に貼り付け</li>
-                    </ol>
-                    <p className="mt-2 text-amber-600 flex items-center gap-1"><strong className="flex items-center gap-1"><svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>テスト方法：</strong>スクリプトエディタで「testDoGet」関数を実行すると動作確認できます</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          
           {/* 口調プリセット */}
           {activeSection === 'tone' && (
             <div className="space-y-4">
@@ -16355,9 +15100,13 @@ const App = () => {
   const isGasMode = true;
   const gasUser = window.GAS_CONFIG?.currentUser || null;
   
-  // ログイン状態（GASモードでもパスワード認証を要求）
+  // ログイン状態（Google OAuth認証済みならパスワード不要）
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    // GASモードでもパスワード認証が必要
+    // Google OAuth認証済み（sessionStorageから復元含む）ならログイン済みとする
+    if (googleAuthed) {
+      LoginManager.saveSession(); // セッションも更新
+      return true;
+    }
     return LoginManager.checkSession();
   });
   
@@ -16431,6 +15180,7 @@ const App = () => {
   // ボタンフィードバック用state
   const toast = useToast();
   const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = React.useRef(false); // 同期的ガード（React state は非同期のため連打対策）
   const [saveComplete, setSaveComplete] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   
@@ -16454,20 +15204,6 @@ const App = () => {
         const yieldMaster = GASDataManager.getYieldMaster();
         const methodMaster = GASDataManager.getMethodMaster();
         const layerMediaUsage = GASDataManager.getMediaUsageMaster();
-        
-        // データが空の場合は警告
-        const errors = [];
-        if (!methodMaster || Object.keys(methodMaster).length === 0) {
-          errors.push('採用手法マスター');
-        }
-        if (!layerMediaUsage || Object.keys(layerMediaUsage).length === 0) {
-          errors.push('媒体利用率マスター');
-        }
-        
-        if (errors.length > 0) {
-          console.warn('マスターデータが未設定:', errors);
-          setMasterDataError(`以下のマスターデータがスプレッドシートに設定されていません: ${errors.join(', ')}。管理者が設定画面から初期化を行ってください。`);
-        }
         
         setCurrentData(prev => ({ 
           ...prev, 
@@ -16615,6 +15351,15 @@ const App = () => {
   if (!googleAuthed) {
     return <GoogleLoginScreen onLoginSuccess={(user) => {
       setGoogleAuthed(true);
+      // Google OAuth認証成功 = ログイン完了（パスワード画面をスキップ）
+      LoginManager.saveSession();
+      setIsLoggedIn(true);
+      // 学生番号をGAS_CONFIGから同期
+      if (window.GAS_CONFIG?.studentId) {
+        const gasStudentId = String(window.GAS_CONFIG.studentId).padStart(4, '0');
+        setStudentId(gasStudentId);
+        StorageManager.setStudentId(gasStudentId);
+      }
     }} />;
   }
   
@@ -16679,8 +15424,12 @@ const App = () => {
   
   // 保存処理
   const handleSave = async (silent = false) => {
-    if (isSaving) return false;
+    // 同期的ガード（useRefは即時反映されるため連打・ダブルクリック防止に有効）
+    if (isSavingRef.current) return false;
+    isSavingRef.current = true;
+    
     if (!currentData.companyName) {
+      isSavingRef.current = false;
       if (!silent) {
         toast('企業名を入力してください', 'warning');
       }
@@ -16761,6 +15510,7 @@ const App = () => {
       }
     } finally {
       setIsSaving(false);
+      isSavingRef.current = false;
     }
   };
   
