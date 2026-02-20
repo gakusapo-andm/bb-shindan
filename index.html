@@ -6,7 +6,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v41: PDF出力ズレ修正 - table→flex, translateY→lineHeight, arbitrary値→inline -->
+  <!-- v41: PDF出力ズレ修正 - foreignObjectRendering:trueでネイティブCSS描画 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -132,8 +132,7 @@ body {
 
 /* セクションラベル */
 .section-label {
-  display: flex;
-  align-items: center;
+  display: table;
   font-size: 12px;
   color: #64748b;
   margin-bottom: 12px;
@@ -142,16 +141,15 @@ body {
 }
 
 .section-label-dot {
-  display: flex;
-  align-items: center;
+  display: table-cell;
+  vertical-align: middle;
   width: 16px;
   padding-right: 8px;
-  flex-shrink: 0;
 }
 
 .section-label-text {
-  display: flex;
-  align-items: center;
+  display: table-cell;
+  vertical-align: middle;
 }
 
 /* ============================================
@@ -660,22 +658,21 @@ input[type="range"]::-moz-range-thumb {
   letter-spacing: 0.05em;
 }
 
-/* レジェンド用フレックスレイアウト */
+/* レジェンド用テーブルレイアウト */
 .legend-item-inline {
-  display: inline-flex;
-  align-items: center;
+  display: inline-table;
   vertical-align: middle;
 }
 
 .legend-dot-cell {
-  display: flex;
-  align-items: center;
+  display: table-cell;
+  vertical-align: middle;
   padding-right: 4px;
 }
 
 .legend-text-cell {
-  display: flex;
-  align-items: center;
+  display: table-cell;
+  vertical-align: middle;
 }
 
 /* PDF出力時: 左カラムの2カードを1カードに見せて右カラムと境界を揃える */
@@ -696,7 +693,22 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: none;
 }
 
-/* PDF出力時: section-label/legendは既にflexboxのため追加修正不要 */
+/* PDF出力時: html2canvasがtable-cellのvertical-alignを正しく処理できないためflexboxに切替 */
+.pdf-export-mode .legend-item-inline {
+  display: inline-flex;
+  align-items: center;
+}
+
+.pdf-export-mode .legend-dot-cell {
+  display: flex;
+  align-items: center;
+  padding-right: 4px;
+}
+
+.pdf-export-mode .legend-text-cell {
+  display: flex;
+  align-items: center;
+}
 
 /* ============================================
    10. 印刷用スタイル
@@ -6099,7 +6111,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
       <div className="flex-1">
         {/* X軸目盛り */}
         <div className="flex items-center mb-2 ml-12">
-          <div className="flex-1 flex justify-between text-gray-400" style={{ fontSize: '10px' }}>
+          <div className="flex-1 flex justify-between text-[10px] text-gray-400">
             <span>0</span>
             <span>{Math.round(globalMax / 2)}</span>
             <span>{globalMax}</span>
@@ -6121,8 +6133,8 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                 <div className="flex-1 space-y-0.5">
                   {/* 実績値（上段）- カラーバー */}
                   <div 
-                    className="overflow-hidden relative"
-                    style={{ backgroundColor: barBgColors[idx], borderRadius: '4px', height: '18px' }}
+                    className="h-[18px] overflow-hidden relative"
+                    style={{ backgroundColor: barBgColors[idx], borderRadius: '4px' }}
                   >
                     <div 
                       className="h-full"
@@ -6134,16 +6146,16 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                       }}
                     />
                     <span 
-                      className="absolute right-1.5 top-0 font-medium"
-                      style={{ color: actualTextOverlap ? '#ffffff' : '#6b7280', fontSize: '10px', lineHeight: '18px' }}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-medium"
+                      style={{ color: actualTextOverlap ? '#ffffff' : '#6b7280' }}
                     >
                       {Math.round(item.actual * animationProgress)}
                     </span>
                   </div>
                   {/* 目標目安（下段）- グレーの棒グラフ（上段の半分の太さ） */}
                   <div 
-                    className="bg-gray-100 overflow-hidden relative"
-                    style={{ borderRadius: '4px', height: '9px' }}
+                    className="h-[9px] bg-gray-100 overflow-hidden relative"
+                    style={{ borderRadius: '4px' }}
                   >
                     <div 
                       className="h-full"
@@ -6155,8 +6167,8 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                       }}
                     />
                     <span 
-                      className="absolute right-1.5 top-0"
-                      style={{ color: targetTextOverlap ? '#d1d5db' : '#9ca3af', fontSize: '9px', lineHeight: '9px' }}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px]"
+                      style={{ color: targetTextOverlap ? '#d1d5db' : '#9ca3af' }}
                     >
                       {Math.round(item.target * animationProgress)}
                     </span>
@@ -6168,13 +6180,13 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
         </div>
         
         {/* 凡例 */}
-        <div className="text-center mt-3 text-gray-600 font-bold" style={{ fontSize: '10px' }}>
+        <div className="text-center mt-3 text-[10px] text-gray-600 font-bold">
           上段：実績値　　下段：目標目安{targetHires > 0 && `（目標${targetHires}人から逆算）`}
         </div>
       </div>
       
       {/* 右側：歩留まり情報（仕切り付き） */}
-      <div className="w-44 pl-3 border-l border-gray-300" style={{ fontSize: '10px' }}>
+      <div className="w-44 pl-3 border-l border-gray-300 text-[10px]">
         <div className="font-bold text-gray-800 mb-2">【歩留まり率業界平均値】</div>
         <div className="space-y-1 text-gray-600">
           <div>認知→興味：{industryAverages.awarenessToInterest}%（実績 {actualRates.awarenessToInterest}%）</div>
@@ -16301,7 +16313,8 @@ const App = () => {
       await new Promise(resolve => setTimeout(resolve, 500)); // 追加の待機時間
       
       // html2canvasでキャプチャ
-      // foreignObjectRendering: falseに戻して、要素全体を確実にキャプチャ
+      // foreignObjectRendering: trueでブラウザのネイティブレンダリングを使用
+      // SVG→PNG変換、canvas→img変換は事前に済んでいるためCORS問題を回避
       const capturedCanvas = await html2canvas(sheetRef.current, {
         scale: 2,
         useCORS: true,
@@ -16309,7 +16322,7 @@ const App = () => {
         backgroundColor: '#ffffff',
         logging: false,
         imageTimeout: 30000,
-        foreignObjectRendering: false, // 要素全体を確実にキャプチャするためにfalseに戻す
+        foreignObjectRendering: true, // ブラウザのCSS解釈をそのまま使い、レイアウトズレを解消
         onclone: (clonedDoc) => {
           // クローンされたドキュメント内の画像を確認
           const clonedImages = clonedDoc.querySelectorAll('img');
