@@ -3775,8 +3775,7 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
 
 const GASDataManager = {
   // 歩留まりマスターを読み込み
-  loadYieldMaster: () => {
-    return new Promise(async (resolve) => {
+  loadYieldMaster: async () => {
       const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
       
       const _handleResult = (result) => {
@@ -3800,15 +3799,14 @@ const GASDataManager = {
       try {
         const result = await authFetch('getYieldMaster');
         if (result.success && result.data) {
-          resolve(_handleResult(result));
+          return _handleResult(result);
         } else {
-          resolve(null);
+          return null;
         }
       } catch (err) {
         console.error('歩留まりマスター読み込みエラー:', err);
-        resolve(null);
+        return null;
       }
-    });
   },
   
   // 歩留まりマスターを取得（キャッシュから）
@@ -3841,8 +3839,7 @@ const GASDataManager = {
   },
   
   // 歩留まりマスターを保存（スプレッドシートに）
-  saveYieldMaster: (masterData) => {
-    return new Promise(async (resolve) => {
+  saveYieldMaster: async (masterData) => {
       const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
       
       // ローカルストレージに保存
@@ -3855,10 +3852,10 @@ const GASDataManager = {
       try {
         const result = await authPost('saveYieldMaster', { masterData: masterData });
         console.log('歩留まりマスターをスプレッドシートに保存しました');
-        resolve(result);
+        return result;
       } catch (err) {
         console.error('歩留まりマスター保存エラー:', err);
-        resolve({ success: false, error: err.message });
+        return { success: false, error: err.message };
       } 
       // (v34: 以下のfetchフォールバックは不要 - authPostで処理済み)
       if (false && isGasMode && window.GAS_CONFIG?.gasUrl) {
@@ -3878,20 +3875,18 @@ const GASDataManager = {
           if (result.success) {
             console.log('歩留まりマスターをスプレッドシートに保存しました');
           }
-          resolve(result);
+          return result;
         } catch (err) {
           console.error('歩留まりマスター保存エラー:', err);
-          resolve({ success: false, error: err.message });
+          return { success: false, error: err.message };
         }
       } else {
-        resolve({ success: true });
+        return { success: true };
       }
-    });
   },
   
   // 質問マスターを読み込み
-  loadQuestionMaster: () => {
-    return new Promise(async (resolve) => {
+  loadQuestionMaster: async () => {
       try {
         // v34: authFetch使用
         try {
@@ -3900,10 +3895,10 @@ const GASDataManager = {
             _gasQuestionMaster = qmResult.data;
             try { localStorage.setItem('gakusapo_question_master', JSON.stringify(qmResult.data)); } catch (e) {}
           }
-          resolve(qmResult.data || null);
+          return qmResult.data || null;
         } catch (err) {
           console.error('質問マスター読み込みエラー:', err);
-          resolve(null);
+          return null;
         }
         if (false) { /* disabled v34 */ }
         // fetchフォールバック（iframe外やgoogle.script不可時）
@@ -3916,15 +3911,14 @@ const GASDataManager = {
             _gasQuestionMaster = result.data;
             try { localStorage.setItem('gakusapo_question_master', JSON.stringify(result.data)); } catch (e) {}
           }
-          resolve(result.data || null);
+          return result.data || null;
         } else {
-          resolve(null);
+          return null;
         }
       } catch (err) {
         console.error('質問マスター読み込みエラー:', err);
-        resolve(null);
+        return null;
       }
-    });
   },
   
   // 質問マスターを取得（キャッシュから）
@@ -3961,8 +3955,7 @@ const GASDataManager = {
   },
   
   // AI設定を読み込み
-  loadAISettings: () => {
-    return new Promise(async (resolve) => {
+  loadAISettings: async () => {
       try {
         // v34: authFetch使用
         try {
@@ -3972,12 +3965,12 @@ const GASDataManager = {
             console.log('AI設定をGASから読み込み:', aiResult.settings);
             try { localStorage.setItem('gakusapo_ai_settings', JSON.stringify(aiResult.settings)); } catch (e) {}
           }
-          resolve(aiResult.settings || null);
+          return aiResult.settings || null;
         } catch (err) {
           console.error('AI設定読み込みエラー:', err);
-          resolve(null);
+          return null;
         }
-        if (false) { resolve(null); }
+        if (false) { return null; }
 /* v34: removed */
         // fetchフォールバック（iframe外やgoogle.script不可時）
         else if (window.GAS_CONFIG?.deploymentMode === 'gas' && window.GAS_CONFIG?.gasUrl) {
@@ -3989,15 +3982,14 @@ const GASDataManager = {
             _gasAISettings = result.settings;
             try { localStorage.setItem('gakusapo_ai_settings', JSON.stringify(result.settings)); } catch (e) {}
           }
-          resolve(result.settings || null);
+          return result.settings || null;
         } else {
-          resolve(null);
+          return null;
         }
       } catch (err) {
         console.error('AI設定読み込みエラー:', err);
-        resolve(null);
+        return null;
       }
-    });
   },
   
   // AI設定を取得（キャッシュから）
@@ -4017,8 +4009,7 @@ const GASDataManager = {
   },
   
   // AI設定を保存（スプレッドシートに）
-  saveAISettings: (settings) => {
-    return new Promise(async (resolve) => {
+  saveAISettings: async (settings) => {
       const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
       
       try {
@@ -4030,10 +4021,10 @@ const GASDataManager = {
       try {
         const aiSaveResult = await authPost('saveAISettings', { settings: settings });
         console.log('AI設定をスプレッドシートに保存しました');
-        resolve(aiSaveResult);
+        return aiSaveResult;
       } catch (err) {
         console.error('AI設定保存エラー:', err);
-        resolve({ success: false, error: err.message });
+        return { success: false, error: err.message };
       }
       else if (isGasMode && window.GAS_CONFIG?.gasUrl) {
         try {
@@ -4050,20 +4041,18 @@ const GASDataManager = {
           if (result.success) {
             console.log('AI設定をスプレッドシートに保存しました');
           }
-          resolve(result);
+          return result;
         } catch (err) {
           console.error('AI設定保存エラー:', err);
-          resolve({ success: false, error: err.message });
+          return { success: false, error: err.message };
         }
       } else {
-        resolve({ success: true });
+        return { success: true };
       }
-    });
   },
   
   // 採用手法マスターを読み込み
-  loadMethodMaster: () => {
-    return new Promise(async (resolve) => {
+  loadMethodMaster: async () => {
       try {
         // v34: authFetch使用
         try {
@@ -4073,10 +4062,10 @@ const GASDataManager = {
             console.log('採用手法マスターをGASから読み込み:', mmResult.data);
             try { localStorage.setItem('gakusapo_method_master', JSON.stringify(mmResult.data)); } catch (e) {}
           }
-          resolve(mmResult.data || null);
+          return mmResult.data || null;
         } catch (err) {
           console.error('採用手法マスター読み込みエラー:', err);
-          resolve(null);
+          return null;
         }
         if (false) { /* disabled */ }
         // fetchフォールバック（iframe外やgoogle.script不可時）
@@ -4089,15 +4078,14 @@ const GASDataManager = {
             _gasMethodMaster = result.data;
             try { localStorage.setItem('gakusapo_method_master', JSON.stringify(result.data)); } catch (e) {}
           }
-          resolve(result.data || null);
+          return result.data || null;
         } else {
-          resolve(null);
+          return null;
         }
       } catch (err) {
         console.error('採用手法マスター読み込みエラー:', err);
-        resolve(null);
+        return null;
       }
-    });
   },
   
   // 採用手法マスターを取得（キャッシュから）
@@ -4114,8 +4102,7 @@ const GASDataManager = {
   },
   
   // 採用手法マスターを保存
-  saveMethodMaster: (methodsData) => {
-    return new Promise(async (resolve) => {
+  saveMethodMaster: async (methodsData) => {
       const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
       
       try {
@@ -4127,10 +4114,10 @@ const GASDataManager = {
       try {
         const mmSaveResult = await authPost('saveRecruitmentMethods', { methodsData: methodsData });
         console.log('採用手法マスターをスプレッドシートに保存しました');
-        resolve(mmSaveResult);
+        return mmSaveResult;
       } catch (err) {
         console.error('採用手法マスター保存エラー:', err);
-        resolve({ success: false, error: err.message });
+        return { success: false, error: err.message };
       }
       if (false && isGasMode && window.GAS_CONFIG?.gasUrl) {
         try {
@@ -4147,20 +4134,18 @@ const GASDataManager = {
           if (result.success) {
             console.log('採用手法マスターをスプレッドシートに保存しました');
           }
-          resolve(result);
+          return result;
         } catch (err) {
           console.error('採用手法マスター保存エラー:', err);
-          resolve({ success: false, error: err.message });
+          return { success: false, error: err.message };
         }
       } else {
-        resolve({ success: true });
+        return { success: true };
       }
-    });
   },
   
   // 媒体利用率マスターを読み込み
-  loadMediaUsageMaster: () => {
-    return new Promise(async (resolve) => {
+  loadMediaUsageMaster: async () => {
       try {
         // v34: authFetch使用
         try {
@@ -4170,10 +4155,10 @@ const GASDataManager = {
             console.log('媒体利用率マスターをGASから読み込み:', muResult.data);
             try { localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(muResult.data)); } catch (e) {}
           }
-          resolve(muResult.data || null);
+          return muResult.data || null;
         } catch (err) {
           console.error('媒体利用率マスター読み込みエラー:', err);
-          resolve(null);
+          return null;
         }
         if (false) { /* disabled */ }
         // fetchフォールバック（iframe外やgoogle.script不可時）
@@ -4186,15 +4171,14 @@ const GASDataManager = {
             _gasMediaUsageMaster = result.data;
             try { localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(result.data)); } catch (e) {}
           }
-          resolve(result.data || null);
+          return result.data || null;
         } else {
-          resolve(null);
+          return null;
         }
       } catch (err) {
         console.error('媒体利用率マスター読み込みエラー:', err);
-        resolve(null);
+        return null;
       }
-    });
   },
   
   // 媒体利用率マスターを取得（キャッシュから）
@@ -4211,8 +4195,7 @@ const GASDataManager = {
   },
   
   // 媒体利用率マスターを保存
-  saveMediaUsageMaster: (mediaData) => {
-    return new Promise(async (resolve) => {
+  saveMediaUsageMaster: async (mediaData) => {
       const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
       
       try {
@@ -4224,10 +4207,10 @@ const GASDataManager = {
       try {
         const muSaveResult2 = await authPost('saveLayerMediaUsage', { usageData: mediaData });
         console.log('媒体利用率マスターをスプレッドシートに保存しました');
-        resolve(muSaveResult2);
+        return muSaveResult2;
       } catch (err) {
         console.error('媒体利用率マスター保存エラー:', err);
-        resolve({ success: false, error: err.message });
+        return { success: false, error: err.message };
       }
       if (false && isGasMode && window.GAS_CONFIG?.gasUrl) {
         try {
@@ -4244,15 +4227,14 @@ const GASDataManager = {
           if (result.success) {
             console.log('媒体利用率マスターをスプレッドシートに保存しました');
           }
-          resolve(result);
+          return result;
         } catch (err) {
           console.error('媒体利用率マスター保存エラー:', err);
-          resolve({ success: false, error: err.message });
+          return { success: false, error: err.message };
         }
       } else {
-        resolve({ success: true });
+        return { success: true };
       }
-    });
   },
   
   // 全マスターデータを読み込み（起動時に呼び出す）
@@ -4356,20 +4338,18 @@ const LoginManager = {
   
   // GASからログイン設定を読み込み（起動時に呼び出す）
   // v34: authFetch使用
-  loadConfigFromGAS: () => {
-    return new Promise(async (resolve) => {
+  loadConfigFromGAS: async () => {
       try {
         const result = await authFetch('getLoginConfig');
         if (result.success && result.config) {
           _gasLoginConfig = result.config;
-          resolve(result.config);
+          return result.config;
         } else {
-          resolve(LoginManager.getConfig());
+          return LoginManager.getConfig();
         }
       } catch (err) {
-        resolve(LoginManager.getConfig());
+        return LoginManager.getConfig();
       }
-    });
   },
   
   // ログイン設定を保存（GASモードの場合はスプレッドシートにも保存）
