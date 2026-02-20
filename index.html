@@ -3942,10 +3942,7 @@ const GASDataManager = {
   },
   
   // 質問マスターを保存（スプレッドシートに）
-  saveQuestionMaster: (questionsData) => {
-    return new Promise((resolve) => {
-      const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
-      
+  saveQuestionMaster: async (questionsData) => {
       // ローカルストレージに保存
       try {
         localStorage.setItem('gakusapo_question_master', JSON.stringify(questionsData));
@@ -3956,15 +3953,11 @@ const GASDataManager = {
       try {
         const qmSaveResult = await authPost('saveQuestionMaster', { questionsData: questionsData });
         console.log('質問マスターをスプレッドシートに保存しました');
-        resolve(qmSaveResult);
+        return qmSaveResult;
       } catch (err) {
         console.error('質問マスター保存エラー:', err);
-        resolve({ success: false, error: err.message });
+        return { success: false, error: err.message };
       }
-      if (false) {
-        resolve({ success: true });
-      }
-    });
   },
   
   // AI設定を読み込み
