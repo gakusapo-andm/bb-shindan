@@ -6,7 +6,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v38: GitHub Pages スタンドアロン版 + Google OAuth認証 -->
+  <!-- v40: GitHub Pages スタンドアロン版 + Google OAuth認証 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -673,6 +673,41 @@ input[type="range"]::-moz-range-thumb {
 .legend-text-cell {
   display: table-cell;
   vertical-align: middle;
+}
+
+/* PDF出力時: 左カラムの2カードを1カードに見せて右カラムと境界を揃える */
+.pdf-export-mode .col-span-5.flex.flex-col.gap-4 {
+  gap: 0 !important;
+}
+
+.pdf-export-mode .col-span-5.flex.flex-col .section-card:first-child {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom: 1px solid #e5e7eb;
+  box-shadow: none;
+}
+
+.pdf-export-mode .col-span-5.flex.flex-col .section-card:last-child {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: none;
+}
+
+/* PDF出力時: html2canvasがtable-cellのvertical-alignを正しく処理できないためflexboxに切替 */
+.pdf-export-mode .legend-item-inline {
+  display: inline-flex;
+  align-items: center;
+}
+
+.pdf-export-mode .legend-dot-cell {
+  display: flex;
+  align-items: center;
+  padding-right: 4px;
+}
+
+.pdf-export-mode .legend-text-cell {
+  display: flex;
+  align-items: center;
 }
 
 /* ============================================
@@ -3647,9 +3682,7 @@ let _gasAISettings = null;
 let _gasMasterDataLoaded = false;
 
 /**
- * GASから取得した顧客データを正規化する共通関数
-/**
- * 【inventory A-1 / A-2 / A-3】GAS から受け取った顧客データを正規化する
+ * 【inventory A-1 / A-2 / A-3】GAS から受け取った顧客データを正規化する共通関数
  * google.script.runのシリアライゼーションで失われる可能性のあるデータを
  * 複数のソースから多段フォールバックで復元する
  */
@@ -3691,12 +3724,12 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
   
   // 4. ファネル・手法等
   const funnelData = (hasContent(c.funnelData) ? c.funnelData : null) || fullData.funnelData || {
-    targetAwareness: c['認知数'] || 0,
-    interest: c['興味数'] || 0,
-    applications: c['応募数'] || 0,
-    screening: c['選考数'] || 0,
-    offers: c['内定数'] || 0,
-    acceptance: c['承諾数'] || 0
+    targetAwareness: c['認知数'] ?? 0,
+    interest: c['興味数'] ?? 0,
+    applications: c['応募数'] ?? 0,
+    screening: c['選考数'] ?? 0,
+    offers: c['内定数'] ?? 0,
+    acceptance: c['承諾数'] ?? 0
   };
   const channelLabels = (hasContent(c.channelLabels) ? c.channelLabels : null) || fullData.channelLabels || null;
   const recruitmentMethods = (hasContent(c.recruitmentMethods) ? c.recruitmentMethods : null) || fullData.recruitmentMethods || {};
@@ -3718,7 +3751,7 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
     email: c['メール'] || c.email,
     phone: c['電話'] || c.phone,
     companySize: c['従業員規模'] || c.employeeCount || c.companySize,
-    totalScore: c['総合スコア'] || c.totalScore,
+    totalScore: c['総合スコア'] ?? c.totalScore,
     rank: c['ランク'] || c.rank,
     diagnosisType: c['症例タイプ'] || c.diagnosisType,
     targetLayer: c['ターゲット層'] || c.targetLayer || '',
@@ -10040,7 +10073,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
       {activeTab === 'result' && (
         <>
           <div className="grid grid-cols-12 gap-4 items-stretch">
-            {/* 左カラム: タイプ診断 + 学生視点ビューアー */}
+            {/* 左カラム: タイプ診断 + 歩留まり実績 */}
             <div className="col-span-5 flex flex-col gap-4">
               {/* ボックス1: 採用タイプ診断 */}
               <div className="section-card p-4" style={{ flex: '4', minHeight: 0, overflow: 'hidden' }}>
@@ -10239,11 +10272,11 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                   <div className="text-base font-bold text-gray-800">採用基礎力</div>
                   <div style={{ fontSize: '10px' }}>
                     <span className="legend-item-inline" style={{ marginRight: '8px' }}>
-                      <span className="legend-dot-cell"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#06b6d4"/></svg></span>
+                      <span className="legend-dot-cell"><svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="#06b6d4"/></svg></span>
                       <span className="legend-text-cell">担当者</span>
                     </span>
                     <span className="legend-item-inline">
-                      <span className="legend-dot-cell"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#3b82f6"/></svg></span>
+                      <span className="legend-dot-cell"><svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="#3b82f6"/></svg></span>
                       <span className="legend-text-cell">上層部</span>
                     </span>
                   </div>
@@ -10266,11 +10299,11 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                   <div className="text-base font-bold text-gray-800">魅力伝達力</div>
                   <div style={{ fontSize: '10px' }}>
                     <span className="legend-item-inline" style={{ marginRight: '8px' }}>
-                      <span className="legend-dot-cell"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#06b6d4"/></svg></span>
+                      <span className="legend-dot-cell"><svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="#06b6d4"/></svg></span>
                       <span className="legend-text-cell">担当者</span>
                     </span>
                     <span className="legend-item-inline">
-                      <span className="legend-dot-cell"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#3b82f6"/></svg></span>
+                      <span className="legend-dot-cell"><svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="#3b82f6"/></svg></span>
                       <span className="legend-text-cell">上層部</span>
                     </span>
                   </div>
