@@ -3728,7 +3728,7 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
     assigneeId: (() => {
       const raw = c['担当者ID'] ?? c.assigneeId ?? '';
       const padded = String(raw || '').padStart(4, '0');
-      return (padded && padded !== '0000') ? padded : String(c['問い合わせNo'] || '').substring(0, 4) || '0000';
+      return (padded && padded !== '0000') ? padded : String(c['問い合わせNo'] || '').padStart(13, '0').substring(0, 4) || '0000';
     })(),
     aiResult: c['AI診断結果'] || c.aiResult || '',
     // 回答データ（多段フォールバック復元済み）
@@ -11461,7 +11461,7 @@ const HandoverPanel = () => {
     return allCustomers.filter(c => {
       const rawId = c['担当者ID'] ?? c.assigneeId ?? '';
       const paddedId = String(rawId || '').padStart(4, '0');
-      const assigneeId = (paddedId && paddedId !== '0000') ? paddedId : String(c['問い合わせNo'] || '').substring(0, 4).padStart(4, '0');
+      const assigneeId = (paddedId && paddedId !== '0000') ? paddedId : String(c['問い合わせNo'] || '').padStart(13, '0').substring(0, 4);
       if (filterAssignee !== 'all' && assigneeId !== filterAssignee) return false;
       if (searchText) {
         const text = searchText.toLowerCase();
@@ -11496,7 +11496,7 @@ const HandoverPanel = () => {
   const getAssigneeId = (c) => {
     const raw = c['担当者ID'] ?? c.assigneeId ?? '';
     const padded = String(raw || '').padStart(4, '0');
-    return (padded && padded !== '0000') ? padded : String(c['問い合わせNo'] || '').substring(0, 4).padStart(4, '0');
+    return (padded && padded !== '0000') ? padded : String(c['問い合わせNo'] || '').padStart(13, '0').substring(0, 4);
   };
   
   // 引き継ぎ実行
