@@ -278,19 +278,8 @@ const gasPost = async (action, body = {}) => {
     const text = await res.text();
     try { return JSON.parse(text); } catch { return { success: false, error: 'Invalid JSON response' }; }
   } catch (err) {
-    // POST CORS失敗時：GETフォールバック（小さいペイロード用）
-    console.warn(`[API POST] ${action} failed, trying GET fallback:`, err);
-    const url = new URL(GAS_URL);
-    url.searchParams.set('action', action);
-    url.searchParams.set('payload', JSON.stringify(body));
-    try {
-      const res = await fetch(url.toString(), { redirect: 'follow' });
-      const text = await res.text();
-      try { return JSON.parse(text); } catch { return { success: false, error: 'Fallback also failed' }; }
-    } catch (err2) {
-      console.error(`[API GET fallback] ${action}:`, err2);
-      return { success: false, error: err2.message };
-    }
+    console.error(`[API POST] ${action}:`, err);
+    return { success: false, error: err.message };
   }
 };
 
@@ -306,11 +295,13 @@ const API = {
   },
   
   async loadQuestionMaster() {
-    return gasGet('getQuestionMaster');
+    // v40: 認証不要の公開エンドポイントを使用
+    return gasGet('getQuestionMasterPublic');
   },
   
   async loadRecruitmentMethods() {
-    return gasGet('getRecruitmentMethods');
+    // v40: 認証不要の公開エンドポイントを使用
+    return gasGet('getRecruitmentMethodsPublic');
   }
 };
 
