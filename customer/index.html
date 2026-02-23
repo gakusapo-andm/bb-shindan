@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>採用ブラックボックス診断® | 事前問診フォーム</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -257,11 +260,24 @@ const gasGet = async (action, params = {}) => {
   url.searchParams.set('action', action);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   try {
+    console.log('[API GET] ' + action + ' リクエスト送信...', url.toString().replace(/gasUrl=[^&]*/, 'gasUrl=***'));
     const res = await fetch(url.toString(), { redirect: 'follow' });
     const text = await res.text();
-    try { return JSON.parse(text); } catch { return { success: false, error: 'Invalid JSON response' }; }
+    console.log('[API GET] ' + action + ' レスポンス受信 status=' + res.status + ' length=' + text.length);
+    try {
+      const json = JSON.parse(text);
+      if (!json.success) {
+        console.warn('[API GET] ' + action + ' API応答エラー:', json.error || '不明');
+      } else {
+        console.log('[API GET] ' + action + ' 成功 hasData=' + (json.data !== null && json.data !== undefined));
+      }
+      return json;
+    } catch {
+      console.error('[API GET] ' + action + ' JSON解析エラー レスポンス先頭:', text.substring(0, 200));
+      return { success: false, error: 'Invalid JSON response. GASのデプロイが最新バージョンか確認してください。' };
+    }
   } catch (err) {
-    console.error(`[API GET] ${action}:`, err);
+    console.error('[API GET] ' + action + ':', err);
     return { success: false, error: err.message };
   }
 };
@@ -269,6 +285,7 @@ const gasGet = async (action, params = {}) => {
 const gasPost = async (action, body = {}) => {
   try {
     // Content-Type: text/plain でCORS preflightを回避
+    console.log('[API POST] ' + action + ' リクエスト送信...');
     const res = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -276,9 +293,19 @@ const gasPost = async (action, body = {}) => {
       redirect: 'follow'
     });
     const text = await res.text();
-    try { return JSON.parse(text); } catch { return { success: false, error: 'Invalid JSON response' }; }
+    console.log('[API POST] ' + action + ' レスポンス受信 status=' + res.status);
+    try {
+      const json = JSON.parse(text);
+      if (!json.success) {
+        console.warn('[API POST] ' + action + ' API応答エラー:', json.error || '不明');
+      }
+      return json;
+    } catch {
+      console.error('[API POST] ' + action + ' JSON解析エラー レスポンス先頭:', text.substring(0, 200));
+      return { success: false, error: 'Invalid JSON response. GASのデプロイが最新バージョンか確認してください。' };
+    }
   } catch (err) {
-    console.error(`[API POST] ${action}:`, err);
+    console.error('[API POST] ' + action + ':', err);
     return { success: false, error: err.message };
   }
 };
@@ -1225,7 +1252,7 @@ const CompletionScreen = () => (
     <h2 className="text-2xl font-bold text-gray-800 mb-3">事前問診が完了しました！</h2>
     <p className="text-gray-600 mb-6">
       ご回答いただきありがとうございます。<br />
-      お打ち合わせ当日、この内容をもとに診断を実施いたします。
+      お打ち合わせ当日、この内容をもとに診断いたします。
     </p>
     <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
       <p className="text-sm text-blue-800">
@@ -1263,10 +1290,22 @@ const App = () => {
   const [started, setStarted] = useState(false);
   const [quizActive, setQuizActive] = useState(false);
   
-  // 初期ロード
+  // 初期ロード（リトライ機能付き）
+  const maxRetries = 2;
+  const [retryCount, setRetryCount] = useState(0);
+  
   useEffect(() => {
     (async () => {
       try {
+        console.log('[事前問診] 初期ロード開始 customerId=' + API.customerId + ' retry=' + retryCount);
+        
+        // まずpingでAPI接続確認
+        const pingRes = await gasGet('ping');
+        if (!pingRes.success) {
+          throw new Error('GAS APIに接続できません。URLを確認してください。');
+        }
+        console.log('[事前問診] API接続OK version=' + (pingRes.version || '不明'));
+        
         // 既存データをロード
         const preRes = await API.loadPreInput();
         if (preRes.success && preRes.data) {
@@ -1287,21 +1326,35 @@ const App = () => {
         const qRes = await API.loadQuestionMaster();
         if (qRes.success && qRes.data) {
           setQuestionMaster(qRes.data);
+          console.log('[事前問診] 問診マスター読み込み完了');
+        } else {
+          console.warn('[事前問診] 問診マスターが空です success=' + qRes.success + ' error=' + (qRes.error || 'なし'));
+          if (qRes.error) {
+            setError('問診マスターの読み込みに失敗しました: ' + qRes.error);
+          }
         }
         
         // 採用手法マスターをロード
         const mRes = await API.loadRecruitmentMethods();
         if (mRes.success && mRes.data) {
           setMethodMaster(mRes.data);
+          console.log('[事前問診] 採用手法マスター読み込み完了');
+        } else {
+          console.warn('[事前問診] 採用手法マスターが空です');
         }
       } catch (e) {
-        console.error('ロードエラー:', e);
-        setError('データの読み込みに失敗しました。ページを再読み込みしてください。');
+        console.error('[事前問診] ロードエラー:', e);
+        if (retryCount < maxRetries) {
+          console.log('[事前問診] リトライ ' + (retryCount + 1) + '/' + maxRetries);
+          setRetryCount(prev => prev + 1);
+          return; // useEffectが再発火
+        }
+        setError('データの読み込みに失敗しました。\n' + e.message + '\n\nページを再読み込みするか、URLが正しいことを確認してください。');
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [retryCount]);
   
   // 質問を取得（roleKey: staff/executive）
   const getQuestions = useCallback((roleKey) => {
