@@ -9,7 +9,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v43: ランク未入力時のプレースホルダーをインラインバナー型に変更 -->
+  <!-- v43: ランク未入力時のプレースホルダーをインラインバナー型に変更, 診断開始時のサイレント保存でトークン期限切れ時に再ログイン強制されるバグを修正 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -2474,8 +2474,11 @@ async function authFetch(action, params = {}) {
       }
     }
     // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
-    window.AUTH._tokenExpired = true;
-    window.dispatchEvent(new Event('auth-expired'));
+    // ※ _suppressExpiredRedirect中はイベント発火を抑制（サイレント保存時）
+    if (!window.AUTH._suppressExpiredRedirect) {
+      window.AUTH._tokenExpired = true;
+      window.dispatchEvent(new Event('auth-expired'));
+    }
     throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
@@ -2521,8 +2524,11 @@ async function authPost(action, data = {}) {
       }
     }
     // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
-    window.AUTH._tokenExpired = true;
-    window.dispatchEvent(new Event('auth-expired'));
+    // ※ _suppressExpiredRedirect中はイベント発火を抑制（サイレント保存時）
+    if (!window.AUTH._suppressExpiredRedirect) {
+      window.AUTH._tokenExpired = true;
+      window.dispatchEvent(new Event('auth-expired'));
+    }
     throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
@@ -10199,14 +10205,14 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
                 {!hasRequiredAnswers ? (
-                  <div className="mb-2">
+                  <div>
                     <div className="bg-gray-100 rounded-lg px-3 py-2 flex items-center gap-2">
                       <span className="text-gray-400 text-sm">⚠</span>
                       <span className="text-xs text-gray-500">{missingInputTabs.join('・')}を入力するとランクが表示されます</span>
                     </div>
                   </div>
                 ) : (
-                <div className="mb-2">
+                <div>
                   <div className="flex items-baseline gap-2 mb-1">
                     <span className="text-xs text-gray-500">ランク</span>
                     <span 
@@ -10223,8 +10229,8 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 </div>
                 )}
                 
-                {/* 区切り線 */}
-                <div className="border-t border-gray-200 my-2"></div>
+                {/* 区切り線 - 上下スペース固定 */}
+                <div className="border-t border-gray-200" style={{ marginTop: '20px', marginBottom: '20px' }}></div>
                 
                 {/* 認識ギャップ（独立表示） */}
                 <div>
@@ -16863,9 +16869,16 @@ const App = () => {
             <InputForm 
               data={currentData} 
               onChange={setCurrentData}
-              onStartDiagnosis={() => {
-                // 自動保存してから診断開始
-                handleSave(true);
+              onStartDiagnosis={async () => {
+                // 自動保存してから診断開始（保存失敗でも診断は続行）
+                try {
+                  window.AUTH._suppressExpiredRedirect = true;
+                  await handleSave(true);
+                } catch (e) {
+                  console.warn('[診断開始] サイレント保存失敗（診断は続行）:', e.message);
+                } finally {
+                  window.AUTH._suppressExpiredRedirect = false;
+                }
                 setShowAIDiagnosis(true);
               }}
               onImportPreInput={handleImportPreInput}
