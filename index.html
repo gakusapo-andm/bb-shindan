@@ -10199,12 +10199,9 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
                 {!hasRequiredAnswers ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-center">
-                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <p className="text-sm font-medium text-gray-500 mb-1">{missingInputTabs.join('・')}が未入力です</p>
-                    <p className="text-xs text-gray-400">すべての問診を入力すると<br />ランクが表示されます</p>
+                  <div className="mb-2 py-2 px-3 bg-gray-50 rounded-lg">
+                    <p className="text-xs font-medium text-gray-400">{missingInputTabs.join('・')}が未入力です</p>
+                    <p className="text-[10px] text-gray-300">すべての問診を入力するとランクが表示されます</p>
                   </div>
                 ) : (
                 <div className="mb-2">
@@ -10397,12 +10394,11 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
               <div className="p-2 pt-4 pl-6 border-r border-gray-200 flex flex-col" style={{ overflow: 'visible' }}>
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">採用意識の癖</span></div>
                 {!hasExecAnswers ? (
-                  <div className="flex flex-col items-center justify-center flex-1 text-center py-4">
-                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <p className="text-sm font-medium text-gray-500 mb-1">「上層部問診」が未入力です</p>
-                    <p className="text-xs text-gray-400">「上層部問診」タブを入力すると<br />結果が表示されます</p>
+                  <div className="flex flex-col items-center justify-center flex-1 text-center">
+                    <div className="py-2 px-4 bg-gray-50 rounded-lg">
+                      <p className="text-xs font-medium text-gray-400">「上層部問診」が未入力です</p>
+                      <p className="text-[10px] text-gray-300">入力すると結果が表示されます</p>
+                    </div>
                   </div>
                 ) : (
                 <>
@@ -10426,12 +10422,11 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
               <div className="p-2 pt-4 pl-6 flex flex-col" style={{ overflow: 'visible' }}>
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">翻訳の必要性</span></div>
                 {!hasStaffAnswers ? (
-                  <div className="flex flex-col items-center justify-center flex-1 text-center py-4">
-                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <p className="text-sm font-medium text-gray-500 mb-1">「採用担当者問診」が未入力です</p>
-                    <p className="text-xs text-gray-400">「採用担当者問診」タブを入力すると<br />結果が表示されます</p>
+                  <div className="flex flex-col items-center justify-center flex-1 text-center">
+                    <div className="py-2 px-4 bg-gray-50 rounded-lg">
+                      <p className="text-xs font-medium text-gray-400">「採用担当者問診」が未入力です</p>
+                      <p className="text-[10px] text-gray-300">入力すると結果が表示されます</p>
+                    </div>
                   </div>
                 ) : (
                 <>
