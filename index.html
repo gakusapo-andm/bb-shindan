@@ -6197,7 +6197,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
       {/* 左側：棒グラフ */}
       <div className="flex-1">
         {/* X軸目盛り */}
-        <div className="flex items-center mb-2 ml-12">
+        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '34px' }}>
           <div className="flex-1 flex justify-between text-[10px] text-gray-400">
             <span>0</span>
             <span>{Math.round(globalMax / 2)}</span>
@@ -6210,80 +6210,79 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
           {barData.map((item, idx) => {
             const actualWidth = (item.actual / globalMax) * 100 * animationProgress;
             const targetWidth = (item.target / globalMax) * 100 * animationProgress;
-            // 数字がバーに被るかどうか（70%以上なら被る）
-            const actualTextOverlap = actualWidth > 70;
-            const targetTextOverlap = targetWidth > 70;
             
             return (
               <div key={item.label} className="flex items-start gap-2">
                 <div className="w-10 text-right text-xs text-gray-600 font-medium pt-1">{item.label}</div>
                 <div className="flex-1 space-y-0.5">
                   {/* 実績値（上段）- カラーバー */}
-                  <div 
-                    style={{ 
-                      height: '18px', 
-                      lineHeight: '18px', 
-                      position: 'relative', 
-                      backgroundColor: barBgColors[idx], 
-                      borderRadius: '4px', 
-                      overflow: 'hidden',
-                      textAlign: 'right',
-                      paddingRight: '6px'
-                    }}
-                  >
+                  <div className="flex items-center gap-1">
                     <div 
                       style={{ 
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        width: `${actualWidth}%`,
-                        height: '100%',
-                        backgroundColor: barColors[idx],
-                        borderRadius: '4px'
+                        height: '18px', 
+                        position: 'relative', 
+                        backgroundColor: barBgColors[idx], 
+                        borderRadius: '4px', 
+                        overflow: 'hidden',
+                        flex: 1
                       }}
-                    />
+                    >
+                      <div 
+                        style={{ 
+                          position: 'absolute',
+                          left: 0,
+                          top: 0,
+                          width: `${actualWidth}%`,
+                          height: '100%',
+                          backgroundColor: barColors[idx],
+                          borderRadius: '4px'
+                        }}
+                      />
+                    </div>
                     <span 
                       style={{ 
-                        position: 'relative', 
-                        zIndex: 1, 
                         fontSize: '10px', 
-                        fontWeight: 500,
-                        color: actualTextOverlap ? '#ffffff' : '#6b7280' 
+                        fontWeight: 600,
+                        color: '#6b7280',
+                        minWidth: '30px',
+                        textAlign: 'right',
+                        flexShrink: 0
                       }}
                     >
                       {Math.round(item.actual * animationProgress)}
                     </span>
                   </div>
                   {/* 目標目安（下段）- グレーの棒グラフ（上段の半分の太さ） */}
-                  <div 
-                    style={{ 
-                      height: '9px', 
-                      lineHeight: '9px', 
-                      position: 'relative', 
-                      backgroundColor: '#f3f4f6', 
-                      borderRadius: '4px', 
-                      overflow: 'hidden',
-                      textAlign: 'right',
-                      paddingRight: '6px'
-                    }}
-                  >
+                  <div className="flex items-center gap-1">
                     <div 
                       style={{ 
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        width: `${targetWidth}%`,
-                        height: '100%',
-                        backgroundColor: '#9ca3af',
-                        borderRadius: '4px'
+                        height: '9px', 
+                        position: 'relative', 
+                        backgroundColor: '#f3f4f6', 
+                        borderRadius: '4px', 
+                        overflow: 'hidden',
+                        flex: 1
                       }}
-                    />
+                    >
+                      <div 
+                        style={{ 
+                          position: 'absolute',
+                          left: 0,
+                          top: 0,
+                          width: `${targetWidth}%`,
+                          height: '100%',
+                          backgroundColor: '#9ca3af',
+                          borderRadius: '4px'
+                        }}
+                      />
+                    </div>
                     <span 
                       style={{ 
-                        position: 'relative', 
-                        zIndex: 1, 
                         fontSize: '9px',
-                        color: targetTextOverlap ? '#d1d5db' : '#9ca3af' 
+                        color: '#9ca3af',
+                        minWidth: '30px',
+                        textAlign: 'right',
+                        flexShrink: 0
                       }}
                     >
                       {Math.round(item.target * animationProgress)}
@@ -10230,7 +10229,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 )}
                 
                 {/* 区切り線 - 上下スペース固定 */}
-                <div className="border-t border-gray-200" style={{ marginTop: '20px', marginBottom: '20px' }}></div>
+                <div className="border-t border-gray-200" style={{ marginTop: '16px', marginBottom: '16px' }}></div>
                 
                 {/* 認識ギャップ（独立表示） */}
                 <div>
