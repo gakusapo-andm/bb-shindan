@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
@@ -140,8 +143,7 @@ body {
 }
 
 .section-label-dot {
-  font-size: 8px;
-  margin-right: 6px;
+  display: none;
 }
 
 .section-label-text {
@@ -2436,6 +2438,7 @@ function isTokenExpiredError(result) {
  */
 async function authFetch(action, params = {}) {
   if (!window.AUTH.idToken) {
+    console.error('[authFetch] idTokenが未設定 action=' + action);
     throw new Error('未ログインです。再ログインしてください。');
   }
   
@@ -2448,10 +2451,12 @@ async function authFetch(action, params = {}) {
         url.searchParams.set(key, String(value));
       }
     });
+    console.log('[authFetch] ' + action + ' リクエスト送信...');
     const response = await fetch(url.toString(), { method: 'GET', redirect: 'follow' });
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json') && !contentType.includes('text/plain')) {
-      throw new Error('APIから不正なレスポンスが返りました (content-type: ' + contentType + ')');
+      console.error('[authFetch] 不正なContent-Type:', contentType, 'status:', response.status);
+      throw new Error('APIから不正なレスポンスが返りました (content-type: ' + contentType + ')。GASのデプロイが最新か確認してください。');
     }
     return response.json();
   };
@@ -2535,21 +2540,39 @@ async function publicFetch(action, params = {}) {
       url.searchParams.set(key, String(value));
     }
   });
+  console.log('[publicFetch] ' + action + ' リクエスト送信...');
   const response = await fetch(url.toString(), { method: 'GET', redirect: 'follow' });
-  return response.json();
+  const text = await response.text();
+  try {
+    const result = JSON.parse(text);
+    console.log('[publicFetch] ' + action + ' 結果: success=' + result.success);
+    return result;
+  } catch (e) {
+    console.error('[publicFetch] ' + action + ' JSON解析エラー レスポンス先頭:', text.substring(0, 200));
+    return { success: false, error: 'Invalid JSON response from API. GASのデプロイが最新か確認してください。' };
+  }
 }
 
 /**
  * 認証不要のPOSTリクエスト（事前問診保存等）
  */
 async function publicPost(action, data = {}) {
+  console.log('[publicPost] ' + action + ' リクエスト送信...');
   const response = await fetch(window.GAS_CONFIG.gasUrl, {
     method: 'POST',
     redirect: 'follow',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ ...data, action: action })
   });
-  return response.json();
+  const text = await response.text();
+  try {
+    const result = JSON.parse(text);
+    console.log('[publicPost] ' + action + ' 結果: success=' + result.success);
+    return result;
+  } catch (e) {
+    console.error('[publicPost] ' + action + ' JSON解析エラー');
+    return { success: false, error: 'Invalid JSON response' };
+  }
 }
 
 // ========================================
@@ -2773,11 +2796,11 @@ const SpreadsheetManager = {
   },
   
   // 全顧客データを取得
-  // 全顧客データを取得（v34: authFetch使用）
+  // 全顧客データを取得（v42: 詳細ログ付き）
   fetchAllCustomers: async () => {
     const config = SpreadsheetManager.getConfig();
     if (!config.enabled || !config.scriptUrl) {
-      console.warn('[fetchAllCustomers] 設定無効のため中断');
+      console.warn('[fetchAllCustomers] 設定無効のため中断 enabled=' + config.enabled + ', scriptUrl=' + (config.scriptUrl ? '設定済み' : '未設定'));
       return null;
     }
     
@@ -2789,6 +2812,7 @@ const SpreadsheetManager = {
       if (result.success) {
         return { customers: result.customers || result.data || [], questionMasterCache: result.questionMasterCache || {} };
       }
+      console.error('[fetchAllCustomers] API応答エラー:', result.error || '不明');
       throw new Error(result.error || '取得に失敗しました');
     } catch (e) {
       console.error('[fetchAllCustomers] エラー:', e);
@@ -3869,20 +3893,39 @@ const GASDataManager = {
   // 質問マスターを読み込み
   loadQuestionMaster: async () => {
       try {
-        // v34: authFetch使用
+        // v42: authFetch使用 + 詳細ログ
         try {
+          console.log('[loadQuestionMaster] authFetch開始...');
           const qmResult = await authFetch('getQuestionMaster');
+          console.log('[loadQuestionMaster] 結果: success=' + qmResult.success + ', hasData=' + (qmResult.data !== null && qmResult.data !== undefined));
+          if (!qmResult.success) {
+            console.error('[loadQuestionMaster] API応答エラー:', qmResult.error || '不明なエラー');
+          }
           if (qmResult.success && qmResult.data) {
             _gasQuestionMaster = qmResult.data;
             try { localStorage.setItem('gakusapo_question_master', JSON.stringify(qmResult.data)); } catch (e) {}
+          } else if (qmResult.success && !qmResult.data) {
+            console.warn('[loadQuestionMaster] 質問マスターシートが空です。設定画面から質問を追加してください。');
           }
           return qmResult.data || null;
         } catch (err) {
-          console.error('質問マスター読み込みエラー:', err);
+          console.error('[loadQuestionMaster] 通信エラー:', err.message);
+          // localStorageフォールバック
+          try {
+            const cached = localStorage.getItem('gakusapo_question_master');
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (parsed && parsed.base) {
+                console.log('[loadQuestionMaster] localStorageキャッシュから復元');
+                _gasQuestionMaster = parsed;
+                return parsed;
+              }
+            }
+          } catch (e2) {}
           return null;
         }
       } catch (err) {
-        console.error('質問マスター読み込みエラー:', err);
+        console.error('[loadQuestionMaster] 致命的エラー:', err);
         return null;
       }
   },
@@ -4109,13 +4152,13 @@ const GASDataManager = {
   
   // 全マスターデータを読み込み（起動時に呼び出す）
   loadAllMasterData: async () => {
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
-    if (!isGasMode) {
-      _gasMasterDataLoaded = true;
-      return;
-    }
+    // v42: deploymentMode チェックを削除（呼び出し元の App で isGasMode ガード済み）
+    // ログインフロー: login成功→deploymentMode='gas'→App描画→useEffectからここが呼ばれる
+    // セッション復元: useState初期化でdeploymentMode='gas'→App描画→useEffectからここが呼ばれる
+    console.log('[loadAllMasterData] 開始 deploymentMode=' + window.GAS_CONFIG?.deploymentMode);
     
-    await Promise.all([
+    // v42: Promise.allSettled で個別の失敗に強くする
+    const results = await Promise.allSettled([
       GASDataManager.loadYieldMaster(),
       GASDataManager.loadQuestionMaster(),
       GASDataManager.loadMethodMaster(),
@@ -4124,11 +4167,44 @@ const GASDataManager = {
       LoginManager.loadConfigFromGAS()
     ]);
     
+    const labels = ['歩留まり', '質問', '採用手法', '媒体利用率', 'AI設定', 'ログイン設定'];
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        console.error('[loadAllMasterData] ' + labels[i] + 'マスター読み込み失敗:', r.reason);
+      } else {
+        console.log('[loadAllMasterData] ' + labels[i] + 'マスター: ' + (r.value !== null && r.value !== undefined ? '✓' : '△データなし'));
+      }
+    });
+    
     _gasMasterDataLoaded = true;
+    console.log('[loadAllMasterData] 完了');
   },
   
   // マスターデータが読み込まれたかどうか
   isMasterDataLoaded: () => _gasMasterDataLoaded,
+  
+  // v42: デバッグ用：現在のデータ読み込み状態を返す（コンソールから window._debugDataStatus() で呼び出し可能）
+  debugStatus: () => {
+    return {
+      deploymentMode: window.GAS_CONFIG?.deploymentMode,
+      gasUrl: window.GAS_CONFIG?.gasUrl ? '設定済み' : '未設定',
+      authToken: window.AUTH?.idToken ? '設定済み(' + window.AUTH.idToken.substring(0, 20) + '...)' : '未設定',
+      isLoggedIn: window.AUTH?.isLoggedIn,
+      masterDataLoaded: _gasMasterDataLoaded,
+      caches: {
+        yieldMaster: _gasYieldMaster ? '✓' : '✕',
+        questionMaster: _gasQuestionMaster ? '✓ (base keys: ' + Object.keys(_gasQuestionMaster?.base || {}).join(',') + ')' : '✕',
+        methodMaster: _gasMethodMaster ? '✓ (' + Object.keys(_gasMethodMaster).length + '件)' : '✕',
+        mediaUsageMaster: _gasMediaUsageMaster ? '✓' : '✕',
+        aiSettings: _gasAISettings ? '✓' : '✕'
+      },
+      localStorage: {
+        questionMaster: (() => { try { const s = localStorage.getItem('gakusapo_question_master'); return s ? '✓ (' + s.length + '文字)' : '✕'; } catch(e) { return 'エラー'; } })(),
+        methodMaster: (() => { try { const s = localStorage.getItem('gakusapo_method_master'); return s ? '✓ (' + s.length + '文字)' : '✕'; } catch(e) { return 'エラー'; } })(),
+        yieldMaster: (() => { try { const s = localStorage.getItem('gakusapo_yield_master'); return s ? '✓ (' + s.length + '文字)' : '✕'; } catch(e) { return 'エラー'; } })()
+      }
+    };
+  },
   
   // キャッシュ更新メソッド（保存せずにキャッシュのみ更新）
   updateYieldMasterCache: (data) => {
@@ -4175,6 +4251,31 @@ const GASDataManager = {
 // ========================================
 // ログイン管理
 // ========================================
+
+// v42: デバッグ用グローバル関数（ブラウザコンソールから呼び出し可能）
+window._debugDataStatus = () => {
+  const status = GASDataManager.debugStatus();
+  console.table(status.caches);
+  console.table(status.localStorage);
+  console.log('詳細:', status);
+  return status;
+};
+window._debugApiTest = async () => {
+  console.log('=== API診断開始 ===');
+  try {
+    const pingResult = await publicFetch('ping');
+    console.log('ping結果:', pingResult);
+    const debugResult = await publicFetch('debugDataLoad');
+    console.log('debugDataLoad結果:', debugResult);
+    if (debugResult.success && debugResult.sheets) {
+      console.table(debugResult.sheets);
+    }
+    return debugResult;
+  } catch (e) {
+    console.error('API診断エラー:', e);
+    return { error: e.message };
+  }
+};
 
 // GASから取得したログイン設定をキャッシュ
 let _gasLoginConfig = null;
@@ -4582,8 +4683,9 @@ const calcScoresFromAnswers = (data) => {
     return scores;
   };
   
-  // マインドセット軸のスコアを計算（減点方式）- 担当者と上層部を別々に計算
-  // 採用基礎力: 10点満点から開始、不正解で減点（正解しても加点なし）
+  // マインドセット軸のスコアを計算（減点方式・正規化）- 担当者と上層部を別々に計算
+  // 採用基礎力: 正解率ベースで10点満点に正規化（全問正解=10, 全問不正解=0）
+  // v42 fix: 旧ロジック(10点固定スタート)では質問数×配点<10の場合にスコアが底上げされるバグを修正
   // ※回答がある質問のみカウント
   const calcMindsetScoresForRole = (roleKey) => {
     const scores = {};
@@ -4591,7 +4693,8 @@ const calcScoresFromAnswers = (data) => {
     const answers = data[`${roleKey}Answers`] || {};
     
     Object.keys(MINDSET_AXES).forEach(axisKey => {
-      let totalPoints = 10; // 10点から開始
+      let correctPoints = 0;
+      let maxPoints = 0;
       let answeredCount = 0;
       
       questions.forEach(q => {
@@ -4604,19 +4707,21 @@ const calcScoresFromAnswers = (data) => {
           if (answer) {
             answeredCount++;
             const points = q.points || q.penaltyPoints || 2;
+            maxPoints += points;
             
-            if (answer !== q.correctAnswer) {
-              // 不正解の場合のみ減点
-              totalPoints -= points;
+            if (answer === q.correctAnswer) {
+              // 正解の場合: 得点
+              correctPoints += points;
             }
-            // 正解の場合は何もしない（10点のまま）
+            // 不正解の場合は何もしない（正解率で0に向かう）
           }
         }
       });
       
       // 回答がある場合のみスコアを設定、なければnull
-      if (answeredCount > 0) {
-        scores[axisKey] = Math.max(0, Math.min(10, totalPoints));
+      if (answeredCount > 0 && maxPoints > 0) {
+        // 正解率ベースで10点満点に正規化（評価軸と同じ方式）
+        scores[axisKey] = Math.round((correctPoints / maxPoints) * 10);
       } else {
         scores[axisKey] = null; // 回答なし
       }
@@ -10025,6 +10130,15 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
   const hasExecMindset = Object.values(effectiveExecMindsetScores || {}).some(v => v !== null && v !== undefined && v > 0);
   const hasBothMindsetScores = hasStaffMindset && hasExecMindset;
   
+  // v42: 問診回答の有無チェック（結果画面の表示制御に使用）
+  const hasStaffAnswers = Object.keys(data.staffAnswers || {}).length > 0;
+  const hasExecAnswers = Object.keys(data.executiveAnswers || {}).length > 0;
+  const missingInputTabs = [
+    ...(!hasStaffAnswers ? ['「採用担当者問診」'] : []),
+    ...(!hasExecAnswers ? ['「上層部問診」'] : [])
+  ];
+  const hasRequiredAnswers = hasStaffAnswers && hasExecAnswers;
+  
   // ギャップ係数を計算（gapCheck対象質問のみ）
   const gapResult = calcGapCoefficient(data);
   
@@ -10084,6 +10198,16 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
               <div className="section-card p-4" style={{ flex: '4', minHeight: 0, overflow: 'hidden' }}>
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
+                {!hasRequiredAnswers ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-sm font-medium text-gray-500 mb-1">{missingInputTabs.join('・')}が未入力です</p>
+                    <p className="text-xs text-gray-400">すべての問診を入力すると<br />ランクが表示されます</p>
+                  </div>
+                ) : (
+                <>
                 {/* ランク */}
                 <div className="mb-2">
                   <div className="flex items-baseline gap-2 mb-1">
@@ -10144,6 +10268,8 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                     </div>
                   )}
                 </div>
+                </>
+                )}
               </div>
               
               {/* ボックス2: 歩留まり実績 */}
@@ -10273,18 +10399,18 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
               {/* 採用基礎力（マインドセット）レーダー */}
               <div className="p-2 pt-4 pl-6 border-r border-gray-200 flex flex-col" style={{ overflow: 'visible' }}>
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">採用意識の癖</span></div>
-                <div className="flex justify-between items-start mb-1 w-full">
-                  <div className="text-base font-bold text-gray-800">採用基礎力</div>
-                  <div style={{ fontSize: '10px' }}>
-                    <span className="legend-item-inline" style={{ marginRight: '8px' }}>
-                      <span className="legend-dot-cell" style={{color:'#06b6d4'}}>●</span>
-                      <span className="legend-text-cell">担当者</span>
-                    </span>
-                    <span className="legend-item-inline">
-                      <span className="legend-dot-cell" style={{color:'#3b82f6'}}>●</span>
-                      <span className="legend-text-cell">上層部</span>
-                    </span>
+                {!hasExecAnswers ? (
+                  <div className="flex flex-col items-center justify-center flex-1 text-center py-4">
+                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-sm font-medium text-gray-500 mb-1">「上層部問診」が未入力です</p>
+                    <p className="text-xs text-gray-400">「上層部問診」タブを入力すると<br />結果が表示されます</p>
                   </div>
+                ) : (
+                <>
+                <div className="mb-1">
+                  <div className="text-base font-bold text-gray-800">採用基礎力</div>
                 </div>
                 <div className="flex justify-center flex-1 items-center" style={{ overflow: 'visible' }}>
                   <TripleRadarChart
@@ -10295,23 +10421,25 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                     maxValue={10}
                   />
                 </div>
+                </>
+                )}
               </div>
               
               {/* 魅力伝達力（6軸×2視点）レーダー */}
               <div className="p-2 pt-4 pl-6 flex flex-col" style={{ overflow: 'visible' }}>
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">翻訳の必要性</span></div>
-                <div className="flex justify-between items-start mb-1 w-full">
-                  <div className="text-base font-bold text-gray-800">魅力伝達力</div>
-                  <div style={{ fontSize: '10px' }}>
-                    <span className="legend-item-inline" style={{ marginRight: '8px' }}>
-                      <span className="legend-dot-cell" style={{color:'#06b6d4'}}>●</span>
-                      <span className="legend-text-cell">担当者</span>
-                    </span>
-                    <span className="legend-item-inline">
-                      <span className="legend-dot-cell" style={{color:'#3b82f6'}}>●</span>
-                      <span className="legend-text-cell">上層部</span>
-                    </span>
+                {!hasStaffAnswers ? (
+                  <div className="flex flex-col items-center justify-center flex-1 text-center py-4">
+                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-sm font-medium text-gray-500 mb-1">「採用担当者問診」が未入力です</p>
+                    <p className="text-xs text-gray-400">「採用担当者問診」タブを入力すると<br />結果が表示されます</p>
                   </div>
+                ) : (
+                <>
+                <div className="mb-1">
+                  <div className="text-base font-bold text-gray-800">魅力伝達力</div>
                 </div>
                 <div className="flex justify-center flex-1 items-center" style={{ overflow: 'visible' }}>
                   <TripleRadarChart
@@ -10322,6 +10450,8 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                     maxValue={10}
                   />
                 </div>
+                </>
+                )}
               </div>
             </div>
           </div>
@@ -15236,12 +15366,25 @@ const App = () => {
   const [masterDataError, setMasterDataError] = useState(null);
   
   useEffect(() => {
-    if (isGasMode && !masterDataLoaded) {
+    // v42 fix: googleAuthed ガードを追加
+    // 初回ログイン前は idToken が未設定のため authFetch が失敗する
+    // googleAuthed=true になってから読み込みを開始する
+    if (isGasMode && googleAuthed && !masterDataLoaded) {
+      console.log('[App] マスターデータ読み込み開始 deploymentMode=' + window.GAS_CONFIG?.deploymentMode);
       GASDataManager.loadAllMasterData().then(() => {
         // マスターデータ読み込み完了後、各マスターを更新
         const yieldMaster = GASDataManager.getYieldMaster();
         const methodMaster = GASDataManager.getMethodMaster();
         const layerMediaUsage = GASDataManager.getMediaUsageMaster();
+        const questionMaster = GASDataManager.getQuestionMaster();
+        
+        // v42: 読み込み結果をログ
+        console.log('[App] マスターデータ読み込み結果:',
+          '歩留=' + (yieldMaster ? '✓' : '✕'),
+          '手法=' + (methodMaster ? '✓' : '✕'),
+          '媒体=' + (layerMediaUsage ? '✓' : '✕'),
+          '問診=' + (questionMaster ? '✓' : '✕')
+        );
         
         setCurrentData(prev => ({ 
           ...prev, 
@@ -15250,13 +15393,18 @@ const App = () => {
           layerMediaUsage: layerMediaUsage || prev.layerMediaUsage
         }));
         setMasterDataLoaded(true);
+        
+        // v42: 問診マスターが空の場合に警告
+        if (!questionMaster) {
+          setMasterDataError('⚠ 問診マスターデータがスプレッドシートに見つかりません。設定画面で質問マスターを確認してください。');
+        }
       }).catch(err => {
         console.error('マスターデータ読み込みエラー:', err);
-        setMasterDataError('マスターデータの読み込みに失敗しました。ページを再読み込みしてください。');
+        setMasterDataError('マスターデータの読み込みに失敗しました: ' + (err.message || '') + '\nページを再読み込みしてください。');
         setMasterDataLoaded(true);
       });
     }
-  }, [isGasMode, masterDataLoaded]);
+  }, [isGasMode, googleAuthed, masterDataLoaded]);
   
   // GASモードの場合、マスターデータ読み込み完了後にAI設定を更新
   useEffect(() => {
