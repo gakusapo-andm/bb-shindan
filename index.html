@@ -6189,27 +6189,31 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
     { label: '承諾', actual: safeAcceptance, target: targetAcceptance }
   ];
   
-  // 最大値を統一（実績と目標の大きい方を基準）
-  const globalMax = Math.max(safeAwareness, targetAwareness);
+  // 最大値は各行ごとに実績vs目標で比較（グローバルスケール廃止）
   
   return (
     <div className="flex gap-3">
       {/* 左側：棒グラフ */}
       <div className="flex-1">
-        {/* X軸目盛り */}
-        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '34px' }}>
+        {/* ヘッダー（X軸目盛りの代わりに説明） */}
+        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '50px' }}>
           <div className="flex-1 flex justify-between text-[10px] text-gray-400">
-            <span>0</span>
-            <span>{Math.round(globalMax / 2)}</span>
-            <span>{globalMax}</span>
+            <span>0%</span>
+            <span>各段ごとの達成度</span>
+            <span>100%</span>
           </div>
         </div>
         
         {/* 棒グラフ */}
         <div className="space-y-2">
           {barData.map((item, idx) => {
-            const actualWidth = (item.actual / globalMax) * 100 * animationProgress;
-            const targetWidth = (item.target / globalMax) * 100 * animationProgress;
+            // 各行ごとにスケール決定（実績と目標の大きい方が100%）
+            const rowMax = Math.max(item.actual, item.target, 1);
+            const actualWidth = (item.actual / rowMax) * 100 * animationProgress;
+            const targetWidth = (item.target / rowMax) * 100 * animationProgress;
+            // 達成率（目標に対する実績の割合）
+            const achievementRate = item.target > 0 ? Math.round((item.actual / item.target) * 100) : 0;
+            const isOverAchieved = achievementRate >= 100;
             
             return (
               <div key={item.label} className="flex items-start gap-2">
@@ -6252,7 +6256,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                       {Math.round(item.actual * animationProgress)}
                     </span>
                   </div>
-                  {/* 目標目安（下段）- グレーの棒グラフ（上段の半分の太さ） */}
+                  {/* 目標目安（下段）- グレーの棒グラフ */}
                   <div className="flex items-center gap-1">
                     <div 
                       style={{ 
@@ -6288,6 +6292,28 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                       {Math.round(item.target * animationProgress)}
                     </span>
                   </div>
+                </div>
+                {/* 達成率表示 */}
+                <div 
+                  style={{ 
+                    minWidth: '38px',
+                    textAlign: 'center',
+                    paddingTop: '2px',
+                    flexShrink: 0
+                  }}
+                >
+                  <span 
+                    style={{ 
+                      fontSize: '10px', 
+                      fontWeight: 700,
+                      color: isOverAchieved ? '#16a34a' : '#dc2626',
+                      backgroundColor: isOverAchieved ? '#f0fdf4' : '#fef2f2',
+                      padding: '1px 4px',
+                      borderRadius: '3px'
+                    }}
+                  >
+                    {achievementRate}%
+                  </span>
                 </div>
               </div>
             );
@@ -10204,14 +10230,14 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
                 {!hasRequiredAnswers ? (
-                  <div>
+                  <div className="mb-2">
                     <div className="bg-gray-100 rounded-lg px-3 py-2 flex items-center gap-2">
                       <span className="text-gray-400 text-sm">⚠</span>
                       <span className="text-xs text-gray-500">{missingInputTabs.join('・')}を入力するとランクが表示されます</span>
                     </div>
                   </div>
                 ) : (
-                <div>
+                <div className="mb-2">
                   <div className="flex items-baseline gap-2 mb-1">
                     <span className="text-xs text-gray-500">ランク</span>
                     <span 
@@ -10228,8 +10254,8 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 </div>
                 )}
                 
-                {/* 区切り線 - 上下スペース固定 */}
-                <div className="border-t border-gray-200" style={{ marginTop: '16px', marginBottom: '16px' }}></div>
+                {/* 区切り線 */}
+                <div className="border-t border-gray-200 my-2"></div>
                 
                 {/* 認識ギャップ（独立表示） */}
                 <div>
