@@ -9,7 +9,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v41: PDF出力ズレ修正 - SVG→CSSドット, absolute+transform→lineHeight -->
+  <!-- v43: ランク未入力時のプレースホルダーをインラインバナー型に変更 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -10199,12 +10199,11 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
                 {!hasRequiredAnswers ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-center">
-                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <p className="text-sm font-medium text-gray-500 mb-1">{missingInputTabs.join('・')}が未入力です</p>
-                    <p className="text-xs text-gray-400">すべての問診を入力すると<br />ランクが表示されます</p>
+                  <div className="mb-2">
+                    <div className="bg-gray-100 rounded-lg px-3 py-2 flex items-center gap-2">
+                      <span className="text-gray-400 text-sm">⚠</span>
+                      <span className="text-xs text-gray-500">{missingInputTabs.join('・')}を入力するとランクが表示されます</span>
+                    </div>
                   </div>
                 ) : (
                 <div className="mb-2">
