@@ -1813,7 +1813,7 @@ const AdminPasswordManager = {
   }
 };
 
-// 口調プリセット定義（実行時にスプレッドシートデータで上書きされる）
+// 口調プリセット定義（実行時にスプレッドシートから上書き）
 const AI_TONE_PRESETS = {
   strict:   { id: 'strict',   name: '🔥 辛口', description: '', systemPrompt: '' },
   standard: { id: 'standard', name: '⚖️ 標準', description: '', systemPrompt: '' },
@@ -1821,19 +1821,17 @@ const AI_TONE_PRESETS = {
   custom:   { id: 'custom',   name: 'カスタム', description: '自由に編集可能', systemPrompt: '' }
 };
 
-// 最小フォールバック（GAS接続不可時のみ使用）
-const DEFAULT_USER_PROMPT_TEMPLATE = `以下の診断結果に基づき、改善アドバイスを生成してください。
-
+// 最小フォールバック（GAS未接続時のみ）
+const DEFAULT_USER_PROMPT_TEMPLATE = `以下の診断結果に基づき改善アドバイスを生成してください。
 【企業情報】 {companyName} / {industry} / {employeeCount}
 【診断結果】 ランク: {rank} / 症例: {diagnosisTypeName}
-【伝達力スコア】 認知:{scores.recognition} 具体性:{scores.specificity} 差別化:{scores.differentiation} ビジョン:{scores.visionEmpathy} UX:{scores.selectionUX} 対話:{scores.dialogue}
+【伝達力】 認知:{scores.recognition} 具体性:{scores.specificity} 差別化:{scores.differentiation} ビジョン:{scores.visionEmpathy} UX:{scores.selectionUX} 対話:{scores.dialogue}
 【フェーズ別】 表層:{depthScores.surface} 中層:{depthScores.middle} 深層:{depthScores.deep}
 【歩留まり】 {yieldGapAnalysis}
 【投資分析】 {investmentAnalysis}
 【クロス分析】 {phaseCrossAnalysis}
 【採用手法】 {recruitmentAnalysis}
 【備考】 {remarks}
-
 [SECTION_1] ■ 処方箋
 [SECTION_2] ■ 採用担当者へ
 [SECTION_3] ■ 上層部へ
@@ -1847,17 +1845,15 @@ const DEFAULT_SIDE_BUTTONS = [
 ];
 
 // ========================================
-// AIプロンプト シードデータ（初回初期化用）
-// スプレッドシートの「AIプロンプト設定」シートが空の場合にのみ送信される
-// 運用中のプロンプト編集はスプレッドシート上で直接行うこと
+// AIプロンプト シードデータ（初回初期化専用）
+// 運用中のプロンプト編集はスプレッドシート「AIプロンプト設定」で行う
 // ========================================
 const _PROMPT_SEED_JSON = "{\"tone_strict_name\":\"🔥 辛口\",\"tone_strict_description\":\"容赦なく切り捨てる。危機感を持たせたい経営者向け\",\"tone_strict_prompt\":\"あなたは「無駄を容赦なく切り捨て、本質だけに集中させる」ことを使命とする厳格な採用コンサルタントです。\\n\\n【あなたの方針】\\n- 一切の妥協なく、丁寧すぎる対応・効果の薄い広告・形骸化した面接プロセスを斬り捨てる\\n- 「やめろ」「捨てろ」「集中しろ」と断言する\\n- 経営者の甘えや言い訳を許さず、ハッとさせる鋭い指摘を行う\\n- 備考欄の情報を最大限活用し、その企業固有の無駄を容赦なく暴く\\n\\n【口調】\\n- 断定的で歯切れの良い命令形を使う\\n- 「〜かもしれません」「〜も良いでしょう」といった曖昧な表現は一切禁止\\n- 「今すぐ捨てろ」「やめなさい」「ここに集中しろ」と明確に指示する\",\"tone_standard_name\":\"⚖️ 標準\",\"tone_standard_description\":\"断定的だが攻撃的ではない。通常の商談向け\",\"tone_standard_prompt\":\"あなたは「無駄を徹底的に捨て、本質に集中させる」ことを信条とする鋭い視点を持つ採用コンサルタントです。\\n\\n【あなたの方針】\\n- 丁寧すぎる対応、効果の薄い広告、形骸化した面接プロセスをズバッと切り捨てる\\n- 「やめるべきこと」を明確に指摘し、リソースをどこに集中すべきか具体的に提言する\\n- 耳障りの良い一般論ではなく、経営者がハッとするような鋭い指摘を行う\\n- 備考欄の情報を最大限活用し、その企業固有の文脈に沿ったアドバイスを生成する\\n\\n【口調】\\n- 断定的で歯切れの良い表現を使う\\n- 「〜かもしれません」「〜も検討してみては」といった曖昧な表現は避ける\\n- 「捨てるべきです」「やめてください」「集中してください」と明確に指示する\",\"tone_polite_name\":\"🌸 丁寧\",\"tone_polite_description\":\"提案型で柔らかい表現。慎重な担当者向け\",\"tone_polite_prompt\":\"あなたは「無駄を見直し、本質に注力することを提案する」経験豊富な採用コンサルタントです。\\n\\n【あなたの方針】\\n- 現状の課題を丁寧に分析し、改善の方向性を提案する\\n- 「見直しをご検討ください」「優先度を下げることをお勧めします」といった表現を使う\\n- 経営者や担当者の立場に配慮しながら、建設的な提案を行う\\n- 備考欄の情報を活用し、その企業の状況に寄り添ったアドバイスを生成する\\n\\n【口調】\\n- 丁寧語を基本とし、提案型の表現を使う\\n- 相手の判断を尊重しながらも、明確な方向性を示す\\n- 「ご検討いただければ幸いです」「〜されることをお勧めいたします」と配慮ある表現を使う\",\"user_prompt_default\":\"以下の診断結果と備考欄の内容に基づき、改善アドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n採用メッセージが学生に「届いているか」「響いているか」を測定\\n- 認知到達力: {scores.recognition}（ターゲット学生への露出度）\\n- 具体性スコア: {scores.specificity}（給与・仕事内容の明確さ）\\n- 差別化力: {scores.differentiation}（競合との違いの訴求力）\\n- 共感・ビジョン力: {scores.visionEmpathy}（将来像・カルチャーの魅力）\\n- 選考UX: {scores.selectionUX}（応募〜内定の体験品質）\\n- 対話力: {scores.dialogue}（学生の不安への寄り添い）\\n\\n【注力フェーズ別スコア（10点満点）】\\n採用ファネルのどの段階に強み・弱みがあるかを測定\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考（現場の悩み・状況）】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n以下の4項目について、それぞれ150〜200文字程度で作成してください。\\n各項目の先頭には必ず指定のタグを入れてください。\\n\\n★ 分析の観点 ★\\n1. 伝達力スコアの低い項目（6点以下）は重点改善対象\\n2. フェーズ別クロス分析の判定パターンを最重要の分析軸として活用すること\\n3. パターン②（構造的問題：高魅力×高投資×低歩留まり）は最も深刻な問題として必ず言及\\n4. 採用基礎力5軸のうち主犯と特定された軸がある場合は、改善の起点として提言すること\\n5. 投資予算配分と注力順位を踏まえ、投資対効果の改善を提言\\n6. 備考欄の具体的な悩みに直接回答すること\\n\\n[SECTION_1]\\n■ 処方箋：この症例から脱却するために「今すぐ捨てるべき活動」\\n→ 症例タイプ「{diagnosisTypeName}」の根本原因を踏まえ、最優先でやめるべき施策を指摘\\n→ フェーズ別クロス分析で最も深刻なパターンに該当するフェーズの改善を最優先で提言\\n→ 過剰投資の媒体があれば具体的に見直しを提言\\n\\n[SECTION_2]\\n■ 採用担当者へ：現場が明日からやめるべき「無駄な作業」\\n→ 伝達力スコアの低い項目に関連する日常業務の改善を提言\\n→ ターゲット層に合っていない媒体への工数投下を見直す観点を含める\\n→ 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の改善アクション\\n\\n[SECTION_3]\\n■ 上層部へ：投資対効果の低い「無駄なコスト」\\n→ 投資予算額と注力順位から、予算配分の見直しを提言\\n→ 認知到達力（{scores.recognition}点）改善のための投資先を具体的に提案\\n→ 推奨配分との乖離が大きい媒体を根拠に具体的に提言\\n\\n[SECTION_4]\\n■ 組織の課題：根本原因となっている「マインドセットの無駄」\\n→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を起点に組織文化の問題を指摘\\n→ パターン②（構造的問題）が検出された場合は「投資すれば解決する」という思い込みへの警鐘を最優先で伝える\\n→ 「投資すれば解決する」という思い込みへの警鐘\\n\\n---\\n\\n【重要な注意点】\\n- フェーズ別クロス分析の判定パターンは必ず分析の根拠として活用すること\\n- パターン②🚨（構造的問題）が検出されたフェーズは最重要課題として必ず冒頭で言及すること\\n- 採用基礎力の「主犯」が特定されている場合、その軸の改善を具体的に提言すること\\n- 備考欄に具体的なサービス名や媒体名があれば、それに言及した具体的なアドバイスを出すこと\\n- 採用手法分析で「過剰投資」「投資不足」と判定された媒体は必ず言及すること\\n- 伝達力スコア6点以下の項目は重点課題として必ず言及すること\\n- 曖昧な表現は禁止\\n- 各セクションは必ず「捨てる」「やめる」「集中する」のいずれかの行動を明示すること\",\"btn1_label\":\"再診断\",\"btn1_prompt\":\"以下の診断結果に基づき、総合的な改善アドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n以下の4項目について、それぞれ150〜200文字程度で作成してください。\\n\\n★ 重点分析ポイント ★\\n- 伝達力スコア6点以下の項目は重点改善対象\\n- フェーズ別クロス分析の判定パターンを最重要の分析軸として活用\\n- パターン②（構造的問題）が検出された場合は最優先で指摘\\n- 採用基礎力の「主犯」軸が特定されている場合は改善の起点として提言\\n- 投資予算配分の最適化\\n\\n[SECTION_1]\\n■ 処方箋：今すぐ捨てるべき活動\\n→ 症例「{diagnosisTypeName}」の根本原因を踏まえた最優先施策\\n→ フェーズ別クロス分析で最も深刻なパターンのフェーズを指摘\\n\\n[SECTION_2]\\n■ 採用担当者へ：現場が明日からやめるべき無駄な作業\\n→ 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の改善アクション\\n\\n[SECTION_3]\\n■ 上層部へ：投資対効果の低い無駄なコスト\\n→ 投資予算額と注力順位を根拠に予算見直しを提言\\n\\n[SECTION_4]\\n■ 組織の課題：根本原因となっているマインドセット\\n→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を起点に組織の盲点を指摘\",\"btn2_label\":\"担当診断\",\"btn2_prompt\":\"以下の診断結果に基づき、【採用担当者向け】の具体的なアドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n採用担当者が明日から実践できる具体的なアクションを中心に、以下の4項目を作成してください。\\n\\n★ 担当者向け重点ポイント ★\\n- 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の現場改善\\n- フェーズ別クロス分析で躓いているフェーズの改善を優先\\n- 注力順位と投資予算の整合性の改善\\n- 具体性スコア（{scores.specificity}点）改善のためのコンテンツ作成\\n\\n[SECTION_1]\\n■ 処方箋：採用担当者として最優先で取り組むべきこと\\n→ フェーズ別クロス分析で最も深刻な判定のフェーズに着目し、現場レベルで改善可能なアクションを提言\\n\\n[SECTION_2]\\n■ 採用担当者へ：日々の業務で改善すべき具体的なポイント\\n→ 選考UX（{scores.selectionUX}点）改善：応募者対応スピード・面接体験\\n→ 対話力（{scores.dialogue}点）改善：内定者フォロー・不安解消\\n\\n[SECTION_3]\\n■ 上層部へ：担当者から上層部へ提案すべき内容\\n→ 投資予算額と注力順位を根拠に予算・権限の見直しを提案\\n\\n[SECTION_4]\\n■ 組織の課題：採用担当者の立場から見た組織の問題点\\n→ フェーズ別クロス分析で特定された採用基礎力の問題を、現場視点から上層部に伝えるべきポイントとして整理\",\"btn3_label\":\"組織診断\",\"btn3_prompt\":\"以下の診断結果に基づき、【組織・経営層向け】の戦略的アドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n経営判断や組織改革の観点から、以下の4項目を作成してください。\\n\\n★ 経営層向け重点ポイント ★\\n- フェーズ別クロス分析の判定パターンを最重要の分析軸として必ず活用すること\\n- 採用基礎力5軸（採用体制・自責・経営関与・市場理解・計画性）のうち「主犯」と特定された軸は経営課題の起点として提言\\n- パターン②（構造的問題：自己評価も投資も高いのに歩留まりが悪い）が検出された場合は「投資では解決しない」ことを明確に伝えること\\n- 投資予算配分の経営インパクト\\n\\n[SECTION_1]\\n■ 処方箋：経営として即座に決断すべき施策\\n→ 症例「{diagnosisTypeName}」脱却のための経営判断\\n→ フェーズ別クロス分析で最も深刻なパターンのフェーズを最優先課題として提示\\n\\n[SECTION_2]\\n■ 採用担当者へ：組織として担当者に与えるべき権限と環境\\n→ 選考UX（{scores.selectionUX}点）改善に必要な権限移譲\\n→ 採用基礎力の「採用体制」が低い場合は、担当者への人員・時間の追加確保を提言\\n\\n[SECTION_3]\\n■ 上層部へ：投資判断と予算配分の見直し\\n→ 投資予算額と注力順位を根拠に過剰投資の削減と再配分を提言\\n→ 認知到達力（{scores.recognition}点）向上のための投資先\\n→ パターン②が検出されたフェーズは「予算増額」ではなく「質の改善」を提言\\n\\n[SECTION_4]\\n■ 組織の課題：採用力を阻害している組織文化・構造の問題\\n→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を中心に組織の構造的問題を指摘\\n→ 各主犯軸について具体的な改善アクション（例：経営関与が低い→経営者の面接参加、市場理解が低い→競合分析の実施）を提言\\n→ 採用基礎力が全体的に低い場合は「施策の前に土台づくり」を最優先メッセージとして伝えること\",\"btn4_label\":\"Pro診断\",\"btn4_prompt\":\"以下の診断結果に基づき、【プロフェッショナル向け】の高度な分析とアドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資詳細分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysisPro}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\nコンサルタント視点での高度な分析を含め、以下の4項目を作成してください。\\nデータに基づいた論理的な提言を心がけてください。\\n\\n★ Pro分析フレームワーク ★\\n1. フェーズ別クロス分析の8パターン判定を最重要の分析基盤として活用\\n2. 採用基礎力5軸の「主犯」特定による根本原因分析\\n3. パターン②（構造的問題）検出時は「量より質」の改善を最優先で提言\\n4. 投資予算配分の定量的改善提案\\n5. ROI最大化のための優先順位付け\\n\\n[SECTION_1]\\n■ 処方箋：根本原因の分析と最も効果的な介入ポイント\\n→ 症例「{diagnosisTypeName}」の構造的要因を分析\\n→ フェーズ別クロス分析の各パターンから、最も介入効果の高いポイントを特定\\n→ 「過剰投資」「投資不足」の媒体を特定し、優先度の高い改善点を明示\\n\\n[SECTION_2]\\n■ 採用担当者へ：KPI設計と効果測定の仕組み構築\\n→ フェーズ別クロス分析の判定パターンをKPIモニタリングに組み込む提案\\n→ 選考UX（{scores.selectionUX}点）・対話力（{scores.dialogue}点）の測定方法\\n→ 推奨配分に近づけるための具体的なアクションプラン\\n\\n[SECTION_3]\\n■ 上層部へ：ROI最大化のための投資戦略\\n→ 投資予算の再配分による期待効果を定量化\\n→ パターン②検出フェーズは予算増額ではなく質的改善への投資を提言\\n→ 認知到達力（{scores.recognition}点）向上のための費用対効果分析\\n\\n[SECTION_4]\\n■ 組織の課題：競争優位性を構築するための組織変革\\n→ フェーズ別クロス分析で特定された採用基礎力5軸の「主犯」から組織の構造的問題を分析\\n→ 各主犯軸の改善ロードマップ（短期：3ヶ月/中期：6ヶ月/長期：1年）を提示\\n→ データドリブンな採用投資判断ができる組織体制の構築提案\"}";
 const getPromptSeedData = () => JSON.parse(_PROMPT_SEED_JSON);
 
-// プロンプトマスター適用関数（GASから読み込んだデータでAI_TONE_PRESETS等を更新）
+// プロンプトマスター適用（GASデータでAI_TONE_PRESETS等を更新）
 const applyPromptMaster = (pm) => {
   if (!pm) return;
-  // 口調プリセット
   if (pm.tone_strict_prompt) AI_TONE_PRESETS.strict.systemPrompt = pm.tone_strict_prompt;
   if (pm.tone_standard_prompt) AI_TONE_PRESETS.standard.systemPrompt = pm.tone_standard_prompt;
   if (pm.tone_polite_prompt) AI_TONE_PRESETS.polite.systemPrompt = pm.tone_polite_prompt;
@@ -1867,16 +1863,16 @@ const applyPromptMaster = (pm) => {
   if (pm.tone_strict_description) AI_TONE_PRESETS.strict.description = pm.tone_strict_description;
   if (pm.tone_standard_description) AI_TONE_PRESETS.standard.description = pm.tone_standard_description;
   if (pm.tone_polite_description) AI_TONE_PRESETS.polite.description = pm.tone_polite_description;
-  console.log("[applyPromptMaster] プロンプトマスターを適用完了");
+  console.log('[applyPromptMaster] 適用完了');
 };
 
-// プロンプトマスターからユーザープロンプトテンプレートを取得
+// プロンプトマスターからユーザープロンプトを動的取得
 const getEffectiveUserPromptTemplate = () => {
   const pm = (typeof GASDataManager !== 'undefined') ? GASDataManager.getPromptMaster() : null;
   return (pm && pm.user_prompt_default) ? pm.user_prompt_default : DEFAULT_USER_PROMPT_TEMPLATE;
 };
 
-// プロンプトマスターからサイドボタン定義を取得
+// プロンプトマスターからサイドボタンを動的取得
 const getEffectiveSideButtons = () => {
   const pm = (typeof GASDataManager !== 'undefined') ? GASDataManager.getPromptMaster() : null;
   if (!pm) return DEFAULT_SIDE_BUTTONS;
@@ -1887,44 +1883,35 @@ const getEffectiveSideButtons = () => {
     { id: 'btn4', label: pm.btn4_label || 'Pro診断',  prompt: pm.btn4_prompt || '' }
   ];
 };
+
 // AI設定の保存・読み込み
 const AISettingsManager = {
   getSettings: () => {
     const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
     
-    // プロンプトマスターを適用（口調プリセットのsystemPrompt等を更新）
+    // プロンプトマスター適用（口調プリセット等を更新）
     if (typeof GASDataManager !== 'undefined') {
-      const pm = GASDataManager.getPromptMaster();
-      applyPromptMaster(pm);
+      applyPromptMaster(GASDataManager.getPromptMaster());
     }
     
-    // GASモードの場合はスプレッドシートの設定を優先
+    // GASモード: スプレッドシート設定を優先
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasSettings = GASDataManager.getAISettings();
-      console.log('GASDataManager.getAISettings():', gasSettings);
-      if (gasSettings && (gasSettings.apiKey || gasSettings.selectedPreset || gasSettings.sideButtons)) {
-        // ローカル設定とマージ（GASの設定を優先）
+      if (gasSettings && (gasSettings.apiKey || gasSettings.selectedPreset)) {
         try {
           const localData = localStorage.getItem('gakusapo_bb_ai_settings');
           const localSettings = localData ? JSON.parse(localData) : {};
-          const mergedSettings = {
-            // API設定（GAS優先）
+          return {
             apiType: gasSettings.apiType || localSettings.apiType || 'gemini',
             apiKey: gasSettings.apiKey || localSettings.apiKey || '',
             model: gasSettings.model || localSettings.model || 'claude-3-haiku-20240307',
             maxTokens: gasSettings.maxTokens || localSettings.maxTokens || 2000,
-            // プロンプト設定（プロンプトマスター → GAS設定 → ローカル → フォールバック）
             selectedPreset: gasSettings.selectedPreset || localSettings.selectedPreset || 'standard',
             customSystemPrompt: gasSettings.customSystemPrompt || localSettings.customSystemPrompt || '',
             userPromptTemplate: getEffectiveUserPromptTemplate(),
-            // 診断ボタン設定（プロンプトマスター → GAS設定 → ローカル → フォールバック）
             sideButtons: getEffectiveSideButtons(),
-            // ローカルのみの設定
             masterSpreadsheetUrl: localSettings.masterSpreadsheetUrl || ''
           };
-          
-          console.log('マージ後のAI設定:', mergedSettings);
-          return mergedSettings;
         } catch (e) {
           console.error('AI設定のマージに失敗:', e);
         }
@@ -1936,23 +1923,16 @@ const AISettingsManager = {
       const data = localStorage.getItem('gakusapo_bb_ai_settings');
       if (data) {
         const parsed = JSON.parse(data);
-        // プロンプトマスターから動的に取得
         parsed.userPromptTemplate = getEffectiveUserPromptTemplate();
         parsed.sideButtons = getEffectiveSideButtons();
-        if (!parsed.masterSpreadsheetUrl) {
-          parsed.masterSpreadsheetUrl = '';
-        }
+        if (!parsed.masterSpreadsheetUrl) parsed.masterSpreadsheetUrl = '';
         return parsed;
       }
     } catch (e) {
       console.error('AI設定の読み込みに失敗:', e);
     }
-    // デフォルト設定
     return {
-      apiType: 'gemini',
-      apiKey: '',
-      selectedPreset: 'standard',
-      customSystemPrompt: '',
+      apiType: 'gemini', apiKey: '', selectedPreset: 'standard', customSystemPrompt: '',
       userPromptTemplate: getEffectiveUserPromptTemplate(),
       sideButtons: getEffectiveSideButtons(),
       masterSpreadsheetUrl: ''
@@ -1965,30 +1945,26 @@ const AISettingsManager = {
     try {
       localStorage.setItem('gakusapo_bb_ai_settings', JSON.stringify(settings));
       
-      // GASモードかつ管理者の場合はスプレッドシートにも保存
       if (isGasMode && isAdmin && typeof GASDataManager !== 'undefined') {
+        // API設定のみ設定シートに保存
         GASDataManager.saveAISettings({
-          // API設定
           enabled: true,
           apiType: settings.apiType || 'gemini',
           apiKey: settings.apiKey || '',
           model: settings.model || 'claude-3-haiku-20240307',
           maxTokens: settings.maxTokens || 2000,
-          // プロンプト設定（口調選択のみ）
           selectedPreset: settings.selectedPreset || 'standard',
           customSystemPrompt: settings.customSystemPrompt || ''
         });
         
-        // プロンプト内容の変更があればプロンプトマスターにも保存
+        // プロンプト内容はプロンプトマスターシートに保存
         const promptUpdates = {};
-        if (settings.userPromptTemplate) {
-          promptUpdates.user_prompt_default = settings.userPromptTemplate;
-        }
+        if (settings.userPromptTemplate) promptUpdates.user_prompt_default = settings.userPromptTemplate;
         if (settings.sideButtons && Array.isArray(settings.sideButtons)) {
           settings.sideButtons.forEach((btn, i) => {
-            const idx = i + 1;
-            if (btn.label) promptUpdates[`btn${idx}_label`] = btn.label;
-            if (btn.prompt) promptUpdates[`btn${idx}_prompt`] = btn.prompt;
+            const n = i + 1;
+            if (btn.label) promptUpdates['btn' + n + '_label'] = btn.label;
+            if (btn.prompt) promptUpdates['btn' + n + '_prompt'] = btn.prompt;
           });
         }
         if (Object.keys(promptUpdates).length > 0) {
@@ -3343,7 +3319,7 @@ let _gasQuestionMaster = null;
 let _gasMethodMaster = null;
 let _gasMediaUsageMaster = null;
 let _gasAISettings = null;
-let _gasPromptMaster = null;  // AIプロンプト設定マスター（スプレッドシートから読み込み）
+let _gasPromptMaster = null;
 let _gasMasterDataLoaded = false;
 
 /**
@@ -3691,35 +3667,32 @@ const GASDataManager = {
   // AIプロンプト設定マスター
   // ========================================
   
-  // プロンプトマスターを読み込み（スプレッドシートから取得）
   loadPromptMaster: async () => {
     try {
       const result = await authFetch('getPromptMaster');
       if (result.success && result.data && Object.keys(result.data).length > 0) {
         _gasPromptMaster = result.data;
+        applyPromptMaster(result.data);
         console.log('[マスター] AIプロンプト設定読み込み完了:', Object.keys(result.data).length, '件');
         try { localStorage.setItem('gakusapo_prompt_master', JSON.stringify(result.data)); } catch (e) {}
         return result.data;
       }
-      // スプレッドシートが空の場合 → シードデータで初期化
-      console.log('[マスター] AIプロンプト設定が未初期化。シードデータを送信して初期化します。');
+      // シートが空→シードデータで初期化
+      console.log('[マスター] AIプロンプト設定が未初期化。シードデータで初期化します。');
       await GASDataManager.initializePromptMaster();
       return _gasPromptMaster;
     } catch (err) {
       console.error('AIプロンプト設定読み込みエラー:', err);
-      // localStorageフォールバック
       try {
         const cached = localStorage.getItem('gakusapo_prompt_master');
-        if (cached) {
-          _gasPromptMaster = JSON.parse(cached);
-          return _gasPromptMaster;
-        }
+        if (cached) { _gasPromptMaster = JSON.parse(cached); applyPromptMaster(_gasPromptMaster); return _gasPromptMaster; }
       } catch (e) {}
-      return null;
+      _gasPromptMaster = getPromptSeedData();
+      applyPromptMaster(_gasPromptMaster);
+      return _gasPromptMaster;
     }
   },
   
-  // プロンプトマスターを取得（キャッシュから）
   getPromptMaster: () => {
     if (_gasPromptMaster) return _gasPromptMaster;
     try {
@@ -3728,13 +3701,13 @@ const GASDataManager = {
     } catch (e) { return null; }
   },
   
-  // プロンプトマスターをスプレッドシートに保存
   savePromptMaster: async (promptsData) => {
     try {
       _gasPromptMaster = { ...(_gasPromptMaster || {}), ...promptsData };
+      applyPromptMaster(_gasPromptMaster);
       try { localStorage.setItem('gakusapo_prompt_master', JSON.stringify(_gasPromptMaster)); } catch (e) {}
       const result = await authPost('savePromptMaster', { promptsData });
-      console.log('AIプロンプト設定をスプレッドシートに保存しました');
+      console.log('AIプロンプト設定をスプレッドシートに保存');
       return result;
     } catch (err) {
       console.error('AIプロンプト設定保存エラー:', err);
@@ -3742,21 +3715,19 @@ const GASDataManager = {
     }
   },
   
-  // シードデータでプロンプトマスターを初期化
   initializePromptMaster: async () => {
     const seedData = getPromptSeedData();
     try {
       const result = await authPost('savePromptMaster', { promptsData: seedData });
-      if (result.success) {
-        _gasPromptMaster = seedData;
-        try { localStorage.setItem('gakusapo_prompt_master', JSON.stringify(seedData)); } catch (e) {}
-        console.log('[マスター] AIプロンプト設定をシードデータで初期化完了');
-      }
+      _gasPromptMaster = seedData;
+      applyPromptMaster(seedData);
+      try { localStorage.setItem('gakusapo_prompt_master', JSON.stringify(seedData)); } catch (e) {}
+      console.log('[マスター] AIプロンプト設定をシードデータで初期化完了');
       return result;
     } catch (err) {
       console.error('AIプロンプト設定初期化エラー:', err);
-      // 通信エラー時もシードデータをキャッシュとして使用
       _gasPromptMaster = seedData;
+      applyPromptMaster(seedData);
       return { success: false, error: err.message };
     }
   },
