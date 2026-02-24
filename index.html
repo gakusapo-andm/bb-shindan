@@ -10173,13 +10173,16 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
   const hasExecMindset = Object.values(effectiveExecMindsetScores || {}).some(v => v !== null && v !== undefined && v > 0);
   const hasBothMindsetScores = hasStaffMindset && hasExecMindset;
   
-  // v43-fix: 問診回答の有無チェック（キーだけでなく実際の値があるか確認）
-  const hasActualAnswers = (answers) => {
-    if (!answers || typeof answers !== 'object') return false;
-    return Object.values(answers).some(v => v !== null && v !== undefined && v !== '' && v !== 0);
+  // v43-fix2: 問診回答の有無チェック — calculatedScores（現在の回答から計算された結果）を基準にする
+  // data.executiveAnswers にはインポート済み/保存済みの古いキーが残る場合があるため、
+  // calcScoresFromAnswers が実際に問診マスターの質問IDと照合してスコアを生成したかで判定する。
+  // これにより進捗カウンター（0/27問）と同じ判定基準になる。
+  const hasComputedScores = (scores) => {
+    if (!scores || typeof scores !== 'object') return false;
+    return Object.values(scores).some(v => v !== null && v !== undefined);
   };
-  const hasStaffAnswers = hasActualAnswers(data.staffAnswers);
-  const hasExecAnswers = hasActualAnswers(data.executiveAnswers);
+  const hasStaffAnswers = hasComputedScores(calculatedScores.staffScores) || hasComputedScores(calculatedScores.staffMindsetScores);
+  const hasExecAnswers = hasComputedScores(calculatedScores.executiveScores) || hasComputedScores(calculatedScores.execMindsetScores);
   const missingInputTabs = [
     ...(!hasStaffAnswers ? ['「採用担当者問診」'] : []),
     ...(!hasExecAnswers ? ['「上層部問診」'] : [])
