@@ -10645,30 +10645,6 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                         <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
                       )}
                     </div>
-                    
-                    {/* 深度スコア */}
-                    <div className="border-t border-gray-200 pt-3 mt-3">
-                      <div className="text-xs text-gray-500 mb-2">採用力バランス</div>
-                      {[
-                        { key: 'surface', name: '表層', score: effectiveDepthScores.surface ?? 0 },
-                        { key: 'middle', name: '中層', score: effectiveDepthScores.middle ?? 0 },
-                        { key: 'deep', name: '深層', score: effectiveDepthScores.deep ?? 0 }
-                      ].map((layer) => {
-                        const percentage = (layer.score / 10) * 100;
-                        const displayPercentage = percentage % 1 === 0 ? percentage.toFixed(0) : percentage.toFixed(1);
-                        return (
-                        <div key={layer.key} className="flex items-center gap-2 py-1">
-                          <span className="text-[10px] text-gray-500 w-6">{layer.name}</span>
-                          <div className="flex-1 h-2 bg-gray-200 rounded overflow-hidden">
-                            <div 
-                              className="h-full rounded bg-blue-500"
-                              style={{ width: `${percentage}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] text-gray-500 w-10">{displayPercentage}%</span>
-                        </div>
-                      )})}
-                    </div>
                   </div>
                   
                   {/* 上層部カード */}
@@ -10685,27 +10661,6 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                     <div className="text-sm text-gray-600 leading-relaxed flex-1">
                       {aiAdvice?.forManagement || (
                         <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
-                      )}
-                    </div>
-                    
-                    {/* 組織内採用伝達力スコア */}
-                    <div className="border-t border-gray-200 pt-3 mt-3">
-                      <div className="text-xs text-gray-500 mb-2">組織内採用伝達力(基礎力のギャップ)</div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-2 bg-gray-200 rounded overflow-hidden">
-                          <div 
-                            className="h-full rounded bg-purple-500"
-                            style={{ width: hasBothMindsetScores ? `${mindsetCoef * 100}%` : '0%' }}
-                          />
-                        </div>
-                        <span className="text-xs font-bold text-purple-600">
-                          {hasBothMindsetScores ? `${(mindsetCoef * 100).toFixed(0)}%` : '-%'}
-                        </span>
-                      </div>
-                      {!hasBothMindsetScores && (
-                        <div className="text-[10px] text-gray-400 mt-1">
-                          ※担当者・上層部の両方の問診が必要です
-                        </div>
                       )}
                     </div>
                   </div>
