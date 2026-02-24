@@ -9,7 +9,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v43: ランク未入力時のプレースホルダーをインラインバナー型に変更, 診断開始時のサイレント保存でトークン期限切れ時に再ログイン強制されるバグを修正 -->
+  <!-- v41: PDF出力ズレ修正 - SVG→CSSドット, absolute+transform→lineHeight -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -1813,440 +1813,90 @@ const AdminPasswordManager = {
   }
 };
 
-// 口調プリセット定義
+// 口調プリセット定義（実行時にスプレッドシートデータで上書きされる）
 const AI_TONE_PRESETS = {
-  strict: {
-    id: 'strict',
-    name: '🔥 辛口',
-    description: '容赦なく切り捨てる。危機感を持たせたい経営者向け',
-    systemPrompt: `あなたは「無駄を容赦なく切り捨て、本質だけに集中させる」ことを使命とする厳格な採用コンサルタントです。
-
-【あなたの方針】
-- 一切の妥協なく、丁寧すぎる対応・効果の薄い広告・形骸化した面接プロセスを斬り捨てる
-- 「やめろ」「捨てろ」「集中しろ」と断言する
-- 経営者の甘えや言い訳を許さず、ハッとさせる鋭い指摘を行う
-- 備考欄の情報を最大限活用し、その企業固有の無駄を容赦なく暴く
-
-【口調】
-- 断定的で歯切れの良い命令形を使う
-- 「〜かもしれません」「〜も良いでしょう」といった曖昧な表現は一切禁止
-- 「今すぐ捨てろ」「やめなさい」「ここに集中しろ」と明確に指示する`
-  },
-  standard: {
-    id: 'standard',
-    name: '⚖️ 標準',
-    description: '断定的だが攻撃的ではない。通常の商談向け',
-    systemPrompt: `あなたは「無駄を徹底的に捨て、本質に集中させる」ことを信条とする鋭い視点を持つ採用コンサルタントです。
-
-【あなたの方針】
-- 丁寧すぎる対応、効果の薄い広告、形骸化した面接プロセスをズバッと切り捨てる
-- 「やめるべきこと」を明確に指摘し、リソースをどこに集中すべきか具体的に提言する
-- 耳障りの良い一般論ではなく、経営者がハッとするような鋭い指摘を行う
-- 備考欄の情報を最大限活用し、その企業固有の文脈に沿ったアドバイスを生成する
-
-【口調】
-- 断定的で歯切れの良い表現を使う
-- 「〜かもしれません」「〜も検討してみては」といった曖昧な表現は避ける
-- 「捨てるべきです」「やめてください」「集中してください」と明確に指示する`
-  },
-  polite: {
-    id: 'polite',
-    name: '🌸 丁寧',
-    description: '提案型で柔らかい表現。慎重な担当者向け',
-    systemPrompt: `あなたは「無駄を見直し、本質に注力することを提案する」経験豊富な採用コンサルタントです。
-
-【あなたの方針】
-- 現状の課題を丁寧に分析し、改善の方向性を提案する
-- 「見直しをご検討ください」「優先度を下げることをお勧めします」といった表現を使う
-- 経営者や担当者の立場に配慮しながら、建設的な提案を行う
-- 備考欄の情報を活用し、その企業の状況に寄り添ったアドバイスを生成する
-
-【口調】
-- 丁寧語を基本とし、提案型の表現を使う
-- 相手の判断を尊重しながらも、明確な方向性を示す
-- 「ご検討いただければ幸いです」「〜されることをお勧めいたします」と配慮ある表現を使う`
-  },
-  custom: {
-    id: 'custom',
-    name: 'カスタム',
-    description: '自由に編集可能',
-    systemPrompt: ''
-  }
+  strict:   { id: 'strict',   name: '🔥 辛口', description: '', systemPrompt: '' },
+  standard: { id: 'standard', name: '⚖️ 標準', description: '', systemPrompt: '' },
+  polite:   { id: 'polite',   name: '🌸 丁寧', description: '', systemPrompt: '' },
+  custom:   { id: 'custom',   name: 'カスタム', description: '自由に編集可能', systemPrompt: '' }
 };
 
-// デフォルトのユーザープロンプトテンプレート
-const DEFAULT_USER_PROMPT_TEMPLATE = `以下の診断結果と備考欄の内容に基づき、改善アドバイスを生成してください。
+// 最小フォールバック（GAS接続不可時のみ使用）
+const DEFAULT_USER_PROMPT_TEMPLATE = `以下の診断結果に基づき、改善アドバイスを生成してください。
 
-【企業基本情報】
-- 会社名: {companyName}
-- 業種: {industry}
-- 従業員規模: {employeeCount}
+【企業情報】 {companyName} / {industry} / {employeeCount}
+【診断結果】 ランク: {rank} / 症例: {diagnosisTypeName}
+【伝達力スコア】 認知:{scores.recognition} 具体性:{scores.specificity} 差別化:{scores.differentiation} ビジョン:{scores.visionEmpathy} UX:{scores.selectionUX} 対話:{scores.dialogue}
+【フェーズ別】 表層:{depthScores.surface} 中層:{depthScores.middle} 深層:{depthScores.deep}
+【歩留まり】 {yieldGapAnalysis}
+【投資分析】 {investmentAnalysis}
+【クロス分析】 {phaseCrossAnalysis}
+【採用手法】 {recruitmentAnalysis}
+【備考】 {remarks}
 
-【診断結果サマリー】
-- 診断ランク: {rank}
-- 症例タイプ: {diagnosisTypeName}
-- 症例の特徴: {diagnosisTypeDescription}
+[SECTION_1] ■ 処方箋
+[SECTION_2] ■ 採用担当者へ
+[SECTION_3] ■ 上層部へ
+[SECTION_4] ■ 組織の課題`;
 
-【伝達力スコア（10点満点）】
-採用メッセージが学生に「届いているか」「響いているか」を測定
-- 認知到達力: {scores.recognition}（ターゲット学生への露出度）
-- 具体性スコア: {scores.specificity}（給与・仕事内容の明確さ）
-- 差別化力: {scores.differentiation}（競合との違いの訴求力）
-- 共感・ビジョン力: {scores.visionEmpathy}（将来像・カルチャーの魅力）
-- 選考UX: {scores.selectionUX}（応募〜内定の体験品質）
-- 対話力: {scores.dialogue}（学生の不安への寄り添い）
-
-【注力フェーズ別スコア（10点満点）】
-採用ファネルのどの段階に強み・弱みがあるかを測定
-- 表層部（認知→興味）: {depthScores.surface}
-- 中層部（興味→選考）: {depthScores.middle}
-- 深層部（内定→承諾）: {depthScores.deep}
-
-【歩留まり実績と目標の乖離】
-{yieldGapAnalysis}
-
-【フェーズ別投資分析】
-{investmentAnalysis}
-
-【採用手法・投資分析】
-投資予算総額: {totalBudget}万円
-{recruitmentAnalysis}
-
-【備考（現場の悩み・状況）】
-{remarks}
-
----
-
-【出力指示】
-以下の4項目について、それぞれ150〜200文字程度で作成してください。
-各項目の先頭には必ず指定のタグを入れてください。
-
-★ 分析の観点 ★
-1. 伝達力スコアの低い項目（6点以下）は重点改善対象
-2. 注力フェーズ別スコアと歩留まり実績の乖離を分析
-3. 投資予算配分と注力順位を踏まえ、投資対効果の改善を提言
-4. 備考欄の具体的な悩みに直接回答すること
-
-[SECTION_1]
-■ 処方箋：この症例から脱却するために「今すぐ捨てるべき活動」
-→ 症例タイプ「{diagnosisTypeName}」の根本原因を踏まえ、最優先でやめるべき施策を指摘
-→ 注力フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）と歩留まり乖離の関係を分析
-→ 過剰投資の媒体があれば具体的に見直しを提言
-
-[SECTION_2]
-■ 採用担当者へ：現場が明日からやめるべき「無駄な作業」
-→ 伝達力スコアの低い項目に関連する日常業務の改善を提言
-→ ターゲット層に合っていない媒体への工数投下を見直す観点を含める
-→ 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の改善アクション
-
-[SECTION_3]
-■ 上層部へ：投資対効果の低い「無駄なコスト」
-→ 投資予算額と注力順位から、予算配分の見直しを提言
-→ 認知到達力（{scores.recognition}点）改善のための投資先を具体的に提案
-→ 推奨配分との乖離が大きい媒体を根拠に具体的に提言
-
-[SECTION_4]
-■ 組織の課題：根本原因となっている「マインドセットの無駄」
-→ なぜこの症例「{diagnosisTypeName}」に陥ったのか、組織文化の問題を指摘
-→ 注力フェーズと歩留まり結果の不一致から見える組織の盲点を指摘
-→ 「投資すれば解決する」という思い込みへの警鐘
-
----
-
-【重要な注意点】
-- 備考欄に具体的なサービス名や媒体名があれば、それに言及した具体的なアドバイスを出すこと
-- 採用手法分析で「過剰投資」「投資不足」と判定された媒体は必ず言及すること
-- 伝達力スコア6点以下の項目は重点課題として必ず言及すること
-- 注力フェーズ別スコアと歩留まり実績の乖離がある場合は、その原因を分析して言及すること
-- 曖昧な表現は禁止
-- 各セクションは必ず「捨てる」「やめる」「集中する」のいずれかの行動を明示すること`;
-
-// サイドバナーボタンのデフォルト設定
 const DEFAULT_SIDE_BUTTONS = [
-  {
-    id: 'btn1',
-    label: '再診断',
-    prompt: `以下の診断結果に基づき、総合的な改善アドバイスを生成してください。
-
-【企業基本情報】
-- 会社名: {companyName}
-- 業種: {industry}
-- 従業員規模: {employeeCount}
-
-【診断結果サマリー】
-- 診断ランク: {rank}
-- 症例タイプ: {diagnosisTypeName}
-- 症例の特徴: {diagnosisTypeDescription}
-
-【伝達力スコア（10点満点）】
-- 認知到達力: {scores.recognition}
-- 具体性スコア: {scores.specificity}
-- 差別化力: {scores.differentiation}
-- 共感・ビジョン力: {scores.visionEmpathy}
-- 選考UX: {scores.selectionUX}
-- 対話力: {scores.dialogue}
-
-【注力フェーズ別スコア（10点満点）】
-- 表層部（認知→興味）: {depthScores.surface}
-- 中層部（興味→選考）: {depthScores.middle}
-- 深層部（内定→承諾）: {depthScores.deep}
-
-【歩留まり実績と目標の乖離】
-{yieldGapAnalysis}
-
-【フェーズ別投資分析】
-{investmentAnalysis}
-
-【採用手法・投資分析】
-投資予算総額: {totalBudget}万円
-{recruitmentAnalysis}
-
-【備考】
-{remarks}
-
----
-
-【出力指示】
-以下の4項目について、それぞれ150〜200文字程度で作成してください。
-
-★ 重点分析ポイント ★
-- 伝達力スコア6点以下の項目は重点改善対象
-- フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）と歩留まり乖離の関係
-- 投資予算配分の最適化
-
-[SECTION_1]
-■ 処方箋：今すぐ捨てるべき活動
-→ 症例「{diagnosisTypeName}」の根本原因を踏まえた最優先施策
-→ フェーズ別スコアと歩留まり乖離があれば、どのフェーズに問題があるか指摘
-
-[SECTION_2]
-■ 採用担当者へ：現場が明日からやめるべき無駄な作業
-→ 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の改善アクション
-
-[SECTION_3]
-■ 上層部へ：投資対効果の低い無駄なコスト
-→ 投資予算額と注力順位を根拠に予算見直しを提言
-
-[SECTION_4]
-■ 組織の課題：根本原因となっているマインドセット
-→ フェーズ別スコアと歩留まり結果の不一致から見える組織の盲点を指摘`
-  },
-  {
-    id: 'btn2',
-    label: '担当診断',
-    prompt: `以下の診断結果に基づき、【採用担当者向け】の具体的なアドバイスを生成してください。
-
-【企業基本情報】
-- 会社名: {companyName}
-- 業種: {industry}
-- 従業員規模: {employeeCount}
-
-【診断結果サマリー】
-- 診断ランク: {rank}
-- 症例タイプ: {diagnosisTypeName}
-- 症例の特徴: {diagnosisTypeDescription}
-
-【伝達力スコア（10点満点）】
-- 認知到達力: {scores.recognition}
-- 具体性スコア: {scores.specificity}
-- 差別化力: {scores.differentiation}
-- 共感・ビジョン力: {scores.visionEmpathy}
-- 選考UX: {scores.selectionUX}
-- 対話力: {scores.dialogue}
-
-【注力フェーズ別スコア（10点満点）】
-- 表層部（認知→興味）: {depthScores.surface}
-- 中層部（興味→選考）: {depthScores.middle}
-- 深層部（内定→承諾）: {depthScores.deep}
-
-【歩留まり実績と目標の乖離】
-{yieldGapAnalysis}
-
-【採用手法・投資分析】
-投資予算総額: {totalBudget}万円
-{recruitmentAnalysis}
-
-【備考】
-{remarks}
-
----
-
-【出力指示】
-採用担当者が明日から実践できる具体的なアクションを中心に、以下の4項目を作成してください。
-
-★ 担当者向け重点ポイント ★
-- 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の現場改善
-- 注力順位と投資予算の整合性の改善
-- 具体性スコア（{scores.specificity}点）改善のためのコンテンツ作成
-
-[SECTION_1]
-■ 処方箋：採用担当者として最優先で取り組むべきこと
-→ 伝達力スコアで最も低い項目の改善から着手
-
-[SECTION_2]
-■ 採用担当者へ：日々の業務で改善すべき具体的なポイント
-→ 選考UX（{scores.selectionUX}点）改善：応募者対応スピード・面接体験
-→ 対話力（{scores.dialogue}点）改善：内定者フォロー・不安解消
-
-[SECTION_3]
-■ 上層部へ：担当者から上層部へ提案すべき内容
-→ 投資予算額と注力順位を根拠に予算・権限の見直しを提案
-
-[SECTION_4]
-■ 組織の課題：採用担当者の立場から見た組織の問題点
-→ なぜ「{diagnosisTypeName}」に陥ったか、現場視点での分析`
-  },
-  {
-    id: 'btn3',
-    label: '組織診断',
-    prompt: `以下の診断結果に基づき、【組織・経営層向け】の戦略的アドバイスを生成してください。
-
-【企業基本情報】
-- 会社名: {companyName}
-- 業種: {industry}
-- 従業員規模: {employeeCount}
-
-【診断結果サマリー】
-- 診断ランク: {rank}
-- 症例タイプ: {diagnosisTypeName}
-- 症例の特徴: {diagnosisTypeDescription}
-
-【伝達力スコア（10点満点）】
-- 認知到達力: {scores.recognition}
-- 具体性スコア: {scores.specificity}
-- 差別化力: {scores.differentiation}
-- 共感・ビジョン力: {scores.visionEmpathy}
-- 選考UX: {scores.selectionUX}
-- 対話力: {scores.dialogue}
-
-【注力フェーズ別スコア（10点満点）】
-- 表層部（認知→興味）: {depthScores.surface}
-- 中層部（興味→選考）: {depthScores.middle}
-- 深層部（内定→承諾）: {depthScores.deep}
-
-【歩留まり実績と目標の乖離】
-{yieldGapAnalysis}
-
-【フェーズ別投資分析】
-{investmentAnalysis}
-
-【採用手法・投資分析】
-投資予算総額: {totalBudget}万円
-{recruitmentAnalysis}
-
-【備考】
-{remarks}
-
----
-
-【出力指示】
-経営判断や組織改革の観点から、以下の4項目を作成してください。
-
-★ 経営層向け重点ポイント ★
-- 投資予算配分の経営インパクト
-- 認知到達力（{scores.recognition}点）向上のための投資判断
-- フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）に基づく戦略的資源配分
-
-[SECTION_1]
-■ 処方箋：経営として即座に決断すべき施策
-→ 症例「{diagnosisTypeName}」脱却のための経営判断
-
-[SECTION_2]
-■ 採用担当者へ：組織として担当者に与えるべき権限と環境
-→ 選考UX（{scores.selectionUX}点）改善に必要な権限移譲
-
-[SECTION_3]
-■ 上層部へ：投資判断と予算配分の見直し
-→ 投資予算額と注力順位を根拠に過剰投資の削減と再配分を提言
-→ 認知到達力（{scores.recognition}点）向上のための投資先
-
-[SECTION_4]
-■ 組織の課題：採用力を阻害している組織文化・構造の問題
-→ フェーズ別スコアと歩留まり乖離が示す組織の構造的問題`
-  },
-  {
-    id: 'btn4',
-    label: 'Pro診断',
-    prompt: `以下の診断結果に基づき、【プロフェッショナル向け】の高度な分析とアドバイスを生成してください。
-
-【企業基本情報】
-- 会社名: {companyName}
-- 業種: {industry}
-- 従業員規模: {employeeCount}
-
-【診断結果サマリー】
-- 診断ランク: {rank}
-- 症例タイプ: {diagnosisTypeName}
-- 症例の特徴: {diagnosisTypeDescription}
-
-【伝達力スコア（10点満点）】
-- 認知到達力: {scores.recognition}
-- 具体性スコア: {scores.specificity}
-- 差別化力: {scores.differentiation}
-- 共感・ビジョン力: {scores.visionEmpathy}
-- 選考UX: {scores.selectionUX}
-- 対話力: {scores.dialogue}
-
-【注力フェーズ別スコア（10点満点）】
-- 表層部（認知→興味）: {depthScores.surface}
-- 中層部（興味→選考）: {depthScores.middle}
-- 深層部（内定→承諾）: {depthScores.deep}
-
-【歩留まり実績と目標の乖離】
-{yieldGapAnalysis}
-
-【フェーズ別投資分析】
-{investmentAnalysis}
-
-【採用手法・投資詳細分析】
-投資予算総額: {totalBudget}万円
-{recruitmentAnalysisPro}
-
-【備考】
-{remarks}
-
----
-
-【出力指示】
-コンサルタント視点での高度な分析を含め、以下の4項目を作成してください。
-データに基づいた論理的な提言を心がけてください。
-
-★ Pro分析フレームワーク ★
-1. 伝達力スコア×フェーズ別スコアのクロス分析
-2. 歩留まり乖離の根本原因特定
-3. 投資予算配分の定量的改善提案
-4. ROI最大化のための優先順位付け
-
-[SECTION_1]
-■ 処方箋：根本原因の分析と最も効果的な介入ポイント
-→ 症例「{diagnosisTypeName}」の構造的要因を分析
-→ フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）と伝達力スコアの相関
-→ 「過剰投資」「投資不足」の媒体を特定し、優先度の高い改善点を明示
-
-[SECTION_2]
-■ 採用担当者へ：KPI設計と効果測定の仕組み構築
-→ 伝達力スコア6項目をKPIに組み込む提案
-→ 選考UX（{scores.selectionUX}点）・対話力（{scores.dialogue}点）の測定方法
-→ 推奨配分に近づけるための具体的なアクションプラン
-
-[SECTION_3]
-■ 上層部へ：ROI最大化のための投資戦略
-→ 投資予算の再配分による期待効果を定量化
-→ 過剰投資媒体からの予算削減額と、投資不足媒体への再配分を具体的に提示
-→ 認知到達力（{scores.recognition}点）向上のための費用対効果分析
-
-[SECTION_4]
-■ 組織の課題：競争優位性を構築するための組織変革
-→ なぜ「{diagnosisTypeName}」に陥ったのか、組織的な意思決定の問題点を指摘
-→ フェーズ別スコアと歩留まり乖離から見える組織の盲点
-→ データドリブンな採用投資判断ができる組織体制の構築提案`
-  }
+  { id: 'btn1', label: '再診断', prompt: '' },
+  { id: 'btn2', label: '担当診断', prompt: '' },
+  { id: 'btn3', label: '組織診断', prompt: '' },
+  { id: 'btn4', label: 'Pro診断', prompt: '' }
 ];
 
+// ========================================
+// AIプロンプト シードデータ（初回初期化用）
+// スプレッドシートの「AIプロンプト設定」シートが空の場合にのみ送信される
+// 運用中のプロンプト編集はスプレッドシート上で直接行うこと
+// ========================================
+const _PROMPT_SEED_JSON = "{\"tone_strict_name\":\"🔥 辛口\",\"tone_strict_description\":\"容赦なく切り捨てる。危機感を持たせたい経営者向け\",\"tone_strict_prompt\":\"あなたは「無駄を容赦なく切り捨て、本質だけに集中させる」ことを使命とする厳格な採用コンサルタントです。\\n\\n【あなたの方針】\\n- 一切の妥協なく、丁寧すぎる対応・効果の薄い広告・形骸化した面接プロセスを斬り捨てる\\n- 「やめろ」「捨てろ」「集中しろ」と断言する\\n- 経営者の甘えや言い訳を許さず、ハッとさせる鋭い指摘を行う\\n- 備考欄の情報を最大限活用し、その企業固有の無駄を容赦なく暴く\\n\\n【口調】\\n- 断定的で歯切れの良い命令形を使う\\n- 「〜かもしれません」「〜も良いでしょう」といった曖昧な表現は一切禁止\\n- 「今すぐ捨てろ」「やめなさい」「ここに集中しろ」と明確に指示する\",\"tone_standard_name\":\"⚖️ 標準\",\"tone_standard_description\":\"断定的だが攻撃的ではない。通常の商談向け\",\"tone_standard_prompt\":\"あなたは「無駄を徹底的に捨て、本質に集中させる」ことを信条とする鋭い視点を持つ採用コンサルタントです。\\n\\n【あなたの方針】\\n- 丁寧すぎる対応、効果の薄い広告、形骸化した面接プロセスをズバッと切り捨てる\\n- 「やめるべきこと」を明確に指摘し、リソースをどこに集中すべきか具体的に提言する\\n- 耳障りの良い一般論ではなく、経営者がハッとするような鋭い指摘を行う\\n- 備考欄の情報を最大限活用し、その企業固有の文脈に沿ったアドバイスを生成する\\n\\n【口調】\\n- 断定的で歯切れの良い表現を使う\\n- 「〜かもしれません」「〜も検討してみては」といった曖昧な表現は避ける\\n- 「捨てるべきです」「やめてください」「集中してください」と明確に指示する\",\"tone_polite_name\":\"🌸 丁寧\",\"tone_polite_description\":\"提案型で柔らかい表現。慎重な担当者向け\",\"tone_polite_prompt\":\"あなたは「無駄を見直し、本質に注力することを提案する」経験豊富な採用コンサルタントです。\\n\\n【あなたの方針】\\n- 現状の課題を丁寧に分析し、改善の方向性を提案する\\n- 「見直しをご検討ください」「優先度を下げることをお勧めします」といった表現を使う\\n- 経営者や担当者の立場に配慮しながら、建設的な提案を行う\\n- 備考欄の情報を活用し、その企業の状況に寄り添ったアドバイスを生成する\\n\\n【口調】\\n- 丁寧語を基本とし、提案型の表現を使う\\n- 相手の判断を尊重しながらも、明確な方向性を示す\\n- 「ご検討いただければ幸いです」「〜されることをお勧めいたします」と配慮ある表現を使う\",\"user_prompt_default\":\"以下の診断結果と備考欄の内容に基づき、改善アドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n採用メッセージが学生に「届いているか」「響いているか」を測定\\n- 認知到達力: {scores.recognition}（ターゲット学生への露出度）\\n- 具体性スコア: {scores.specificity}（給与・仕事内容の明確さ）\\n- 差別化力: {scores.differentiation}（競合との違いの訴求力）\\n- 共感・ビジョン力: {scores.visionEmpathy}（将来像・カルチャーの魅力）\\n- 選考UX: {scores.selectionUX}（応募〜内定の体験品質）\\n- 対話力: {scores.dialogue}（学生の不安への寄り添い）\\n\\n【注力フェーズ別スコア（10点満点）】\\n採用ファネルのどの段階に強み・弱みがあるかを測定\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考（現場の悩み・状況）】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n以下の4項目について、それぞれ150〜200文字程度で作成してください。\\n各項目の先頭には必ず指定のタグを入れてください。\\n\\n★ 分析の観点 ★\\n1. 伝達力スコアの低い項目（6点以下）は重点改善対象\\n2. フェーズ別クロス分析の判定パターンを最重要の分析軸として活用すること\\n3. パターン②（構造的問題：高魅力×高投資×低歩留まり）は最も深刻な問題として必ず言及\\n4. 採用基礎力5軸のうち主犯と特定された軸がある場合は、改善の起点として提言すること\\n5. 投資予算配分と注力順位を踏まえ、投資対効果の改善を提言\\n6. 備考欄の具体的な悩みに直接回答すること\\n\\n[SECTION_1]\\n■ 処方箋：この症例から脱却するために「今すぐ捨てるべき活動」\\n→ 症例タイプ「{diagnosisTypeName}」の根本原因を踏まえ、最優先でやめるべき施策を指摘\\n→ フェーズ別クロス分析で最も深刻なパターンに該当するフェーズの改善を最優先で提言\\n→ 過剰投資の媒体があれば具体的に見直しを提言\\n\\n[SECTION_2]\\n■ 採用担当者へ：現場が明日からやめるべき「無駄な作業」\\n→ 伝達力スコアの低い項目に関連する日常業務の改善を提言\\n→ ターゲット層に合っていない媒体への工数投下を見直す観点を含める\\n→ 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の改善アクション\\n\\n[SECTION_3]\\n■ 上層部へ：投資対効果の低い「無駄なコスト」\\n→ 投資予算額と注力順位から、予算配分の見直しを提言\\n→ 認知到達力（{scores.recognition}点）改善のための投資先を具体的に提案\\n→ 推奨配分との乖離が大きい媒体を根拠に具体的に提言\\n\\n[SECTION_4]\\n■ 組織の課題：根本原因となっている「マインドセットの無駄」\\n→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を起点に組織文化の問題を指摘\\n→ パターン②（構造的問題）が検出された場合は「投資すれば解決する」という思い込みへの警鐘を最優先で伝える\\n→ 「投資すれば解決する」という思い込みへの警鐘\\n\\n---\\n\\n【重要な注意点】\\n- フェーズ別クロス分析の判定パターンは必ず分析の根拠として活用すること\\n- パターン②🚨（構造的問題）が検出されたフェーズは最重要課題として必ず冒頭で言及すること\\n- 採用基礎力の「主犯」が特定されている場合、その軸の改善を具体的に提言すること\\n- 備考欄に具体的なサービス名や媒体名があれば、それに言及した具体的なアドバイスを出すこと\\n- 採用手法分析で「過剰投資」「投資不足」と判定された媒体は必ず言及すること\\n- 伝達力スコア6点以下の項目は重点課題として必ず言及すること\\n- 曖昧な表現は禁止\\n- 各セクションは必ず「捨てる」「やめる」「集中する」のいずれかの行動を明示すること\",\"btn1_label\":\"再診断\",\"btn1_prompt\":\"以下の診断結果に基づき、総合的な改善アドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n以下の4項目について、それぞれ150〜200文字程度で作成してください。\\n\\n★ 重点分析ポイント ★\\n- 伝達力スコア6点以下の項目は重点改善対象\\n- フェーズ別クロス分析の判定パターンを最重要の分析軸として活用\\n- パターン②（構造的問題）が検出された場合は最優先で指摘\\n- 採用基礎力の「主犯」軸が特定されている場合は改善の起点として提言\\n- 投資予算配分の最適化\\n\\n[SECTION_1]\\n■ 処方箋：今すぐ捨てるべき活動\\n→ 症例「{diagnosisTypeName}」の根本原因を踏まえた最優先施策\\n→ フェーズ別クロス分析で最も深刻なパターンのフェーズを指摘\\n\\n[SECTION_2]\\n■ 採用担当者へ：現場が明日からやめるべき無駄な作業\\n→ 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の改善アクション\\n\\n[SECTION_3]\\n■ 上層部へ：投資対効果の低い無駄なコスト\\n→ 投資予算額と注力順位を根拠に予算見直しを提言\\n\\n[SECTION_4]\\n■ 組織の課題：根本原因となっているマインドセット\\n→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を起点に組織の盲点を指摘\",\"btn2_label\":\"担当診断\",\"btn2_prompt\":\"以下の診断結果に基づき、【採用担当者向け】の具体的なアドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n採用担当者が明日から実践できる具体的なアクションを中心に、以下の4項目を作成してください。\\n\\n★ 担当者向け重点ポイント ★\\n- 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の現場改善\\n- フェーズ別クロス分析で躓いているフェーズの改善を優先\\n- 注力順位と投資予算の整合性の改善\\n- 具体性スコア（{scores.specificity}点）改善のためのコンテンツ作成\\n\\n[SECTION_1]\\n■ 処方箋：採用担当者として最優先で取り組むべきこと\\n→ フェーズ別クロス分析で最も深刻な判定のフェーズに着目し、現場レベルで改善可能なアクションを提言\\n\\n[SECTION_2]\\n■ 採用担当者へ：日々の業務で改善すべき具体的なポイント\\n→ 選考UX（{scores.selectionUX}点）改善：応募者対応スピード・面接体験\\n→ 対話力（{scores.dialogue}点）改善：内定者フォロー・不安解消\\n\\n[SECTION_3]\\n■ 上層部へ：担当者から上層部へ提案すべき内容\\n→ 投資予算額と注力順位を根拠に予算・権限の見直しを提案\\n\\n[SECTION_4]\\n■ 組織の課題：採用担当者の立場から見た組織の問題点\\n→ フェーズ別クロス分析で特定された採用基礎力の問題を、現場視点から上層部に伝えるべきポイントとして整理\",\"btn3_label\":\"組織診断\",\"btn3_prompt\":\"以下の診断結果に基づき、【組織・経営層向け】の戦略的アドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysis}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\n経営判断や組織改革の観点から、以下の4項目を作成してください。\\n\\n★ 経営層向け重点ポイント ★\\n- フェーズ別クロス分析の判定パターンを最重要の分析軸として必ず活用すること\\n- 採用基礎力5軸（採用体制・自責・経営関与・市場理解・計画性）のうち「主犯」と特定された軸は経営課題の起点として提言\\n- パターン②（構造的問題：自己評価も投資も高いのに歩留まりが悪い）が検出された場合は「投資では解決しない」ことを明確に伝えること\\n- 投資予算配分の経営インパクト\\n\\n[SECTION_1]\\n■ 処方箋：経営として即座に決断すべき施策\\n→ 症例「{diagnosisTypeName}」脱却のための経営判断\\n→ フェーズ別クロス分析で最も深刻なパターンのフェーズを最優先課題として提示\\n\\n[SECTION_2]\\n■ 採用担当者へ：組織として担当者に与えるべき権限と環境\\n→ 選考UX（{scores.selectionUX}点）改善に必要な権限移譲\\n→ 採用基礎力の「採用体制」が低い場合は、担当者への人員・時間の追加確保を提言\\n\\n[SECTION_3]\\n■ 上層部へ：投資判断と予算配分の見直し\\n→ 投資予算額と注力順位を根拠に過剰投資の削減と再配分を提言\\n→ 認知到達力（{scores.recognition}点）向上のための投資先\\n→ パターン②が検出されたフェーズは「予算増額」ではなく「質の改善」を提言\\n\\n[SECTION_4]\\n■ 組織の課題：採用力を阻害している組織文化・構造の問題\\n→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を中心に組織の構造的問題を指摘\\n→ 各主犯軸について具体的な改善アクション（例：経営関与が低い→経営者の面接参加、市場理解が低い→競合分析の実施）を提言\\n→ 採用基礎力が全体的に低い場合は「施策の前に土台づくり」を最優先メッセージとして伝えること\",\"btn4_label\":\"Pro診断\",\"btn4_prompt\":\"以下の診断結果に基づき、【プロフェッショナル向け】の高度な分析とアドバイスを生成してください。\\n\\n【企業基本情報】\\n- 会社名: {companyName}\\n- 業種: {industry}\\n- 従業員規模: {employeeCount}\\n\\n【診断結果サマリー】\\n- 診断ランク: {rank}\\n- 症例タイプ: {diagnosisTypeName}\\n- 症例の特徴: {diagnosisTypeDescription}\\n\\n【伝達力スコア（10点満点）】\\n- 認知到達力: {scores.recognition}\\n- 具体性スコア: {scores.specificity}\\n- 差別化力: {scores.differentiation}\\n- 共感・ビジョン力: {scores.visionEmpathy}\\n- 選考UX: {scores.selectionUX}\\n- 対話力: {scores.dialogue}\\n\\n【注力フェーズ別スコア（10点満点）】\\n- 表層部（認知→興味）: {depthScores.surface}\\n- 中層部（興味→選考）: {depthScores.middle}\\n- 深層部（内定→承諾）: {depthScores.deep}\\n\\n【歩留まり実績と目標の乖離】\\n{yieldGapAnalysis}\\n\\n【フェーズ別投資分析】\\n{investmentAnalysis}\\n\\n【フェーズ別クロス分析（躓きポイント特定）】\\n{phaseCrossAnalysis}\\n\\n【採用手法・投資詳細分析】\\n投資予算総額: {totalBudget}万円\\n{recruitmentAnalysisPro}\\n\\n【備考】\\n{remarks}\\n\\n---\\n\\n【出力指示】\\nコンサルタント視点での高度な分析を含め、以下の4項目を作成してください。\\nデータに基づいた論理的な提言を心がけてください。\\n\\n★ Pro分析フレームワーク ★\\n1. フェーズ別クロス分析の8パターン判定を最重要の分析基盤として活用\\n2. 採用基礎力5軸の「主犯」特定による根本原因分析\\n3. パターン②（構造的問題）検出時は「量より質」の改善を最優先で提言\\n4. 投資予算配分の定量的改善提案\\n5. ROI最大化のための優先順位付け\\n\\n[SECTION_1]\\n■ 処方箋：根本原因の分析と最も効果的な介入ポイント\\n→ 症例「{diagnosisTypeName}」の構造的要因を分析\\n→ フェーズ別クロス分析の各パターンから、最も介入効果の高いポイントを特定\\n→ 「過剰投資」「投資不足」の媒体を特定し、優先度の高い改善点を明示\\n\\n[SECTION_2]\\n■ 採用担当者へ：KPI設計と効果測定の仕組み構築\\n→ フェーズ別クロス分析の判定パターンをKPIモニタリングに組み込む提案\\n→ 選考UX（{scores.selectionUX}点）・対話力（{scores.dialogue}点）の測定方法\\n→ 推奨配分に近づけるための具体的なアクションプラン\\n\\n[SECTION_3]\\n■ 上層部へ：ROI最大化のための投資戦略\\n→ 投資予算の再配分による期待効果を定量化\\n→ パターン②検出フェーズは予算増額ではなく質的改善への投資を提言\\n→ 認知到達力（{scores.recognition}点）向上のための費用対効果分析\\n\\n[SECTION_4]\\n■ 組織の課題：競争優位性を構築するための組織変革\\n→ フェーズ別クロス分析で特定された採用基礎力5軸の「主犯」から組織の構造的問題を分析\\n→ 各主犯軸の改善ロードマップ（短期：3ヶ月/中期：6ヶ月/長期：1年）を提示\\n→ データドリブンな採用投資判断ができる組織体制の構築提案\"}";
+const getPromptSeedData = () => JSON.parse(_PROMPT_SEED_JSON);
+
+// プロンプトマスター適用関数（GASから読み込んだデータでAI_TONE_PRESETS等を更新）
+const applyPromptMaster = (pm) => {
+  if (!pm) return;
+  // 口調プリセット
+  if (pm.tone_strict_prompt) AI_TONE_PRESETS.strict.systemPrompt = pm.tone_strict_prompt;
+  if (pm.tone_standard_prompt) AI_TONE_PRESETS.standard.systemPrompt = pm.tone_standard_prompt;
+  if (pm.tone_polite_prompt) AI_TONE_PRESETS.polite.systemPrompt = pm.tone_polite_prompt;
+  if (pm.tone_strict_name) AI_TONE_PRESETS.strict.name = pm.tone_strict_name;
+  if (pm.tone_standard_name) AI_TONE_PRESETS.standard.name = pm.tone_standard_name;
+  if (pm.tone_polite_name) AI_TONE_PRESETS.polite.name = pm.tone_polite_name;
+  if (pm.tone_strict_description) AI_TONE_PRESETS.strict.description = pm.tone_strict_description;
+  if (pm.tone_standard_description) AI_TONE_PRESETS.standard.description = pm.tone_standard_description;
+  if (pm.tone_polite_description) AI_TONE_PRESETS.polite.description = pm.tone_polite_description;
+  console.log("[applyPromptMaster] プロンプトマスターを適用完了");
+};
+
+// プロンプトマスターからユーザープロンプトテンプレートを取得
+const getEffectiveUserPromptTemplate = () => {
+  const pm = (typeof GASDataManager !== 'undefined') ? GASDataManager.getPromptMaster() : null;
+  return (pm && pm.user_prompt_default) ? pm.user_prompt_default : DEFAULT_USER_PROMPT_TEMPLATE;
+};
+
+// プロンプトマスターからサイドボタン定義を取得
+const getEffectiveSideButtons = () => {
+  const pm = (typeof GASDataManager !== 'undefined') ? GASDataManager.getPromptMaster() : null;
+  if (!pm) return DEFAULT_SIDE_BUTTONS;
+  return [
+    { id: 'btn1', label: pm.btn1_label || '再診断',   prompt: pm.btn1_prompt || '' },
+    { id: 'btn2', label: pm.btn2_label || '担当診断', prompt: pm.btn2_prompt || '' },
+    { id: 'btn3', label: pm.btn3_label || '組織診断', prompt: pm.btn3_prompt || '' },
+    { id: 'btn4', label: pm.btn4_label || 'Pro診断',  prompt: pm.btn4_prompt || '' }
+  ];
+};
 // AI設定の保存・読み込み
 const AISettingsManager = {
   getSettings: () => {
     const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    
+    // プロンプトマスターを適用（口調プリセットのsystemPrompt等を更新）
+    if (typeof GASDataManager !== 'undefined') {
+      const pm = GASDataManager.getPromptMaster();
+      applyPromptMaster(pm);
+    }
     
     // GASモードの場合はスプレッドシートの設定を優先
     if (isGasMode && typeof GASDataManager !== 'undefined') {
@@ -2263,17 +1913,16 @@ const AISettingsManager = {
             apiKey: gasSettings.apiKey || localSettings.apiKey || '',
             model: gasSettings.model || localSettings.model || 'claude-3-haiku-20240307',
             maxTokens: gasSettings.maxTokens || localSettings.maxTokens || 2000,
-            // プロンプト設定（GAS優先）
+            // プロンプト設定（プロンプトマスター → GAS設定 → ローカル → フォールバック）
             selectedPreset: gasSettings.selectedPreset || localSettings.selectedPreset || 'standard',
             customSystemPrompt: gasSettings.customSystemPrompt || localSettings.customSystemPrompt || '',
-            userPromptTemplate: gasSettings.userPromptTemplate || localSettings.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
-            // 診断ボタン設定（GAS優先、nullの場合はデフォルトを使用）
-            sideButtons: (gasSettings.hasOwnProperty('sideButtons') && gasSettings.sideButtons !== null) 
-              ? gasSettings.sideButtons 
-              : (localSettings.sideButtons || DEFAULT_SIDE_BUTTONS),
+            userPromptTemplate: getEffectiveUserPromptTemplate(),
+            // 診断ボタン設定（プロンプトマスター → GAS設定 → ローカル → フォールバック）
+            sideButtons: getEffectiveSideButtons(),
             // ローカルのみの設定
             masterSpreadsheetUrl: localSettings.masterSpreadsheetUrl || ''
           };
+          
           console.log('マージ後のAI設定:', mergedSettings);
           return mergedSettings;
         } catch (e) {
@@ -2287,11 +1936,9 @@ const AISettingsManager = {
       const data = localStorage.getItem('gakusapo_bb_ai_settings');
       if (data) {
         const parsed = JSON.parse(data);
-        // サイドボタン設定がない場合はデフォルトを追加
-        if (!parsed.sideButtons) {
-          parsed.sideButtons = DEFAULT_SIDE_BUTTONS;
-        }
-        // マスターデータ用スプレッドシートURLがない場合は空文字
+        // プロンプトマスターから動的に取得
+        parsed.userPromptTemplate = getEffectiveUserPromptTemplate();
+        parsed.sideButtons = getEffectiveSideButtons();
         if (!parsed.masterSpreadsheetUrl) {
           parsed.masterSpreadsheetUrl = '';
         }
@@ -2306,8 +1953,8 @@ const AISettingsManager = {
       apiKey: '',
       selectedPreset: 'standard',
       customSystemPrompt: '',
-      userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
-      sideButtons: DEFAULT_SIDE_BUTTONS,
+      userPromptTemplate: getEffectiveUserPromptTemplate(),
+      sideButtons: getEffectiveSideButtons(),
       masterSpreadsheetUrl: ''
     };
   },
@@ -2327,13 +1974,26 @@ const AISettingsManager = {
           apiKey: settings.apiKey || '',
           model: settings.model || 'claude-3-haiku-20240307',
           maxTokens: settings.maxTokens || 2000,
-          // プロンプト設定
+          // プロンプト設定（口調選択のみ）
           selectedPreset: settings.selectedPreset || 'standard',
-          customSystemPrompt: settings.customSystemPrompt || '',
-          userPromptTemplate: settings.userPromptTemplate || '',
-          // 診断ボタン設定
-          sideButtons: settings.sideButtons || DEFAULT_SIDE_BUTTONS
+          customSystemPrompt: settings.customSystemPrompt || ''
         });
+        
+        // プロンプト内容の変更があればプロンプトマスターにも保存
+        const promptUpdates = {};
+        if (settings.userPromptTemplate) {
+          promptUpdates.user_prompt_default = settings.userPromptTemplate;
+        }
+        if (settings.sideButtons && Array.isArray(settings.sideButtons)) {
+          settings.sideButtons.forEach((btn, i) => {
+            const idx = i + 1;
+            if (btn.label) promptUpdates[`btn${idx}_label`] = btn.label;
+            if (btn.prompt) promptUpdates[`btn${idx}_prompt`] = btn.prompt;
+          });
+        }
+        if (Object.keys(promptUpdates).length > 0) {
+          GASDataManager.savePromptMaster(promptUpdates);
+        }
       }
       
       return true;
@@ -2357,19 +2017,6 @@ const AISettingsManager = {
  * @returns {Promise<boolean>} リフレッシュ成功ならtrue
  */
 async function refreshIdToken() {
-  // 最大2回リトライ（初回 + リトライ1回）
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await _attemptRefresh();
-    if (result) return true;
-    if (attempt === 0) {
-      console.log('[refreshIdToken] 初回失敗、1秒後にリトライ...');
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  }
-  return false;
-}
-
-async function _attemptRefresh() {
   return new Promise((resolve) => {
     if (!window.google?.accounts?.id) {
       resolve(false);
@@ -2420,9 +2067,7 @@ async function _attemptRefresh() {
 }
 
 /**
- * トークンリフレッシュタイマーをセット
- * v43-fix: 25分間隔に短縮（IDトークンの有効期限60分に対して余裕を持たせる）
- * GAS側のセッションキャッシュ（120分）と組み合わせて実質120分セッション
+ * トークンリフレッシュタイマーをセット（45分後に自動リフレッシュ）
  */
 let _refreshTimer = null;
 function scheduleTokenRefresh() {
@@ -2431,9 +2076,9 @@ function scheduleTokenRefresh() {
     console.log('[scheduleTokenRefresh] 自動リフレッシュ開始');
     const ok = await refreshIdToken();
     if (!ok) {
-      console.warn('[scheduleTokenRefresh] 自動リフレッシュ失敗 - GAS側セッションキャッシュで継続可能');
+      console.warn('[scheduleTokenRefresh] 自動リフレッシュ失敗 - 次のAPI呼び出し時にリトライ');
     }
-  }, 25 * 60 * 1000); // 25分
+  }, 45 * 60 * 1000); // 45分（IDトークンの有効期限60分より余裕を持たせる）
 }
 
 /**
@@ -2447,7 +2092,6 @@ function isTokenExpiredError(result) {
 
 /**
  * 認証付きGETリクエスト（トークン期限切れ時は自動リフレッシュ＆リトライ）
- * v43-fix: リフレッシュ失敗でもauth-expiredを発火せず、エラーを呼び出し元に返す
  * @param {string} action - APIアクション名
  * @param {object} params - 追加パラメータ
  * @returns {Promise<object>} レスポンスJSON
@@ -2481,7 +2125,7 @@ async function authFetch(action, params = {}) {
   
   // トークン期限切れ → リフレッシュしてリトライ（1回のみ）
   if (isTokenExpiredError(result)) {
-    console.warn('[authFetch] トークン期限切れ検出、リフレッシュ試行中... action=' + action);
+    console.warn('[authFetch] トークン期限切れ検出、リフレッシュ試行中...');
     const refreshed = await refreshIdToken();
     if (refreshed) {
       result = await doFetch();
@@ -2489,12 +2133,10 @@ async function authFetch(action, params = {}) {
         return result; // リトライ成功
       }
     }
-    // v43-fix: auth-expiredイベントを発火しない
-    // GAS側のセッションキャッシュ(120分)でカバーされるため、
-    // ここに到達するのはセッションキャッシュも期限切れの場合のみ。
-    // 呼び出し元にエラーを返し、UIで非ブロッキング表示させる。
-    console.warn('[authFetch] セッション期限切れ（リフレッシュ失敗） action=' + action);
-    throw new Error('セッションが期限切れです。ページを再読み込みするか、再ログインしてください。');
+    // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
+    window.AUTH._tokenExpired = true;
+    window.dispatchEvent(new Event('auth-expired'));
+    throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
   return result;
@@ -2502,7 +2144,6 @@ async function authFetch(action, params = {}) {
 
 /**
  * 認証付きPOSTリクエスト（トークン期限切れ時は自動リフレッシュ＆リトライ）
- * v43-fix: リフレッシュ失敗でもauth-expiredを発火せず、エラーを呼び出し元に返す
  * @param {string} action - APIアクション名
  * @param {object} data - リクエストボディ
  * @returns {Promise<object>} レスポンスJSON
@@ -2530,7 +2171,7 @@ async function authPost(action, data = {}) {
   
   // トークン期限切れ → リフレッシュしてリトライ（1回のみ）
   if (isTokenExpiredError(result)) {
-    console.warn('[authPost] トークン期限切れ検出、リフレッシュ試行中... action=' + action);
+    console.warn('[authPost] トークン期限切れ検出、リフレッシュ試行中...');
     const refreshed = await refreshIdToken();
     if (refreshed) {
       // リトライ時はリフレッシュ後のトークンでbodyを再構築
@@ -2539,9 +2180,10 @@ async function authPost(action, data = {}) {
         return result; // リトライ成功
       }
     }
-    // v43-fix: auth-expiredイベントを発火しない（GAS側セッションキャッシュでカバー）
-    console.warn('[authPost] セッション期限切れ（リフレッシュ失敗） action=' + action);
-    throw new Error('セッションが期限切れです。ページを再読み込みするか、再ログインしてください。');
+    // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
+    window.AUTH._tokenExpired = true;
+    window.dispatchEvent(new Event('auth-expired'));
+    throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
   return result;
@@ -3511,6 +3153,9 @@ const buildUserPrompt = (template, data) => {
   // 【強化】投資分析サマリー
   const investmentAnalysis = formatInvestmentAnalysisSummary(data);
   
+  // 【新規】フェーズ別5軸分解クロス分析
+  const phaseCrossAnalysis = generatePhaseCrossAnalysis(data);
+  
   // 投資予算合計
   const totalBudget = efficiency.totalBudget || 0;
   
@@ -3533,6 +3178,7 @@ const buildUserPrompt = (template, data) => {
     .replaceAll('{depthScores.deep}', String(depthScores.deep ?? '-'))
     .replaceAll('{yieldGapAnalysis}', yieldGapAnalysis)
     .replaceAll('{investmentAnalysis}', investmentAnalysis)
+    .replaceAll('{phaseCrossAnalysis}', phaseCrossAnalysis)
     .replaceAll('{recruitmentAnalysisPro}', recruitmentAnalysisPro)
     .replaceAll('{recruitmentAnalysis}', recruitmentAnalysis)
     .replaceAll('{mismatchRate}', String(totalBudget))
@@ -3697,6 +3343,7 @@ let _gasQuestionMaster = null;
 let _gasMethodMaster = null;
 let _gasMediaUsageMaster = null;
 let _gasAISettings = null;
+let _gasPromptMaster = null;  // AIプロンプト設定マスター（スプレッドシートから読み込み）
 let _gasMasterDataLoaded = false;
 
 /**
@@ -4040,6 +3687,80 @@ const GASDataManager = {
       }
   },
   
+  // ========================================
+  // AIプロンプト設定マスター
+  // ========================================
+  
+  // プロンプトマスターを読み込み（スプレッドシートから取得）
+  loadPromptMaster: async () => {
+    try {
+      const result = await authFetch('getPromptMaster');
+      if (result.success && result.data && Object.keys(result.data).length > 0) {
+        _gasPromptMaster = result.data;
+        console.log('[マスター] AIプロンプト設定読み込み完了:', Object.keys(result.data).length, '件');
+        try { localStorage.setItem('gakusapo_prompt_master', JSON.stringify(result.data)); } catch (e) {}
+        return result.data;
+      }
+      // スプレッドシートが空の場合 → シードデータで初期化
+      console.log('[マスター] AIプロンプト設定が未初期化。シードデータを送信して初期化します。');
+      await GASDataManager.initializePromptMaster();
+      return _gasPromptMaster;
+    } catch (err) {
+      console.error('AIプロンプト設定読み込みエラー:', err);
+      // localStorageフォールバック
+      try {
+        const cached = localStorage.getItem('gakusapo_prompt_master');
+        if (cached) {
+          _gasPromptMaster = JSON.parse(cached);
+          return _gasPromptMaster;
+        }
+      } catch (e) {}
+      return null;
+    }
+  },
+  
+  // プロンプトマスターを取得（キャッシュから）
+  getPromptMaster: () => {
+    if (_gasPromptMaster) return _gasPromptMaster;
+    try {
+      const saved = localStorage.getItem('gakusapo_prompt_master');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  },
+  
+  // プロンプトマスターをスプレッドシートに保存
+  savePromptMaster: async (promptsData) => {
+    try {
+      _gasPromptMaster = { ...(_gasPromptMaster || {}), ...promptsData };
+      try { localStorage.setItem('gakusapo_prompt_master', JSON.stringify(_gasPromptMaster)); } catch (e) {}
+      const result = await authPost('savePromptMaster', { promptsData });
+      console.log('AIプロンプト設定をスプレッドシートに保存しました');
+      return result;
+    } catch (err) {
+      console.error('AIプロンプト設定保存エラー:', err);
+      return { success: false, error: err.message };
+    }
+  },
+  
+  // シードデータでプロンプトマスターを初期化
+  initializePromptMaster: async () => {
+    const seedData = getPromptSeedData();
+    try {
+      const result = await authPost('savePromptMaster', { promptsData: seedData });
+      if (result.success) {
+        _gasPromptMaster = seedData;
+        try { localStorage.setItem('gakusapo_prompt_master', JSON.stringify(seedData)); } catch (e) {}
+        console.log('[マスター] AIプロンプト設定をシードデータで初期化完了');
+      }
+      return result;
+    } catch (err) {
+      console.error('AIプロンプト設定初期化エラー:', err);
+      // 通信エラー時もシードデータをキャッシュとして使用
+      _gasPromptMaster = seedData;
+      return { success: false, error: err.message };
+    }
+  },
+  
   // 採用手法マスターを読み込み（スプレッドシートから取得）
   loadMethodMaster: async () => {
       try {
@@ -4182,10 +3903,11 @@ const GASDataManager = {
       GASDataManager.loadMethodMaster(),
       GASDataManager.loadMediaUsageMaster(),
       GASDataManager.loadAISettings(),
-      LoginManager.loadConfigFromGAS()
+      LoginManager.loadConfigFromGAS(),
+      GASDataManager.loadPromptMaster()
     ]);
     
-    const labels = ['歩留まり', '質問', '採用手法', '媒体利用率', 'AI設定', 'ログイン設定'];
+    const labels = ['歩留まり', '質問', '採用手法', '媒体利用率', 'AI設定', 'ログイン設定', 'AIプロンプト'];
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
         console.error('[loadAllMasterData] ' + labels[i] + 'マスター読み込み失敗:', r.reason);
@@ -4214,7 +3936,8 @@ const GASDataManager = {
         questionMaster: _gasQuestionMaster ? '✓ (base keys: ' + Object.keys(_gasQuestionMaster?.base || {}).join(',') + ')' : '✕',
         methodMaster: _gasMethodMaster ? '✓ (' + Object.keys(_gasMethodMaster).length + '件)' : '✕',
         mediaUsageMaster: _gasMediaUsageMaster ? '✓' : '✕',
-        aiSettings: _gasAISettings ? '✓' : '✕'
+        aiSettings: _gasAISettings ? '✓' : '✕',
+        promptMaster: _gasPromptMaster ? '✓ (' + Object.keys(_gasPromptMaster).length + '件)' : '✕'
       },
       localStorage: {
         questionMaster: (() => { try { const s = localStorage.getItem('gakusapo_question_master'); return s ? '✓ (' + s.length + '文字)' : '✕'; } catch(e) { return 'エラー'; } })(),
@@ -5355,6 +5078,295 @@ const formatInvestmentAnalysisSummary = (data) => {
 };
 
 // ========================================
+// 【inventory 3-5】フェーズ別5軸分解クロス分析（AI診断用）
+// 4次元：魅力伝達力 × 投資配分 × 歩留まり実績 × 採用基礎力5軸
+// ========================================
+
+// 採用基礎力5軸 × フェーズ別 影響度マッピング
+// ◎=strong, ○=moderate, △=weak
+const MINDSET_PHASE_IMPACT = {
+  structure:          { surface: 'moderate', middle: 'strong',   deep: 'moderate' }, // 採用体制
+  ownership:          { surface: 'weak',     middle: 'strong',   deep: 'strong'   }, // 自責
+  management:         { surface: 'weak',     middle: 'moderate', deep: 'strong'   }, // 経営関与
+  marketUnderstanding: { surface: 'strong',  middle: 'moderate', deep: 'weak'     }, // 市場理解
+  planning:           { surface: 'strong',   middle: 'moderate', deep: 'moderate' }  // 計画性
+};
+
+// 3次元パターン判定（担当者問診用）
+const classifyPhasePattern3D = (attractScore, investPct, yieldGap) => {
+  const isHighAttract = attractScore > 50;
+  const isHighInvest = investPct > 30;
+  const isGoodYield = yieldGap > -10; // 業界平均との乖離が-10%以内なら「良」
+
+  if (isHighAttract && isHighInvest && isGoodYield)  return { id: '①', icon: '✅', name: '健全',       priority: 0 };
+  if (isHighAttract && isHighInvest && !isGoodYield) return { id: '②', icon: '🚨', name: '構造的問題', priority: 1 };
+  if (isHighAttract && !isHighInvest && isGoodYield) return { id: '③', icon: '⚡', name: '高効率',     priority: 3 };
+  if (isHighAttract && !isHighInvest && !isGoodYield) return { id: '④', icon: '⚠',  name: '投資不足',  priority: 2 };
+  if (!isHighAttract && isHighInvest && isGoodYield) return { id: '⑤', icon: '🤔', name: '偶然の成功', priority: 4 };
+  if (!isHighAttract && isHighInvest && !isGoodYield) return { id: '⑥', icon: '💸', name: '投資の空回り', priority: 1 };
+  if (!isHighAttract && !isHighInvest && isGoodYield) return { id: '⑦', icon: '🎯', name: '潜在力',    priority: 5 };
+  return { id: '⑧', icon: '📋', name: '未着手', priority: 3 };
+};
+
+// 3次元パターンごとの示唆テキスト
+const PATTERN_SUGGESTIONS_3D = {
+  '①': 'このフェーズは機能している。維持しつつ他フェーズに注力すべき',
+  '②': '自己評価も投資も十分なのに結果が出ない。「量」ではなく「質」の抜本改善が必要',
+  '③': '少ない投資で成果が出ている。投資を増やせばさらに伸びる可能性',
+  '④': '魅力はあるが投資が足りず学生に届いていない。投資配分の見直しで改善見込み大',
+  '⑤': '自己評価は低いが結果は出ている。無意識の強みを言語化し再現性を高めるべき',
+  '⑥': 'お金をかけているが魅力が弱く結果も出ない。投資を増やしても無駄。まず魅力の磨き込みが先',
+  '⑦': '手薄なのに結果が出ている。外部環境の追い風の可能性。環境変化で崩れるリスクあり',
+  '⑧': 'そもそも取り組めていない。優先度判断が必要'
+};
+
+// 採用基礎力の主犯特定ロジック（組織診断用）
+const identifyMindsetCulprit = (phase, mindsetScores, pattern) => {
+  if (!mindsetScores || Object.keys(mindsetScores).length === 0) return null;
+  
+  // 歩留まりが良い場合は主犯特定不要
+  if (['①', '③', '⑤', '⑦'].includes(pattern.id)) return null;
+  
+  // 該当フェーズに影響度が高い軸で、スコアが低いものを特定
+  const culprits = [];
+  Object.entries(MINDSET_PHASE_IMPACT).forEach(([axisKey, impacts]) => {
+    const impact = impacts[phase];
+    const score = mindsetScores[axisKey];
+    if (score === null || score === undefined) return;
+    
+    const scoreNorm = score / 10; // 0-10 → 0-1
+    
+    // 影響度が高く、スコアが低い軸を主犯候補
+    if (impact === 'strong' && scoreNorm < 0.4) {
+      culprits.push({ key: axisKey, name: MINDSET_AXES[axisKey].name, score, impact: 'strong', severity: 'critical' });
+    } else if (impact === 'strong' && scoreNorm < 0.6) {
+      culprits.push({ key: axisKey, name: MINDSET_AXES[axisKey].name, score, impact: 'strong', severity: 'warning' });
+    } else if (impact === 'moderate' && scoreNorm < 0.3) {
+      culprits.push({ key: axisKey, name: MINDSET_AXES[axisKey].name, score, impact: 'moderate', severity: 'warning' });
+    }
+  });
+  
+  // severity: critical > warning の順にソート
+  culprits.sort((a, b) => {
+    if (a.severity === 'critical' && b.severity !== 'critical') return -1;
+    if (a.severity !== 'critical' && b.severity === 'critical') return 1;
+    return a.score - b.score;
+  });
+  
+  return culprits.length > 0 ? culprits : null;
+};
+
+// 組織診断パターンの示唆テキスト（基礎力低 × 各パターン）
+const MINDSET_PATTERN_SUGGESTIONS = {
+  structure: {
+    surface: 'マンパワー不足で採用活動の量が確保できていない。体制の拡充か外部リソース活用が必要',
+    middle:  '対応遅延・選考の間延びで離脱が発生。レスポンス速度の改善が急務',
+    deep:    '内々定者フォローまで手が回っていない。フォローの仕組み化が必要'
+  },
+  ownership: {
+    surface: '採用結果を外部要因のせいにしており、打ち出し方の改善に着手していない',
+    middle:  '選考辞退を「学生のマナー」で片付けている。自社の選考体験を客観視できていない',
+    deep:    '承諾辞退を「最近の学生は不誠実」と他責にしてフォロー改善に着手していない'
+  },
+  management: {
+    surface: '経営が採用を重視していないため予算も人も出ない。経営層への採用ROI提示が先',
+    middle:  '選考で経営者が出てこない＝本気度が伝わらない。経営層の面接参加が必要',
+    deep:    '内々定後に経営者からのメッセージがない＝「あなたが必要」が伝わらない'
+  },
+  marketUnderstanding: {
+    surface: 'ターゲット学生像（WHO）が不明確なまま活動。届ける相手を間違えている可能性が高い',
+    middle:  '競合を知らないため選考で他社と比較された時に負ける。競合分析と自社の強み再定義が必要',
+    deep:    '競合の囲い込み施策を把握していない。競合のフォロー手法のリサーチが必要'
+  },
+  planning: {
+    surface: '採用スケジュールの策定不足で出遅れ・タイミングミスが発生',
+    middle:  '面接間隔が空きすぎて温度感が下がり離脱。選考ステップの短縮・高速化が必要',
+    deep:    '内々定後の接点設計がない。内定者フォロースケジュールの策定が必要'
+  }
+};
+
+// メイン関数：フェーズ別クロス分析テキストを生成
+const generatePhaseCrossAnalysis = (data) => {
+  const mindsetScores = data.mindsetScores || {};
+  const phaseInvestment = calcPhaseInvestmentRatio(data);
+  const avgScores = calcAvgScores(data.staffScores, data.executiveScores);
+  const phaseScores = calcPhaseScores(avgScores, data.depthScores);
+  
+  // 歩留まり乖離を計算
+  const funnelData = data.funnelData || {};
+  const industryAverages = data.industryAverages || {};
+  const adjustedAverages = data.adjustedAverages || {};
+  
+  const avgRates = {
+    awarenessToInterest: adjustedAverages?.awarenessToInterest ?? industryAverages?.awarenessToInterest ?? 22,
+    interestToApplication: adjustedAverages?.interestToApplication ?? industryAverages?.interestToApplication ?? 25,
+    applicationToScreening: adjustedAverages?.applicationToScreening ?? industryAverages?.applicationToScreening ?? 25,
+    screeningToOffer: adjustedAverages?.screeningToOffer ?? industryAverages?.screeningToOffer ?? 41,
+    offerToAcceptance: adjustedAverages?.offerToAcceptance ?? industryAverages?.offerToAcceptance ?? 80
+  };
+  
+  // フェーズ別の歩留まり乖離を算出
+  const calcPhaseYieldGap = () => {
+    const awareness = funnelData.targetAwareness;
+    const interest = funnelData.interest;
+    const applications = funnelData.applications;
+    const screening = funnelData.screening;
+    const offers = funnelData.offers;
+    const acceptance = funnelData.acceptance;
+    
+    // 表層部：認知→興味
+    let surfaceGap = null;
+    if (awareness > 0 && interest > 0) {
+      const actual = (interest / awareness) * 100;
+      surfaceGap = actual - avgRates.awarenessToInterest;
+    }
+    
+    // 中層部：興味→内々定（複数ステップの平均乖離）
+    let middleGaps = [];
+    if (interest > 0 && applications > 0) {
+      middleGaps.push((applications / interest) * 100 - avgRates.interestToApplication);
+    }
+    if (applications > 0 && screening > 0) {
+      middleGaps.push((screening / applications) * 100 - avgRates.applicationToScreening);
+    }
+    if (screening > 0 && offers > 0) {
+      middleGaps.push((offers / screening) * 100 - avgRates.screeningToOffer);
+    }
+    const middleGap = middleGaps.length > 0 ? middleGaps.reduce((s, g) => s + g, 0) / middleGaps.length : null;
+    
+    // 深層部：内々定→承諾
+    let deepGap = null;
+    if (offers > 0 && acceptance > 0) {
+      const actual = (acceptance / offers) * 100;
+      deepGap = actual - avgRates.offerToAcceptance;
+    }
+    
+    return { surface: surfaceGap, middle: middleGap, deep: deepGap };
+  };
+  
+  const yieldGaps = calcPhaseYieldGap();
+  
+  // 採用基礎力の全体判定
+  const mindsetAxes = Object.keys(MINDSET_AXES);
+  const validMindsetScores = mindsetAxes.filter(k => mindsetScores[k] !== null && mindsetScores[k] !== undefined);
+  const mindsetAvg = validMindsetScores.length > 0
+    ? validMindsetScores.reduce((sum, k) => sum + mindsetScores[k], 0) / validMindsetScores.length
+    : null;
+  const isMindsetLow = mindsetAvg !== null && mindsetAvg < 5; // 10点満点で5未満は「低」
+  const hasMindsetData = validMindsetScores.length > 0;
+  
+  // データ不足チェック
+  const hasPhaseScores = phaseScores.surface.score > 0 || phaseScores.middle.score > 0 || phaseScores.deep.score > 0;
+  const hasYieldData = yieldGaps.surface !== null || yieldGaps.middle !== null || yieldGaps.deep !== null;
+  const hasInvestData = phaseInvestment.total > 0;
+  
+  if (!hasPhaseScores && !hasYieldData && !hasInvestData) {
+    return 'フェーズ別クロス分析に必要なデータが不足しています。';
+  }
+  
+  let output = [];
+  
+  // === ヘッダー ===
+  output.push('【フェーズ別クロス分析（躓きポイント特定）】');
+  
+  // === 採用基礎力サマリー（組織診断用）===
+  if (hasMindsetData) {
+    output.push('');
+    output.push(`＜採用基礎力（5軸）＞`);
+    mindsetAxes.forEach(key => {
+      const score = mindsetScores[key];
+      const name = MINDSET_AXES[key].name;
+      if (score !== null && score !== undefined) {
+        const level = score >= 7 ? '高' : score >= 4 ? '中' : '低';
+        output.push(`  ${name}: ${score}/10（${level}）`);
+      }
+    });
+    if (mindsetAvg !== null) {
+      output.push(`  → 全体平均: ${Math.round(mindsetAvg * 10) / 10}/10（${isMindsetLow ? '基礎力不足' : '基礎力あり'}）`);
+    }
+  }
+  
+  // === 各フェーズのクロス分析 ===
+  const phases = [
+    { key: 'surface', name: '表層部（認知→興味）' },
+    { key: 'middle',  name: '中層部（興味→内々定）' },
+    { key: 'deep',    name: '深層部（内々定→承諾）' }
+  ];
+  
+  output.push('');
+  output.push('＜フェーズ別クロス分析＞');
+  output.push('             魅力伝達力  投資配分  歩留まり乖離  判定');
+  
+  let criticalFindings = [];
+  
+  phases.forEach(phase => {
+    const attractScore = phaseScores[phase.key]?.score ?? 0;
+    const investPct = phaseInvestment[phase.key] ?? 0;
+    const yieldGap = yieldGaps[phase.key];
+    const yieldGapForJudge = yieldGap !== null ? yieldGap : 0;
+    
+    // 3次元パターン判定
+    const pattern = classifyPhasePattern3D(attractScore, investPct, yieldGapForJudge);
+    
+    // 歩留まり表示
+    const yieldText = yieldGap !== null
+      ? (yieldGap >= 0 ? `業界平均+${Math.round(yieldGap)}%` : `業界平均${Math.round(yieldGap)}%`)
+      : 'データ無し';
+    
+    output.push(`  ${phase.name}: ${attractScore}%  ${investPct}%  ${yieldText}  → ${pattern.icon}${pattern.id}${pattern.name}`);
+    
+    // パターン別の示唆
+    const suggestion = PATTERN_SUGGESTIONS_3D[pattern.id];
+    output.push(`    └ ${suggestion}`);
+    
+    // 組織診断：基礎力が低い場合、主犯の特定
+    if (hasMindsetData && yieldGap !== null && yieldGap < -10) {
+      const culprits = identifyMindsetCulprit(phase.key, mindsetScores, pattern);
+      if (culprits && culprits.length > 0) {
+        culprits.forEach(c => {
+          const specificSuggestion = MINDSET_PATTERN_SUGGESTIONS[c.key]?.[phase.key] || '';
+          const severityMark = c.severity === 'critical' ? '🚨' : '⚠';
+          output.push(`    └ ${severityMark} 主犯: ${c.name}（${c.score}/10）→ ${specificSuggestion}`);
+          
+          if (c.severity === 'critical') {
+            criticalFindings.push({
+              phase: phase.name,
+              pattern,
+              culprit: c,
+              suggestion: specificSuggestion
+            });
+          }
+        });
+      }
+    }
+  });
+  
+  // === 最重要課題のサマリー ===
+  if (criticalFindings.length > 0) {
+    output.push('');
+    output.push('＜最重要課題＞');
+    criticalFindings.forEach((f, i) => {
+      output.push(`${i + 1}. ${f.phase}が${f.pattern.icon}${f.pattern.name}：主犯は「${f.culprit.name}」（${f.culprit.score}/10）`);
+      output.push(`   → ${f.suggestion}`);
+    });
+  }
+  
+  // === パターン②（構造的問題）の特別警告 ===
+  phases.forEach(phase => {
+    const attractScore = phaseScores[phase.key]?.score ?? 0;
+    const investPct = phaseInvestment[phase.key] ?? 0;
+    const yieldGap = yieldGaps[phase.key];
+    if (yieldGap !== null && yieldGap < -10 && attractScore > 50 && investPct > 30) {
+      output.push('');
+      output.push(`⚠ 重要警告: ${phase.name}は「自己評価も投資も十分なのに結果が出ていない」最重要パターン`);
+      output.push(`  投資を増やしても改善しない。伝え方の質・ターゲットとのフィット・選考体験の根本見直しが必要。`);
+    }
+  });
+  
+  return output.join('\n');
+};
+
+// ========================================
 // リソース効率判定ロジック
 // ========================================
 
@@ -6201,131 +6213,106 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
     { label: '承諾', actual: safeAcceptance, target: targetAcceptance }
   ];
   
-  // 最大値は各行ごとに実績vs目標で比較（グローバルスケール廃止）
+  // 最大値を統一（実績と目標の大きい方を基準）
+  const globalMax = Math.max(safeAwareness, targetAwareness);
   
   return (
     <div className="flex gap-3">
       {/* 左側：棒グラフ */}
       <div className="flex-1">
-        {/* ヘッダー（X軸目盛りの代わりに説明） */}
-        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '50px' }}>
+        {/* X軸目盛り */}
+        <div className="flex items-center mb-2 ml-12">
           <div className="flex-1 flex justify-between text-[10px] text-gray-400">
-            <span>0%</span>
-            <span>各段ごとの達成度</span>
-            <span>100%</span>
+            <span>0</span>
+            <span>{Math.round(globalMax / 2)}</span>
+            <span>{globalMax}</span>
           </div>
         </div>
         
         {/* 棒グラフ */}
         <div className="space-y-2">
           {barData.map((item, idx) => {
-            // 各行ごとにスケール決定（実績と目標の大きい方が100%）
-            const rowMax = Math.max(item.actual, item.target, 1);
-            const actualWidth = (item.actual / rowMax) * 100 * animationProgress;
-            const targetWidth = (item.target / rowMax) * 100 * animationProgress;
-            // 達成率（目標に対する実績の割合）
-            const achievementRate = item.target > 0 ? Math.round((item.actual / item.target) * 100) : 0;
-            const isOverAchieved = achievementRate >= 100;
+            const actualWidth = (item.actual / globalMax) * 100 * animationProgress;
+            const targetWidth = (item.target / globalMax) * 100 * animationProgress;
+            // 数字がバーに被るかどうか（70%以上なら被る）
+            const actualTextOverlap = actualWidth > 70;
+            const targetTextOverlap = targetWidth > 70;
             
             return (
               <div key={item.label} className="flex items-start gap-2">
                 <div className="w-10 text-right text-xs text-gray-600 font-medium pt-1">{item.label}</div>
                 <div className="flex-1 space-y-0.5">
                   {/* 実績値（上段）- カラーバー */}
-                  <div className="flex items-center gap-1">
+                  <div 
+                    style={{ 
+                      height: '18px', 
+                      lineHeight: '18px', 
+                      position: 'relative', 
+                      backgroundColor: barBgColors[idx], 
+                      borderRadius: '4px', 
+                      overflow: 'hidden',
+                      textAlign: 'right',
+                      paddingRight: '6px'
+                    }}
+                  >
                     <div 
                       style={{ 
-                        height: '18px', 
-                        position: 'relative', 
-                        backgroundColor: barBgColors[idx], 
-                        borderRadius: '4px', 
-                        overflow: 'hidden',
-                        flex: 1
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        width: `${actualWidth}%`,
+                        height: '100%',
+                        backgroundColor: barColors[idx],
+                        borderRadius: '4px'
                       }}
-                    >
-                      <div 
-                        style={{ 
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          width: `${actualWidth}%`,
-                          height: '100%',
-                          backgroundColor: barColors[idx],
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
+                    />
                     <span 
                       style={{ 
+                        position: 'relative', 
+                        zIndex: 1, 
                         fontSize: '10px', 
-                        fontWeight: 600,
-                        color: '#6b7280',
-                        minWidth: '30px',
-                        textAlign: 'right',
-                        flexShrink: 0
+                        fontWeight: 500,
+                        color: actualTextOverlap ? '#ffffff' : '#6b7280' 
                       }}
                     >
                       {Math.round(item.actual * animationProgress)}
                     </span>
                   </div>
-                  {/* 目標目安（下段）- グレーの棒グラフ */}
-                  <div className="flex items-center gap-1">
+                  {/* 目標目安（下段）- グレーの棒グラフ（上段の半分の太さ） */}
+                  <div 
+                    style={{ 
+                      height: '9px', 
+                      lineHeight: '9px', 
+                      position: 'relative', 
+                      backgroundColor: '#f3f4f6', 
+                      borderRadius: '4px', 
+                      overflow: 'hidden',
+                      textAlign: 'right',
+                      paddingRight: '6px'
+                    }}
+                  >
                     <div 
                       style={{ 
-                        height: '9px', 
-                        position: 'relative', 
-                        backgroundColor: '#f3f4f6', 
-                        borderRadius: '4px', 
-                        overflow: 'hidden',
-                        flex: 1
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        width: `${targetWidth}%`,
+                        height: '100%',
+                        backgroundColor: '#9ca3af',
+                        borderRadius: '4px'
                       }}
-                    >
-                      <div 
-                        style={{ 
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          width: `${targetWidth}%`,
-                          height: '100%',
-                          backgroundColor: '#9ca3af',
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
+                    />
                     <span 
                       style={{ 
+                        position: 'relative', 
+                        zIndex: 1, 
                         fontSize: '9px',
-                        color: '#9ca3af',
-                        minWidth: '30px',
-                        textAlign: 'right',
-                        flexShrink: 0
+                        color: targetTextOverlap ? '#d1d5db' : '#9ca3af' 
                       }}
                     >
                       {Math.round(item.target * animationProgress)}
                     </span>
                   </div>
-                </div>
-                {/* 達成率表示 */}
-                <div 
-                  style={{ 
-                    minWidth: '38px',
-                    textAlign: 'center',
-                    paddingTop: '2px',
-                    flexShrink: 0
-                  }}
-                >
-                  <span 
-                    style={{ 
-                      fontSize: '10px', 
-                      fontWeight: 700,
-                      color: isOverAchieved ? '#16a34a' : '#dc2626',
-                      backgroundColor: isOverAchieved ? '#f0fdf4' : '#fef2f2',
-                      padding: '1px 4px',
-                      borderRadius: '3px'
-                    }}
-                  >
-                    {achievementRate}%
-                  </span>
                 </div>
               </div>
             );
@@ -10118,7 +10105,6 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
 const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, isGeneratingAI, aiError }, ref) => {
   // タブ状態管理
   const [activeTab, setActiveTab] = useState('result'); // 'result', 'advice', 'simulation'
-  const [adviceMode, setAdviceMode] = useState('staff'); // 'staff' = 担当診断, 'org' = 組織診断
   const [aiProgress, setAiProgress] = useState(0);
   
   // デバッグ: dataの内容を詳細に確認
@@ -10174,16 +10160,9 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
   const hasExecMindset = Object.values(effectiveExecMindsetScores || {}).some(v => v !== null && v !== undefined && v > 0);
   const hasBothMindsetScores = hasStaffMindset && hasExecMindset;
   
-  // v43-fix2: 問診回答の有無チェック — calculatedScores（現在の回答から計算された結果）を基準にする
-  // data.executiveAnswers にはインポート済み/保存済みの古いキーが残る場合があるため、
-  // calcScoresFromAnswers が実際に問診マスターの質問IDと照合してスコアを生成したかで判定する。
-  // これにより進捗カウンター（0/27問）と同じ判定基準になる。
-  const hasComputedScores = (scores) => {
-    if (!scores || typeof scores !== 'object') return false;
-    return Object.values(scores).some(v => v !== null && v !== undefined);
-  };
-  const hasStaffAnswers = hasComputedScores(calculatedScores.staffScores) || hasComputedScores(calculatedScores.staffMindsetScores);
-  const hasExecAnswers = hasComputedScores(calculatedScores.executiveScores) || hasComputedScores(calculatedScores.execMindsetScores);
+  // v42: 問診回答の有無チェック（結果画面の表示制御に使用）
+  const hasStaffAnswers = Object.keys(data.staffAnswers || {}).length > 0;
+  const hasExecAnswers = Object.keys(data.executiveAnswers || {}).length > 0;
   const missingInputTabs = [
     ...(!hasStaffAnswers ? ['「採用担当者問診」'] : []),
     ...(!hasExecAnswers ? ['「上層部問診」'] : [])
@@ -10250,14 +10229,12 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
                 {!hasRequiredAnswers ? (
-                  <div className="mb-2">
-                    <div className="bg-gray-100 rounded-lg px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-400 text-sm">⚠</span>
-                        <span className="text-xs text-gray-500">{missingInputTabs.join('・')}が未入力です</span>
-                      </div>
-                      <div className="text-xs text-gray-400 mt-0.5 ml-6">「採用担当者問診」・「上層部問診」を入力すると<br/>ランクと採用課題が表示されます</div>
-                    </div>
+                  <div className="flex flex-col items-center justify-center py-6 text-center">
+                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-sm font-medium text-gray-500 mb-1">{missingInputTabs.join('・')}が未入力です</p>
+                    <p className="text-xs text-gray-400">すべての問診を入力すると<br />ランクが表示されます</p>
                   </div>
                 ) : (
                 <div className="mb-2">
@@ -10513,152 +10490,187 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
       {/* 改善アドバイスタブ */}
       {activeTab === 'advice' && (
         <>
-          <div className="flex gap-4 items-stretch">
-            {/* サイドボタン */}
-            <div className="flex flex-col gap-2 pt-2" style={{ minWidth: '36px' }}>
-              <button
-                onClick={() => setAdviceMode('staff')}
-                className={`py-4 px-1 rounded-lg text-xs font-bold transition-all ${
-                  adviceMode === 'staff'
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                }`}
-                style={{ writingMode: 'vertical-rl', letterSpacing: '0.15em' }}
-              >
-                担当診断
-              </button>
-              <button
-                onClick={() => setAdviceMode('org')}
-                className={`py-4 px-1 rounded-lg text-xs font-bold transition-all ${
-                  adviceMode === 'org'
-                    ? 'bg-purple-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                }`}
-                style={{ writingMode: 'vertical-rl', letterSpacing: '0.15em' }}
-              >
-                組織診断
-              </button>
-            </div>
-            
-            {/* メインコンテンツ */}
-            <div className="flex-1 grid grid-cols-12 gap-4 items-stretch">
-              {/* 左カラム */}
-              <div className="col-span-5 flex flex-col gap-4">
-                <div className="section-card p-5 flex flex-col" style={{ minHeight: '650px' }}>
-                  {hasRequiredAnswers && (
-                  <div className="mb-4">
-                    <div className="flex items-baseline gap-2 mb-2">
-                      <span className="text-sm text-gray-500">ランク</span>
-                      <span 
-                        className="text-4xl font-black"
-                        style={{ color: rankDef.color }}
-                      >
-                        {rank}
-                      </span>
-                      <span className="text-lg font-bold" style={{ color: rankDef.color }}>
-                        {rankDef.name}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-500 leading-relaxed">{rankDef.description}</div>
+          <div className="grid grid-cols-12 gap-4 items-stretch">
+            {/* 左カラム: スコア + タイプ */}
+            <div className="col-span-5 flex flex-col gap-4">
+              {/* ボックス1: ランクカード + 処方箋 */}
+              <div className="section-card p-5" style={{ flex: '4' }}>
+                <div className="mb-4">
+                  <div className="flex items-baseline gap-2 mb-2">
+                    <span className="text-sm text-gray-500">ランク</span>
+                    <span 
+                      className="text-4xl font-black"
+                      style={{ color: rankDef.color }}
+                    >
+                      {rank}
+                    </span>
+                    <span className="text-lg font-bold" style={{ color: rankDef.color }}>
+                      {rankDef.name}
+                    </span>
                   </div>
-                  )}
-                  
-                  {/* 処方箋（常に表示） */}
-                  <div className={`${hasRequiredAnswers ? 'border-t border-gray-200 pt-4' : ''} flex-1 flex flex-col`}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-5 h-5 text-gray-600">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                        </svg>
-                      </span>
-                      <span className="font-bold text-gray-800">処方箋</span>
-                      <span className="text-xs text-gray-500">今すぐ捨てるべき活動</span>
-                    </div>
-                    <div className="text-sm text-gray-600 leading-relaxed flex-1">
-                      {aiAdvice?.prescription || (
-                        <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
-                      )}
-                    </div>
+                  <div className="text-xs text-gray-500 leading-relaxed">{rankDef.description}</div>
+                </div>
+                
+                <div className="border-t border-gray-200 pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="w-5 h-5 text-gray-600">
+                      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                      </svg>
+                    </span>
+                    <span className="font-bold text-gray-800">処方箋</span>
+                    <span className="text-xs text-gray-500">今すぐ捨てるべき活動</span>
                   </div>
-                  
-                  {/* 組織の課題（組織診断のみ表示） */}
-                  <div className="border-t border-gray-200 pt-4 flex-1 flex flex-col">
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-5 h-5 text-gray-600">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                        </svg>
-                      </span>
-                      <span className="font-bold text-gray-800">組織の課題</span>
-                      <span className="text-xs text-gray-500">根本原因のマインドセット</span>
-                    </div>
-                    {adviceMode === 'org' ? (
-                      <div className="text-sm text-gray-600 leading-relaxed flex-1">
-                        {aiAdvice?.organizationIssue || (
-                          <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center flex-1 text-center py-4">
-                        <svg className="w-8 h-8 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
-                        <p className="text-xs text-gray-400">「上層部問診」が未入力です</p>
-                        <p className="text-[10px] text-gray-300 mt-1">「組織診断」で表示されます</p>
-                      </div>
+                  <div className="text-sm text-gray-600 leading-relaxed min-h-[100px]">
+                    {aiAdvice?.prescription || (
+                      <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
                     )}
                   </div>
                 </div>
               </div>
               
-              {/* 右カラム */}
-              <div className="col-span-7" style={{ minHeight: '650px' }}>
-                <div className="section-card overflow-hidden h-full flex flex-col">
-                  <div className="grid grid-cols-2 flex-1">
-                    {/* 採用担当者カード（常に表示） */}
-                    <div className="p-4 border-r border-gray-200 flex flex-col">
-                      <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-blue-500">
-                        <span className="w-5 h-5 text-gray-600">
-                          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                          </svg>
-                        </span>
-                        <span className="font-bold text-gray-800">採用担当者へ</span>
+              {/* ボックス2: ギャップ分析 + 組織課題 */}
+              <div className="section-card p-5" style={{ flex: '6' }}>
+                {/* ギャップ分析 */}
+                <div className="mb-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm font-bold text-gray-700">認識ギャップ</span>
+                    {gapResult.gapQuestionCount > 0 && (
+                      <span className="text-[10px] text-gray-400">（対象{gapResult.gapQuestionCount}問）</span>
+                    )}
+                  </div>
+                  {gapResult.gapQuestionCount === 0 ? (
+                    <div className="text-xs text-gray-400 italic">
+                      ギャップチェック対象の質問がありません
+                    </div>
+                  ) : gapResult.companyRate === null || gapResult.studentRate === null ? (
+                    <div className="text-xs text-gray-400 italic">
+                      企業側または学生側の回答がありません
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between bg-blue-50 rounded-lg p-3" style={{ minWidth: '100%' }}>
+                      <div className="text-center" style={{ flex: '1 1 0', minWidth: '80px' }}>
+                        <div className="text-[10px] text-gray-500 mb-1">企業側</div>
+                        <div className="text-xs text-gray-600">「知りたい」に応えている率</div>
+                        <div className="text-xl font-black text-blue-600">{gapResult.companyRate ?? '-'}%</div>
                       </div>
-                      <div className="text-xs text-gray-500 mb-2">明日からやめるべき無駄な作業</div>
-                      <div className="text-sm text-gray-600 leading-relaxed flex-1">
-                        {aiAdvice?.forRecruiter || (
-                          <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
-                        )}
+                      <div className="text-center border-l border-r border-gray-200 mx-2 px-2" style={{ flex: '1 1 0', minWidth: '100px' }}>
+                        <div className="text-[10px] text-gray-500 mb-1">学生側</div>
+                        <div className="text-xs text-gray-600">「伝わった」</div>
+                        <div className="text-xl font-black text-green-600">{gapResult.studentRate ?? '-'}%</div>
+                      </div>
+                      <div className="text-center" style={{ flex: '1 1 0', minWidth: '80px' }}>
+                        <div className="text-[10px] text-gray-500 mb-1">ギャップ</div>
+                        <div className="text-xs text-gray-600">「知りたいことが伝わった」</div>
+                        <div className={`text-xl font-black ${gapResult.combinedRate !== null && gapResult.combinedRate <= 30 ? 'text-red-600' : gapResult.combinedRate !== null && gapResult.combinedRate <= 50 ? 'text-orange-500' : 'text-gray-600'}`}>
+                          {gapResult.combinedRate ?? '-'}%
+                        </div>
                       </div>
                     </div>
+                  )}
+                </div>
+                
+                <div className="border-t border-gray-200 pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="w-5 h-5 text-gray-600">
+                      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                      </svg>
+                    </span>
+                    <span className="font-bold text-gray-800">組織の課題</span>
+                    <span className="text-xs text-gray-500">根本原因のマインドセット</span>
+                  </div>
+                  <div className="text-sm text-gray-600 leading-relaxed min-h-[80px]">
+                    {aiAdvice?.organizationIssue || (
+                      <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* 右カラム */}
+            <div className="col-span-7" style={{ minHeight: '650px' }}>
+              {/* 統合ボックス：採用担当者 + 上層部 */}
+              <div className="section-card overflow-hidden h-full flex flex-col">
+                {/* 上段：採用担当者 + 上層部 */}
+                <div className="grid grid-cols-2 flex-1">
+                  {/* 採用担当者カード */}
+                  <div className="p-4 border-r border-gray-200 flex flex-col">
+                    <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-blue-500">
+                      <span className="w-5 h-5 text-gray-600">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </span>
+                      <span className="font-bold text-gray-800">採用担当者へ</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mb-2">明日からやめるべき無駄な作業</div>
+                    <div className="text-sm text-gray-600 leading-relaxed flex-1">
+                      {aiAdvice?.forRecruiter || (
+                        <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
+                      )}
+                    </div>
                     
-                    {/* 上層部カード（組織診断のみ表示） */}
-                    <div className="p-4 flex flex-col">
-                      <div className={`flex items-center gap-2 mb-3 pb-2 border-b-2 ${adviceMode === 'org' ? 'border-purple-500' : 'border-gray-200'}`}>
-                        <span className="w-5 h-5 text-gray-600">
-                          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                          </svg>
-                        </span>
-                        <span className="font-bold text-gray-800">上層部へ</span>
-                      </div>
-                      {adviceMode === 'org' ? (
-                        <>
-                          <div className="text-xs text-gray-500 mb-2">投資対効果の低い無駄なコスト</div>
-                          <div className="text-sm text-gray-600 leading-relaxed flex-1">
-                            {aiAdvice?.forManagement || (
-                              <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
-                            )}
+                    {/* 深度スコア */}
+                    <div className="border-t border-gray-200 pt-3 mt-3">
+                      <div className="text-xs text-gray-500 mb-2">採用力バランス</div>
+                      {[
+                        { key: 'surface', name: '表層', score: effectiveDepthScores.surface ?? 0 },
+                        { key: 'middle', name: '中層', score: effectiveDepthScores.middle ?? 0 },
+                        { key: 'deep', name: '深層', score: effectiveDepthScores.deep ?? 0 }
+                      ].map((layer) => {
+                        const percentage = (layer.score / 10) * 100;
+                        const displayPercentage = percentage % 1 === 0 ? percentage.toFixed(0) : percentage.toFixed(1);
+                        return (
+                        <div key={layer.key} className="flex items-center gap-2 py-1">
+                          <span className="text-[10px] text-gray-500 w-6">{layer.name}</span>
+                          <div className="flex-1 h-2 bg-gray-200 rounded overflow-hidden">
+                            <div 
+                              className="h-full rounded bg-blue-500"
+                              style={{ width: `${percentage}%` }}
+                            />
                           </div>
-                        </>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center flex-1 text-center py-8">
-                          <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                          </svg>
-                          <p className="text-sm font-medium text-gray-400 mb-1">「上層部問診」が未入力です</p>
-                          <p className="text-xs text-gray-300">「組織診断」で表示されます</p>
+                          <span className="text-[10px] text-gray-500 w-10">{displayPercentage}%</span>
+                        </div>
+                      )})}
+                    </div>
+                  </div>
+                  
+                  {/* 上層部カード */}
+                  <div className="p-4 flex flex-col">
+                    <div className="flex items-center gap-2 mb-3 pb-2 border-b-2 border-purple-500">
+                      <span className="w-5 h-5 text-gray-600">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                      </span>
+                      <span className="font-bold text-gray-800">上層部へ</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mb-2">投資対効果の低い無駄なコスト</div>
+                    <div className="text-sm text-gray-600 leading-relaxed flex-1">
+                      {aiAdvice?.forManagement || (
+                        <span className="text-gray-400 italic">AIアドバイス生成後に表示されます</span>
+                      )}
+                    </div>
+                    
+                    {/* 組織内採用伝達力スコア */}
+                    <div className="border-t border-gray-200 pt-3 mt-3">
+                      <div className="text-xs text-gray-500 mb-2">組織内採用伝達力(基礎力のギャップ)</div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-gray-200 rounded overflow-hidden">
+                          <div 
+                            className="h-full rounded bg-purple-500"
+                            style={{ width: hasBothMindsetScores ? `${mindsetCoef * 100}%` : '0%' }}
+                          />
+                        </div>
+                        <span className="text-xs font-bold text-purple-600">
+                          {hasBothMindsetScores ? `${(mindsetCoef * 100).toFixed(0)}%` : '-%'}
+                        </span>
+                      </div>
+                      {!hasBothMindsetScores && (
+                        <div className="text-[10px] text-gray-400 mt-1">
+                          ※担当者・上層部の両方の問診が必要です
                         </div>
                       )}
                     </div>
@@ -12218,7 +12230,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
     };
     
     const systemPrompt = getEffectiveSystemPrompt();
-    const userPrompt = buildUserPrompt(localSettings.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE, testData);
+    const userPrompt = buildUserPrompt(localSettings.userPromptTemplate || getEffectiveUserPromptTemplate(), testData);
     
     try {
       const generateFunc = localSettings.apiType === 'openai' ? generateAIDiagnosisOpenAI : generateAIDiagnosisGemini;
@@ -14963,7 +14975,7 @@ function fullSyncCustomers(customers) {
                     <button
                       onClick={() => {
                         const newButtons = [...(localSettings.sideButtons || DEFAULT_SIDE_BUTTONS)];
-                        newButtons[index] = { ...DEFAULT_SIDE_BUTTONS[index] };
+                        newButtons[index] = { ...getEffectiveSideButtons()[index] };
                         setLocalSettings(prev => ({ ...prev, sideButtons: newButtons }));
                       }}
                       className="text-xs text-purple-600 hover:text-purple-700"
@@ -15024,14 +15036,14 @@ function fullSyncCustomers(customers) {
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-sm font-medium text-gray-700">ユーザープロンプト（出力フォーマット）</label>
                   <button
-                    onClick={() => setLocalSettings(prev => ({ ...prev, userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE }))}
+                    onClick={() => setLocalSettings(prev => ({ ...prev, userPromptTemplate: getEffectiveUserPromptTemplate() }))}
                     className="text-xs text-purple-600 hover:text-purple-700"
                   >
                     デフォルトに戻す
                   </button>
                 </div>
                 <textarea
-                  value={localSettings.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE}
+                  value={localSettings.userPromptTemplate || getEffectiveUserPromptTemplate()}
                   onChange={(e) => setLocalSettings(prev => ({ ...prev, userPromptTemplate: e.target.value }))}
                   className="w-full h-64 px-4 py-3 border border-gray-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
                   placeholder="ユーザープロンプトテンプレートを入力..."
@@ -15663,9 +15675,6 @@ const App = () => {
         aiResult: currentData.aiResult || (aiAdvice ? JSON.stringify(aiAdvice) : ''),
         savedQuestionMaster: currentData.savedQuestionMaster || getQuestionMasterFromStorage()
       };
-      // 担当者IDはフロントエンドから送信しない（引き継ぎで変更された値をサーバー側で保持するため）
-      delete toSave.assigneeId;
-      delete toSave['担当者ID'];
       
       if (isGasMode) {
         try {
@@ -15839,8 +15848,8 @@ const App = () => {
       
       if (!confirmed) return;
       
-      // データマージ（保存用にmergedDataを構築）
-      const buildMergedData = (prev) => {
+      // データマージ
+      setCurrentData(prev => {
         // 採用手法: preInputの active/priority を取込み、既存の budget 等は保持
         const mergedMethods = { ...prev.recruitmentMethods };
         if (preInput.recruitmentMethods) {
@@ -15902,33 +15911,9 @@ const App = () => {
           _preInputImportedAt: new Date().toISOString(),
           _preInputJobType: preInput.jobType
         };
-      };
+      });
       
-      // マージデータを構築してstateに反映
-      const mergedData = buildMergedData(currentData);
-      setCurrentData(mergedData);
-      
-      toast('事前問診データを取り込みました。自動保存中...', 'success');
-      
-      // GASモードの場合は自動保存（取込データが消失しないように）
-      if (isGasMode && mergedData.companyName) {
-        try {
-          const saveData = {
-            ...mergedData,
-            id: mergedData.id || mergedData.inquiryNo || `cust_${Date.now()}`,
-            updatedAt: new Date().toISOString(),
-            savedQuestionMaster: mergedData.savedQuestionMaster || getQuestionMasterFromStorage()
-          };
-          delete saveData.assigneeId;
-          delete saveData['担当者ID'];
-          await GASDataManager.saveCustomer(saveData);
-          await refreshCustomers();
-          toast('事前問診データを取り込み・保存しました', 'success');
-        } catch (saveErr) {
-          console.error('事前問診取込後の自動保存エラー:', saveErr);
-          toast('取込完了（自動保存に失敗。手動で保存してください）', 'warning', 4000);
-        }
-      }
+      toast('事前問診データを取り込みました', 'success');
       
     } catch (e) {
       console.error('事前問診データ取込エラー:', e);
@@ -16909,13 +16894,9 @@ const App = () => {
             <InputForm 
               data={currentData} 
               onChange={setCurrentData}
-              onStartDiagnosis={async () => {
-                // 自動保存してから診断開始（保存失敗でも診断は続行）
-                try {
-                  await handleSave(true);
-                } catch (e) {
-                  console.warn('[診断開始] サイレント保存失敗（診断は続行）:', e.message);
-                }
+              onStartDiagnosis={() => {
+                // 自動保存してから診断開始
+                handleSave(true);
                 setShowAIDiagnosis(true);
               }}
               onImportPreInput={handleImportPreInput}
