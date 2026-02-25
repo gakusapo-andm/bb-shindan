@@ -1322,15 +1322,24 @@ const App = () => {
           }
         }
         
-        // 問診マスターをロード
-        const qRes = await API.loadQuestionMaster();
-        if (qRes.success && qRes.data) {
-          setQuestionMaster(qRes.data);
-          console.log('[事前問診] 問診マスター読み込み完了');
-        } else {
-          console.warn('[事前問診] 問診マスターが空です success=' + qRes.success + ' error=' + (qRes.error || 'なし'));
-          if (qRes.error) {
-            setError('問診マスターの読み込みに失敗しました: ' + qRes.error);
+        // 問診マスターをロード（v40: リトライ付き）
+        let qLoaded = false;
+        for (let qAttempt = 0; qAttempt < 3 && !qLoaded; qAttempt++) {
+          const qRes = await API.loadQuestionMaster();
+          if (qRes.success && qRes.data) {
+            setQuestionMaster(qRes.data);
+            console.log('[事前問診] 問診マスター読み込み完了');
+            qLoaded = true;
+          } else if (qRes.success && !qRes.data) {
+            console.warn('[事前問診] 問診マスターシートが空です');
+            qLoaded = true; // データなしだが正常応答
+          } else {
+            console.warn('[事前問診] 問診マスター読み込み失敗 (attempt ' + (qAttempt + 1) + '/3):', qRes.error || '不明');
+            if (qAttempt < 2) {
+              await new Promise(r => setTimeout(r, 1500 * (qAttempt + 1)));
+            } else {
+              setError('問診マスターの読み込みに失敗しました: ' + (qRes.error || '不明なエラー') + '\n\nページを再読み込みしてください。');
+            }
           }
         }
         
