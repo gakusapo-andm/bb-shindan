@@ -10149,10 +10149,10 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
 // 診断シート
 // ========================================
 
-const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, isGeneratingAI, aiError }, ref) => {
+const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, isGeneratingAI, aiError, adviceMode }, ref) => {
   // タブ状態管理
   const [activeTab, setActiveTab] = useState('result'); // 'result', 'advice', 'simulation'
-  const [adviceMode, setAdviceMode] = useState('staff'); // 'staff' = 担当診断, 'org' = 組織診断
+  // v44: adviceMode は App から props で受け取り
   const [aiProgress, setAiProgress] = useState(0);
   
   // デバッグ: dataの内容を詳細に確認
@@ -15317,6 +15317,7 @@ const App = () => {
   const [aiAdvice, setAiAdvice] = useState(null);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [aiError, setAiError] = useState(null);
+  const [adviceMode, setAdviceMode] = useState('staff'); // v44: Appに引き上げ 'staff' = 担当診断, 'org' = 組織診断
   
   // AI診断モーダル表示（ヘッダーから起動用）
   const [showAIDiagnosis, setShowAIDiagnosis] = useState(false);
@@ -17005,6 +17006,7 @@ const App = () => {
                 onGenerateAI={handleGenerateAI}
                 isGeneratingAI={isGeneratingAI}
                 aiError={aiError}
+                adviceMode={adviceMode}
               />
             </div>
           </div>
