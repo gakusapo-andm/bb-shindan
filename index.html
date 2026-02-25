@@ -9,7 +9,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v43: ランク未入力時のプレースホルダーをインラインバナー型に変更, 診断開始時のサイレント保存でトークン期限切れ時に再ログイン強制されるバグを修正 -->
+  <!-- v44: setTimeout(1000)をmaster-data-loadedイベント駆動に変更, loadQuestionMasterにリトライ機能追加 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -3899,37 +3899,50 @@ const GASDataManager = {
   // 質問マスターを読み込み
   loadQuestionMaster: async () => {
       try {
-        // v42: authFetch使用 + 詳細ログ
-        try {
-          console.log('[loadQuestionMaster] authFetch開始...');
-          const qmResult = await authFetch('getQuestionMaster');
-          console.log('[loadQuestionMaster] 結果: success=' + qmResult.success + ', hasData=' + (qmResult.data !== null && qmResult.data !== undefined));
-          if (!qmResult.success) {
-            console.error('[loadQuestionMaster] API応答エラー:', qmResult.error || '不明なエラー');
-          }
-          if (qmResult.success && qmResult.data) {
-            _gasQuestionMaster = qmResult.data;
-            try { localStorage.setItem('gakusapo_question_master', JSON.stringify(qmResult.data)); } catch (e) {}
-          } else if (qmResult.success && !qmResult.data) {
-            console.warn('[loadQuestionMaster] 質問マスターシートが空です。設定画面から質問を追加してください。');
-          }
-          return qmResult.data || null;
-        } catch (err) {
-          console.error('[loadQuestionMaster] 通信エラー:', err.message);
-          // localStorageフォールバック
+        // v44: リトライ付き読み込み（GAS応答遅延対策）
+        const maxRetries = 2;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
-            const cached = localStorage.getItem('gakusapo_question_master');
-            if (cached) {
-              const parsed = JSON.parse(cached);
-              if (parsed && parsed.base) {
-                console.log('[loadQuestionMaster] localStorageキャッシュから復元');
-                _gasQuestionMaster = parsed;
-                return parsed;
+            console.log('[loadQuestionMaster] authFetch開始... (attempt ' + (attempt + 1) + ')');
+            const qmResult = await authFetch('getQuestionMaster');
+            console.log('[loadQuestionMaster] 結果: success=' + qmResult.success + ', hasData=' + (qmResult.data !== null && qmResult.data !== undefined));
+            if (!qmResult.success) {
+              console.error('[loadQuestionMaster] API応答エラー:', qmResult.error || '不明なエラー');
+              if (attempt < maxRetries) {
+                console.log('[loadQuestionMaster] リトライ待機 (' + (attempt + 1) + '/' + maxRetries + ')...');
+                await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+                continue;
               }
             }
-          } catch (e2) {}
-          return null;
+            if (qmResult.success && qmResult.data) {
+              _gasQuestionMaster = qmResult.data;
+              try { localStorage.setItem('gakusapo_question_master', JSON.stringify(qmResult.data)); } catch (e) {}
+              return qmResult.data;
+            } else if (qmResult.success && !qmResult.data) {
+              console.warn('[loadQuestionMaster] 質問マスターシートが空です。設定画面から質問を追加してください。');
+              return null;
+            }
+          } catch (err) {
+            console.error('[loadQuestionMaster] 通信エラー (attempt ' + (attempt + 1) + '):', err.message);
+            if (attempt < maxRetries) {
+              await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+              continue;
+            }
+          }
         }
+        // 全リトライ失敗 → localStorageフォールバック
+        try {
+          const cached = localStorage.getItem('gakusapo_question_master');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed && parsed.base) {
+              console.log('[loadQuestionMaster] localStorageキャッシュから復元');
+              _gasQuestionMaster = parsed;
+              return parsed;
+            }
+          }
+        } catch (e2) {}
+        return null;
       } catch (err) {
         console.error('[loadQuestionMaster] 致命的エラー:', err);
         return null;
@@ -4184,6 +4197,8 @@ const GASDataManager = {
     
     _gasMasterDataLoaded = true;
     console.log('[loadAllMasterData] 完了');
+    // v44: マスターデータ読み込み完了をイベントで通知（setTimeout依存を排除）
+    window.dispatchEvent(new Event('master-data-loaded'));
   },
   
   // マスターデータが読み込まれたかどうか
@@ -12148,31 +12163,40 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   // GASモードの場合、マスターデータ読み込み後に各マスターを更新
   useEffect(() => {
     const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
-    if (isGasMode && typeof GASDataManager !== 'undefined') {
-      const timer = setTimeout(() => {
-        // 質問マスター
-        const questionData = GASDataManager.getQuestionMaster();
-        if (questionData) {
-          setQuestionMaster(questionData);
-        }
-        // 採用手法マスター
-        const methodData = GASDataManager.getMethodMaster();
-        if (methodData) {
-          setMethodMaster(methodData);
-        }
-        // 媒体利用率マスター
-        const mediaData = GASDataManager.getMediaUsageMaster();
-        if (mediaData) {
-          setLayerMediaUsage(mediaData);
-        }
-        // 歩留まりマスター
-        const yieldData = GASDataManager.getYieldMaster();
-        if (yieldData) {
-          setYieldMaster(yieldData);
-        }
-      }, 1000);
-      return () => clearTimeout(timer);
+    if (!isGasMode || typeof GASDataManager === 'undefined') return;
+    
+    // v44: setTimeout(1000)を廃止し、イベント駆動に変更
+    const syncMasterData = () => {
+      // 質問マスター
+      const questionData = GASDataManager.getQuestionMaster();
+      if (questionData) {
+        setQuestionMaster(questionData);
+      }
+      // 採用手法マスター
+      const methodData = GASDataManager.getMethodMaster();
+      if (methodData) {
+        setMethodMaster(methodData);
+      }
+      // 媒体利用率マスター
+      const mediaData = GASDataManager.getMediaUsageMaster();
+      if (mediaData) {
+        setLayerMediaUsage(mediaData);
+      }
+      // 歩留まりマスター
+      const yieldData = GASDataManager.getYieldMaster();
+      if (yieldData) {
+        setYieldMaster(yieldData);
+      }
+    };
+    
+    // 既に読み込み済みなら即座に同期
+    if (GASDataManager.isMasterDataLoaded()) {
+      syncMasterData();
     }
+    
+    // イベントリスナーで確実に同期
+    window.addEventListener('master-data-loaded', syncMasterData);
+    return () => window.removeEventListener('master-data-loaded', syncMasterData);
   }, []);
   
   const currentPreset = AI_TONE_PRESETS[localSettings.selectedPreset] || AI_TONE_PRESETS.standard;
