@@ -2357,19 +2357,6 @@ const AISettingsManager = {
  * @returns {Promise<boolean>} リフレッシュ成功ならtrue
  */
 async function refreshIdToken() {
-  // 最大2回リトライ（初回 + リトライ1回）
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await _attemptRefresh();
-    if (result) return true;
-    if (attempt === 0) {
-      console.log('[refreshIdToken] 初回失敗、1秒後にリトライ...');
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  }
-  return false;
-}
-
-async function _attemptRefresh() {
   return new Promise((resolve) => {
     if (!window.google?.accounts?.id) {
       resolve(false);
@@ -2420,9 +2407,7 @@ async function _attemptRefresh() {
 }
 
 /**
- * トークンリフレッシュタイマーをセット
- * v43-fix: 25分間隔に短縮（IDトークンの有効期限60分に対して余裕を持たせる）
- * GAS側のセッションキャッシュ（120分）と組み合わせて実質120分セッション
+ * トークンリフレッシュタイマーをセット（45分後に自動リフレッシュ）
  */
 let _refreshTimer = null;
 function scheduleTokenRefresh() {
@@ -2431,9 +2416,9 @@ function scheduleTokenRefresh() {
     console.log('[scheduleTokenRefresh] 自動リフレッシュ開始');
     const ok = await refreshIdToken();
     if (!ok) {
-      console.warn('[scheduleTokenRefresh] 自動リフレッシュ失敗 - GAS側セッションキャッシュで継続可能');
+      console.warn('[scheduleTokenRefresh] 自動リフレッシュ失敗 - 次のAPI呼び出し時にリトライ');
     }
-  }, 25 * 60 * 1000); // 25分
+  }, 45 * 60 * 1000); // 45分（IDトークンの有効期限60分より余裕を持たせる）
 }
 
 /**
@@ -2447,7 +2432,6 @@ function isTokenExpiredError(result) {
 
 /**
  * 認証付きGETリクエスト（トークン期限切れ時は自動リフレッシュ＆リトライ）
- * v43-fix: リフレッシュ失敗でもauth-expiredを発火せず、エラーを呼び出し元に返す
  * @param {string} action - APIアクション名
  * @param {object} params - 追加パラメータ
  * @returns {Promise<object>} レスポンスJSON
@@ -2481,7 +2465,7 @@ async function authFetch(action, params = {}) {
   
   // トークン期限切れ → リフレッシュしてリトライ（1回のみ）
   if (isTokenExpiredError(result)) {
-    console.warn('[authFetch] トークン期限切れ検出、リフレッシュ試行中... action=' + action);
+    console.warn('[authFetch] トークン期限切れ検出、リフレッシュ試行中...');
     const refreshed = await refreshIdToken();
     if (refreshed) {
       result = await doFetch();
@@ -2489,12 +2473,13 @@ async function authFetch(action, params = {}) {
         return result; // リトライ成功
       }
     }
-    // v43-fix: auth-expiredイベントを発火しない
-    // GAS側のセッションキャッシュ(120分)でカバーされるため、
-    // ここに到達するのはセッションキャッシュも期限切れの場合のみ。
-    // 呼び出し元にエラーを返し、UIで非ブロッキング表示させる。
-    console.warn('[authFetch] セッション期限切れ（リフレッシュ失敗） action=' + action);
-    throw new Error('セッションが期限切れです。ページを再読み込みするか、再ログインしてください。');
+    // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
+    // ※ _suppressExpiredRedirect中はイベント発火を抑制（サイレント保存時）
+    if (!window.AUTH._suppressExpiredRedirect) {
+      window.AUTH._tokenExpired = true;
+      window.dispatchEvent(new Event('auth-expired'));
+    }
+    throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
   return result;
@@ -2502,7 +2487,6 @@ async function authFetch(action, params = {}) {
 
 /**
  * 認証付きPOSTリクエスト（トークン期限切れ時は自動リフレッシュ＆リトライ）
- * v43-fix: リフレッシュ失敗でもauth-expiredを発火せず、エラーを呼び出し元に返す
  * @param {string} action - APIアクション名
  * @param {object} data - リクエストボディ
  * @returns {Promise<object>} レスポンスJSON
@@ -2530,7 +2514,7 @@ async function authPost(action, data = {}) {
   
   // トークン期限切れ → リフレッシュしてリトライ（1回のみ）
   if (isTokenExpiredError(result)) {
-    console.warn('[authPost] トークン期限切れ検出、リフレッシュ試行中... action=' + action);
+    console.warn('[authPost] トークン期限切れ検出、リフレッシュ試行中...');
     const refreshed = await refreshIdToken();
     if (refreshed) {
       // リトライ時はリフレッシュ後のトークンでbodyを再構築
@@ -2539,9 +2523,13 @@ async function authPost(action, data = {}) {
         return result; // リトライ成功
       }
     }
-    // v43-fix: auth-expiredイベントを発火しない（GAS側セッションキャッシュでカバー）
-    console.warn('[authPost] セッション期限切れ（リフレッシュ失敗） action=' + action);
-    throw new Error('セッションが期限切れです。ページを再読み込みするか、再ログインしてください。');
+    // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
+    // ※ _suppressExpiredRedirect中はイベント発火を抑制（サイレント保存時）
+    if (!window.AUTH._suppressExpiredRedirect) {
+      window.AUTH._tokenExpired = true;
+      window.dispatchEvent(new Event('auth-expired'));
+    }
+    throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
   return result;
@@ -10173,13 +10161,9 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
   const hasExecMindset = Object.values(effectiveExecMindsetScores || {}).some(v => v !== null && v !== undefined && v > 0);
   const hasBothMindsetScores = hasStaffMindset && hasExecMindset;
   
-  // v43-fix: 問診回答の有無チェック（キーだけでなく実際の値があるか確認）
-  const hasActualAnswers = (answers) => {
-    if (!answers || typeof answers !== 'object') return false;
-    return Object.values(answers).some(v => v !== null && v !== undefined && v !== '' && v !== 0);
-  };
-  const hasStaffAnswers = hasActualAnswers(data.staffAnswers);
-  const hasExecAnswers = hasActualAnswers(data.executiveAnswers);
+  // v42: 問診回答の有無チェック（結果画面の表示制御に使用）
+  const hasStaffAnswers = Object.keys(data.staffAnswers || {}).length > 0;
+  const hasExecAnswers = Object.keys(data.executiveAnswers || {}).length > 0;
   const missingInputTabs = [
     ...(!hasStaffAnswers ? ['「採用担当者問診」'] : []),
     ...(!hasExecAnswers ? ['「上層部問診」'] : [])
@@ -10247,12 +10231,9 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 
                 {!hasRequiredAnswers ? (
                   <div className="mb-2">
-                    <div className="bg-gray-100 rounded-lg px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-400 text-sm">⚠</span>
-                        <span className="text-xs text-gray-500">{missingInputTabs.join('・')}が未入力です</span>
-                      </div>
-                      <div className="text-xs text-gray-400 mt-0.5 ml-6">「採用担当者問診」・「上層部問診」を入力するとランクが表示されます</div>
+                    <div className="bg-gray-100 rounded-lg px-3 py-2 flex items-center gap-2">
+                      <span className="text-gray-400 text-sm">⚠</span>
+                      <span className="text-xs text-gray-500">{missingInputTabs.join('・')}を入力するとランクが表示されます</span>
                     </div>
                   </div>
                 ) : (
@@ -10514,17 +10495,6 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
             <div className="col-span-5 flex flex-col gap-4">
               {/* ボックス1: ランクカード + 処方箋 */}
               <div className="section-card p-5" style={{ flex: '4' }}>
-                {!hasRequiredAnswers ? (
-                <div className="mb-4">
-                  <div className="bg-gray-100 rounded-lg px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-400 text-sm">⚠</span>
-                      <span className="text-xs text-gray-500">{missingInputTabs.join('・')}が未入力です</span>
-                    </div>
-                    <div className="text-xs text-gray-400 mt-0.5 ml-6">「採用担当者問診」・「上層部問診」を入力するとランクが表示されます</div>
-                  </div>
-                </div>
-                ) : (
                 <div className="mb-4">
                   <div className="flex items-baseline gap-2 mb-2">
                     <span className="text-sm text-gray-500">ランク</span>
@@ -10540,7 +10510,6 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                   </div>
                   <div className="text-xs text-gray-500 leading-relaxed">{rankDef.description}</div>
                 </div>
-                )}
                 
                 <div className="border-t border-gray-200 pt-4">
                   <div className="flex items-center gap-2 mb-3">
@@ -15706,9 +15675,6 @@ const App = () => {
         aiResult: currentData.aiResult || (aiAdvice ? JSON.stringify(aiAdvice) : ''),
         savedQuestionMaster: currentData.savedQuestionMaster || getQuestionMasterFromStorage()
       };
-      // 担当者IDはフロントエンドから送信しない（引き継ぎで変更された値をサーバー側で保持するため）
-      delete toSave.assigneeId;
-      delete toSave['担当者ID'];
       
       if (isGasMode) {
         try {
@@ -15882,8 +15848,8 @@ const App = () => {
       
       if (!confirmed) return;
       
-      // データマージ（保存用にmergedDataを構築）
-      const buildMergedData = (prev) => {
+      // データマージ
+      setCurrentData(prev => {
         // 採用手法: preInputの active/priority を取込み、既存の budget 等は保持
         const mergedMethods = { ...prev.recruitmentMethods };
         if (preInput.recruitmentMethods) {
@@ -15945,33 +15911,9 @@ const App = () => {
           _preInputImportedAt: new Date().toISOString(),
           _preInputJobType: preInput.jobType
         };
-      };
+      });
       
-      // マージデータを構築してstateに反映
-      const mergedData = buildMergedData(currentData);
-      setCurrentData(mergedData);
-      
-      toast('事前問診データを取り込みました。自動保存中...', 'success');
-      
-      // GASモードの場合は自動保存（取込データが消失しないように）
-      if (isGasMode && mergedData.companyName) {
-        try {
-          const saveData = {
-            ...mergedData,
-            id: mergedData.id || mergedData.inquiryNo || `cust_${Date.now()}`,
-            updatedAt: new Date().toISOString(),
-            savedQuestionMaster: mergedData.savedQuestionMaster || getQuestionMasterFromStorage()
-          };
-          delete saveData.assigneeId;
-          delete saveData['担当者ID'];
-          await GASDataManager.saveCustomer(saveData);
-          await refreshCustomers();
-          toast('事前問診データを取り込み・保存しました', 'success');
-        } catch (saveErr) {
-          console.error('事前問診取込後の自動保存エラー:', saveErr);
-          toast('取込完了（自動保存に失敗。手動で保存してください）', 'warning', 4000);
-        }
-      }
+      toast('事前問診データを取り込みました', 'success');
       
     } catch (e) {
       console.error('事前問診データ取込エラー:', e);
@@ -16955,9 +16897,12 @@ const App = () => {
               onStartDiagnosis={async () => {
                 // 自動保存してから診断開始（保存失敗でも診断は続行）
                 try {
+                  window.AUTH._suppressExpiredRedirect = true;
                   await handleSave(true);
                 } catch (e) {
                   console.warn('[診断開始] サイレント保存失敗（診断は続行）:', e.message);
+                } finally {
+                  window.AUTH._suppressExpiredRedirect = false;
                 }
                 setShowAIDiagnosis(true);
               }}
