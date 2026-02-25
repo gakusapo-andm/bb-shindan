@@ -9,7 +9,7 @@
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
-  <!-- v43: ランク未入力時のプレースホルダーをインラインバナー型に変更, 診断開始時のサイレント保存でトークン期限切れ時に再ログイン強制されるバグを修正 -->
+  <!-- v41: PDF出力ズレ修正 - SVG→CSSドット, absolute+transform→lineHeight -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -1908,6 +1908,9 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `以下の診断結果と備考欄の内容
 【フェーズ別投資分析】
 {investmentAnalysis}
 
+【フェーズ別クロス分析（躓きポイント特定）】
+{phaseCrossAnalysis}
+
 【採用手法・投資分析】
 投資予算総額: {totalBudget}万円
 {recruitmentAnalysis}
@@ -1923,14 +1926,16 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `以下の診断結果と備考欄の内容
 
 ★ 分析の観点 ★
 1. 伝達力スコアの低い項目（6点以下）は重点改善対象
-2. 注力フェーズ別スコアと歩留まり実績の乖離を分析
-3. 投資予算配分と注力順位を踏まえ、投資対効果の改善を提言
-4. 備考欄の具体的な悩みに直接回答すること
+2. フェーズ別クロス分析の判定パターンを最重要の分析軸として活用すること
+3. パターン②（構造的問題：高魅力×高投資×低歩留まり）は最も深刻な問題として必ず言及
+4. 採用基礎力5軸のうち主犯と特定された軸がある場合は、改善の起点として提言すること
+5. 投資予算配分と注力順位を踏まえ、投資対効果の改善を提言
+6. 備考欄の具体的な悩みに直接回答すること
 
 [SECTION_1]
 ■ 処方箋：この症例から脱却するために「今すぐ捨てるべき活動」
 → 症例タイプ「{diagnosisTypeName}」の根本原因を踏まえ、最優先でやめるべき施策を指摘
-→ 注力フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）と歩留まり乖離の関係を分析
+→ フェーズ別クロス分析で最も深刻なパターンに該当するフェーズの改善を最優先で提言
 → 過剰投資の媒体があれば具体的に見直しを提言
 
 [SECTION_2]
@@ -1947,17 +1952,19 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `以下の診断結果と備考欄の内容
 
 [SECTION_4]
 ■ 組織の課題：根本原因となっている「マインドセットの無駄」
-→ なぜこの症例「{diagnosisTypeName}」に陥ったのか、組織文化の問題を指摘
-→ 注力フェーズと歩留まり結果の不一致から見える組織の盲点を指摘
+→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を起点に組織文化の問題を指摘
+→ パターン②（構造的問題）が検出された場合は「投資すれば解決する」という思い込みへの警鐘を最優先で伝える
 → 「投資すれば解決する」という思い込みへの警鐘
 
 ---
 
 【重要な注意点】
+- フェーズ別クロス分析の判定パターンは必ず分析の根拠として活用すること
+- パターン②🚨（構造的問題）が検出されたフェーズは最重要課題として必ず冒頭で言及すること
+- 採用基礎力の「主犯」が特定されている場合、その軸の改善を具体的に提言すること
 - 備考欄に具体的なサービス名や媒体名があれば、それに言及した具体的なアドバイスを出すこと
 - 採用手法分析で「過剰投資」「投資不足」と判定された媒体は必ず言及すること
 - 伝達力スコア6点以下の項目は重点課題として必ず言及すること
-- 注力フェーズ別スコアと歩留まり実績の乖離がある場合は、その原因を分析して言及すること
 - 曖昧な表現は禁止
 - 各セクションは必ず「捨てる」「やめる」「集中する」のいずれかの行動を明示すること`;
 
@@ -1997,6 +2004,9 @@ const DEFAULT_SIDE_BUTTONS = [
 【フェーズ別投資分析】
 {investmentAnalysis}
 
+【フェーズ別クロス分析（躓きポイント特定）】
+{phaseCrossAnalysis}
+
 【採用手法・投資分析】
 投資予算総額: {totalBudget}万円
 {recruitmentAnalysis}
@@ -2011,13 +2021,15 @@ const DEFAULT_SIDE_BUTTONS = [
 
 ★ 重点分析ポイント ★
 - 伝達力スコア6点以下の項目は重点改善対象
-- フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）と歩留まり乖離の関係
+- フェーズ別クロス分析の判定パターンを最重要の分析軸として活用
+- パターン②（構造的問題）が検出された場合は最優先で指摘
+- 採用基礎力の「主犯」軸が特定されている場合は改善の起点として提言
 - 投資予算配分の最適化
 
 [SECTION_1]
 ■ 処方箋：今すぐ捨てるべき活動
 → 症例「{diagnosisTypeName}」の根本原因を踏まえた最優先施策
-→ フェーズ別スコアと歩留まり乖離があれば、どのフェーズに問題があるか指摘
+→ フェーズ別クロス分析で最も深刻なパターンのフェーズを指摘
 
 [SECTION_2]
 ■ 採用担当者へ：現場が明日からやめるべき無駄な作業
@@ -2029,7 +2041,7 @@ const DEFAULT_SIDE_BUTTONS = [
 
 [SECTION_4]
 ■ 組織の課題：根本原因となっているマインドセット
-→ フェーズ別スコアと歩留まり結果の不一致から見える組織の盲点を指摘`
+→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を起点に組織の盲点を指摘`
   },
   {
     id: 'btn2',
@@ -2062,6 +2074,9 @@ const DEFAULT_SIDE_BUTTONS = [
 【歩留まり実績と目標の乖離】
 {yieldGapAnalysis}
 
+【フェーズ別クロス分析（躓きポイント特定）】
+{phaseCrossAnalysis}
+
 【採用手法・投資分析】
 投資予算総額: {totalBudget}万円
 {recruitmentAnalysis}
@@ -2076,12 +2091,13 @@ const DEFAULT_SIDE_BUTTONS = [
 
 ★ 担当者向け重点ポイント ★
 - 選考UX（{scores.selectionUX}点）と対話力（{scores.dialogue}点）の現場改善
+- フェーズ別クロス分析で躓いているフェーズの改善を優先
 - 注力順位と投資予算の整合性の改善
 - 具体性スコア（{scores.specificity}点）改善のためのコンテンツ作成
 
 [SECTION_1]
 ■ 処方箋：採用担当者として最優先で取り組むべきこと
-→ 伝達力スコアで最も低い項目の改善から着手
+→ フェーズ別クロス分析で最も深刻な判定のフェーズに着目し、現場レベルで改善可能なアクションを提言
 
 [SECTION_2]
 ■ 採用担当者へ：日々の業務で改善すべき具体的なポイント
@@ -2094,7 +2110,7 @@ const DEFAULT_SIDE_BUTTONS = [
 
 [SECTION_4]
 ■ 組織の課題：採用担当者の立場から見た組織の問題点
-→ なぜ「{diagnosisTypeName}」に陥ったか、現場視点での分析`
+→ フェーズ別クロス分析で特定された採用基礎力の問題を、現場視点から上層部に伝えるべきポイントとして整理`
   },
   {
     id: 'btn3',
@@ -2130,6 +2146,9 @@ const DEFAULT_SIDE_BUTTONS = [
 【フェーズ別投資分析】
 {investmentAnalysis}
 
+【フェーズ別クロス分析（躓きポイント特定）】
+{phaseCrossAnalysis}
+
 【採用手法・投資分析】
 投資予算総額: {totalBudget}万円
 {recruitmentAnalysis}
@@ -2143,26 +2162,32 @@ const DEFAULT_SIDE_BUTTONS = [
 経営判断や組織改革の観点から、以下の4項目を作成してください。
 
 ★ 経営層向け重点ポイント ★
+- フェーズ別クロス分析の判定パターンを最重要の分析軸として必ず活用すること
+- 採用基礎力5軸（採用体制・自責・経営関与・市場理解・計画性）のうち「主犯」と特定された軸は経営課題の起点として提言
+- パターン②（構造的問題：自己評価も投資も高いのに歩留まりが悪い）が検出された場合は「投資では解決しない」ことを明確に伝えること
 - 投資予算配分の経営インパクト
-- 認知到達力（{scores.recognition}点）向上のための投資判断
-- フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）に基づく戦略的資源配分
 
 [SECTION_1]
 ■ 処方箋：経営として即座に決断すべき施策
 → 症例「{diagnosisTypeName}」脱却のための経営判断
+→ フェーズ別クロス分析で最も深刻なパターンのフェーズを最優先課題として提示
 
 [SECTION_2]
 ■ 採用担当者へ：組織として担当者に与えるべき権限と環境
 → 選考UX（{scores.selectionUX}点）改善に必要な権限移譲
+→ 採用基礎力の「採用体制」が低い場合は、担当者への人員・時間の追加確保を提言
 
 [SECTION_3]
 ■ 上層部へ：投資判断と予算配分の見直し
 → 投資予算額と注力順位を根拠に過剰投資の削減と再配分を提言
 → 認知到達力（{scores.recognition}点）向上のための投資先
+→ パターン②が検出されたフェーズは「予算増額」ではなく「質の改善」を提言
 
 [SECTION_4]
 ■ 組織の課題：採用力を阻害している組織文化・構造の問題
-→ フェーズ別スコアと歩留まり乖離が示す組織の構造的問題`
+→ フェーズ別クロス分析で特定された「主犯」の採用基礎力軸を中心に組織の構造的問題を指摘
+→ 各主犯軸について具体的な改善アクション（例：経営関与が低い→経営者の面接参加、市場理解が低い→競合分析の実施）を提言
+→ 採用基礎力が全体的に低い場合は「施策の前に土台づくり」を最優先メッセージとして伝えること`
   },
   {
     id: 'btn4',
@@ -2198,6 +2223,9 @@ const DEFAULT_SIDE_BUTTONS = [
 【フェーズ別投資分析】
 {investmentAnalysis}
 
+【フェーズ別クロス分析（躓きポイント特定）】
+{phaseCrossAnalysis}
+
 【採用手法・投資詳細分析】
 投資予算総額: {totalBudget}万円
 {recruitmentAnalysisPro}
@@ -2212,33 +2240,34 @@ const DEFAULT_SIDE_BUTTONS = [
 データに基づいた論理的な提言を心がけてください。
 
 ★ Pro分析フレームワーク ★
-1. 伝達力スコア×フェーズ別スコアのクロス分析
-2. 歩留まり乖離の根本原因特定
-3. 投資予算配分の定量的改善提案
-4. ROI最大化のための優先順位付け
+1. フェーズ別クロス分析の8パターン判定を最重要の分析基盤として活用
+2. 採用基礎力5軸の「主犯」特定による根本原因分析
+3. パターン②（構造的問題）検出時は「量より質」の改善を最優先で提言
+4. 投資予算配分の定量的改善提案
+5. ROI最大化のための優先順位付け
 
 [SECTION_1]
 ■ 処方箋：根本原因の分析と最も効果的な介入ポイント
 → 症例「{diagnosisTypeName}」の構造的要因を分析
-→ フェーズ別スコア（表層{depthScores.surface}/中層{depthScores.middle}/深層{depthScores.deep}）と伝達力スコアの相関
+→ フェーズ別クロス分析の各パターンから、最も介入効果の高いポイントを特定
 → 「過剰投資」「投資不足」の媒体を特定し、優先度の高い改善点を明示
 
 [SECTION_2]
 ■ 採用担当者へ：KPI設計と効果測定の仕組み構築
-→ 伝達力スコア6項目をKPIに組み込む提案
+→ フェーズ別クロス分析の判定パターンをKPIモニタリングに組み込む提案
 → 選考UX（{scores.selectionUX}点）・対話力（{scores.dialogue}点）の測定方法
 → 推奨配分に近づけるための具体的なアクションプラン
 
 [SECTION_3]
 ■ 上層部へ：ROI最大化のための投資戦略
 → 投資予算の再配分による期待効果を定量化
-→ 過剰投資媒体からの予算削減額と、投資不足媒体への再配分を具体的に提示
+→ パターン②検出フェーズは予算増額ではなく質的改善への投資を提言
 → 認知到達力（{scores.recognition}点）向上のための費用対効果分析
 
 [SECTION_4]
 ■ 組織の課題：競争優位性を構築するための組織変革
-→ なぜ「{diagnosisTypeName}」に陥ったのか、組織的な意思決定の問題点を指摘
-→ フェーズ別スコアと歩留まり乖離から見える組織の盲点
+→ フェーズ別クロス分析で特定された採用基礎力5軸の「主犯」から組織の構造的問題を分析
+→ 各主犯軸の改善ロードマップ（短期：3ヶ月/中期：6ヶ月/長期：1年）を提示
 → データドリブンな採用投資判断ができる組織体制の構築提案`
   }
 ];
@@ -2474,11 +2503,8 @@ async function authFetch(action, params = {}) {
       }
     }
     // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
-    // ※ _suppressExpiredRedirect中はイベント発火を抑制（サイレント保存時）
-    if (!window.AUTH._suppressExpiredRedirect) {
-      window.AUTH._tokenExpired = true;
-      window.dispatchEvent(new Event('auth-expired'));
-    }
+    window.AUTH._tokenExpired = true;
+    window.dispatchEvent(new Event('auth-expired'));
     throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
@@ -2524,11 +2550,8 @@ async function authPost(action, data = {}) {
       }
     }
     // リフレッシュ失敗 → ログイン画面へ（データは保存警告付き）
-    // ※ _suppressExpiredRedirect中はイベント発火を抑制（サイレント保存時）
-    if (!window.AUTH._suppressExpiredRedirect) {
-      window.AUTH._tokenExpired = true;
-      window.dispatchEvent(new Event('auth-expired'));
-    }
+    window.AUTH._tokenExpired = true;
+    window.dispatchEvent(new Event('auth-expired'));
     throw new Error('セッションが期限切れです。再ログイン後にもう一度保存してください。');
   }
   
@@ -3499,6 +3522,9 @@ const buildUserPrompt = (template, data) => {
   // 【強化】投資分析サマリー
   const investmentAnalysis = formatInvestmentAnalysisSummary(data);
   
+  // 【新規】フェーズ別5軸分解クロス分析
+  const phaseCrossAnalysis = generatePhaseCrossAnalysis(data);
+  
   // 投資予算合計
   const totalBudget = efficiency.totalBudget || 0;
   
@@ -3521,6 +3547,7 @@ const buildUserPrompt = (template, data) => {
     .replaceAll('{depthScores.deep}', String(depthScores.deep ?? '-'))
     .replaceAll('{yieldGapAnalysis}', yieldGapAnalysis)
     .replaceAll('{investmentAnalysis}', investmentAnalysis)
+    .replaceAll('{phaseCrossAnalysis}', phaseCrossAnalysis)
     .replaceAll('{recruitmentAnalysisPro}', recruitmentAnalysisPro)
     .replaceAll('{recruitmentAnalysis}', recruitmentAnalysis)
     .replaceAll('{mismatchRate}', String(totalBudget))
@@ -5343,6 +5370,295 @@ const formatInvestmentAnalysisSummary = (data) => {
 };
 
 // ========================================
+// 【inventory 3-5】フェーズ別5軸分解クロス分析（AI診断用）
+// 4次元：魅力伝達力 × 投資配分 × 歩留まり実績 × 採用基礎力5軸
+// ========================================
+
+// 採用基礎力5軸 × フェーズ別 影響度マッピング
+// ◎=strong, ○=moderate, △=weak
+const MINDSET_PHASE_IMPACT = {
+  structure:          { surface: 'moderate', middle: 'strong',   deep: 'moderate' }, // 採用体制
+  ownership:          { surface: 'weak',     middle: 'strong',   deep: 'strong'   }, // 自責
+  management:         { surface: 'weak',     middle: 'moderate', deep: 'strong'   }, // 経営関与
+  marketUnderstanding: { surface: 'strong',  middle: 'moderate', deep: 'weak'     }, // 市場理解
+  planning:           { surface: 'strong',   middle: 'moderate', deep: 'moderate' }  // 計画性
+};
+
+// 3次元パターン判定（担当者問診用）
+const classifyPhasePattern3D = (attractScore, investPct, yieldGap) => {
+  const isHighAttract = attractScore > 50;
+  const isHighInvest = investPct > 30;
+  const isGoodYield = yieldGap > -10; // 業界平均との乖離が-10%以内なら「良」
+
+  if (isHighAttract && isHighInvest && isGoodYield)  return { id: '①', icon: '✅', name: '健全',       priority: 0 };
+  if (isHighAttract && isHighInvest && !isGoodYield) return { id: '②', icon: '🚨', name: '構造的問題', priority: 1 };
+  if (isHighAttract && !isHighInvest && isGoodYield) return { id: '③', icon: '⚡', name: '高効率',     priority: 3 };
+  if (isHighAttract && !isHighInvest && !isGoodYield) return { id: '④', icon: '⚠',  name: '投資不足',  priority: 2 };
+  if (!isHighAttract && isHighInvest && isGoodYield) return { id: '⑤', icon: '🤔', name: '偶然の成功', priority: 4 };
+  if (!isHighAttract && isHighInvest && !isGoodYield) return { id: '⑥', icon: '💸', name: '投資の空回り', priority: 1 };
+  if (!isHighAttract && !isHighInvest && isGoodYield) return { id: '⑦', icon: '🎯', name: '潜在力',    priority: 5 };
+  return { id: '⑧', icon: '📋', name: '未着手', priority: 3 };
+};
+
+// 3次元パターンごとの示唆テキスト
+const PATTERN_SUGGESTIONS_3D = {
+  '①': 'このフェーズは機能している。維持しつつ他フェーズに注力すべき',
+  '②': '自己評価も投資も十分なのに結果が出ない。「量」ではなく「質」の抜本改善が必要',
+  '③': '少ない投資で成果が出ている。投資を増やせばさらに伸びる可能性',
+  '④': '魅力はあるが投資が足りず学生に届いていない。投資配分の見直しで改善見込み大',
+  '⑤': '自己評価は低いが結果は出ている。無意識の強みを言語化し再現性を高めるべき',
+  '⑥': 'お金をかけているが魅力が弱く結果も出ない。投資を増やしても無駄。まず魅力の磨き込みが先',
+  '⑦': '手薄なのに結果が出ている。外部環境の追い風の可能性。環境変化で崩れるリスクあり',
+  '⑧': 'そもそも取り組めていない。優先度判断が必要'
+};
+
+// 採用基礎力の主犯特定ロジック（組織診断用）
+const identifyMindsetCulprit = (phase, mindsetScores, pattern) => {
+  if (!mindsetScores || Object.keys(mindsetScores).length === 0) return null;
+  
+  // 歩留まりが良い場合は主犯特定不要
+  if (['①', '③', '⑤', '⑦'].includes(pattern.id)) return null;
+  
+  // 該当フェーズに影響度が高い軸で、スコアが低いものを特定
+  const culprits = [];
+  Object.entries(MINDSET_PHASE_IMPACT).forEach(([axisKey, impacts]) => {
+    const impact = impacts[phase];
+    const score = mindsetScores[axisKey];
+    if (score === null || score === undefined) return;
+    
+    const scoreNorm = score / 10; // 0-10 → 0-1
+    
+    // 影響度が高く、スコアが低い軸を主犯候補
+    if (impact === 'strong' && scoreNorm < 0.4) {
+      culprits.push({ key: axisKey, name: MINDSET_AXES[axisKey].name, score, impact: 'strong', severity: 'critical' });
+    } else if (impact === 'strong' && scoreNorm < 0.6) {
+      culprits.push({ key: axisKey, name: MINDSET_AXES[axisKey].name, score, impact: 'strong', severity: 'warning' });
+    } else if (impact === 'moderate' && scoreNorm < 0.3) {
+      culprits.push({ key: axisKey, name: MINDSET_AXES[axisKey].name, score, impact: 'moderate', severity: 'warning' });
+    }
+  });
+  
+  // severity: critical > warning の順にソート
+  culprits.sort((a, b) => {
+    if (a.severity === 'critical' && b.severity !== 'critical') return -1;
+    if (a.severity !== 'critical' && b.severity === 'critical') return 1;
+    return a.score - b.score;
+  });
+  
+  return culprits.length > 0 ? culprits : null;
+};
+
+// 組織診断パターンの示唆テキスト（基礎力低 × 各パターン）
+const MINDSET_PATTERN_SUGGESTIONS = {
+  structure: {
+    surface: 'マンパワー不足で採用活動の量が確保できていない。体制の拡充か外部リソース活用が必要',
+    middle:  '対応遅延・選考の間延びで離脱が発生。レスポンス速度の改善が急務',
+    deep:    '内々定者フォローまで手が回っていない。フォローの仕組み化が必要'
+  },
+  ownership: {
+    surface: '採用結果を外部要因のせいにしており、打ち出し方の改善に着手していない',
+    middle:  '選考辞退を「学生のマナー」で片付けている。自社の選考体験を客観視できていない',
+    deep:    '承諾辞退を「最近の学生は不誠実」と他責にしてフォロー改善に着手していない'
+  },
+  management: {
+    surface: '経営が採用を重視していないため予算も人も出ない。経営層への採用ROI提示が先',
+    middle:  '選考で経営者が出てこない＝本気度が伝わらない。経営層の面接参加が必要',
+    deep:    '内々定後に経営者からのメッセージがない＝「あなたが必要」が伝わらない'
+  },
+  marketUnderstanding: {
+    surface: 'ターゲット学生像（WHO）が不明確なまま活動。届ける相手を間違えている可能性が高い',
+    middle:  '競合を知らないため選考で他社と比較された時に負ける。競合分析と自社の強み再定義が必要',
+    deep:    '競合の囲い込み施策を把握していない。競合のフォロー手法のリサーチが必要'
+  },
+  planning: {
+    surface: '採用スケジュールの策定不足で出遅れ・タイミングミスが発生',
+    middle:  '面接間隔が空きすぎて温度感が下がり離脱。選考ステップの短縮・高速化が必要',
+    deep:    '内々定後の接点設計がない。内定者フォロースケジュールの策定が必要'
+  }
+};
+
+// メイン関数：フェーズ別クロス分析テキストを生成
+const generatePhaseCrossAnalysis = (data) => {
+  const mindsetScores = data.mindsetScores || {};
+  const phaseInvestment = calcPhaseInvestmentRatio(data);
+  const avgScores = calcAvgScores(data.staffScores, data.executiveScores);
+  const phaseScores = calcPhaseScores(avgScores, data.depthScores);
+  
+  // 歩留まり乖離を計算
+  const funnelData = data.funnelData || {};
+  const industryAverages = data.industryAverages || {};
+  const adjustedAverages = data.adjustedAverages || {};
+  
+  const avgRates = {
+    awarenessToInterest: adjustedAverages?.awarenessToInterest ?? industryAverages?.awarenessToInterest ?? 22,
+    interestToApplication: adjustedAverages?.interestToApplication ?? industryAverages?.interestToApplication ?? 25,
+    applicationToScreening: adjustedAverages?.applicationToScreening ?? industryAverages?.applicationToScreening ?? 25,
+    screeningToOffer: adjustedAverages?.screeningToOffer ?? industryAverages?.screeningToOffer ?? 41,
+    offerToAcceptance: adjustedAverages?.offerToAcceptance ?? industryAverages?.offerToAcceptance ?? 80
+  };
+  
+  // フェーズ別の歩留まり乖離を算出
+  const calcPhaseYieldGap = () => {
+    const awareness = funnelData.targetAwareness;
+    const interest = funnelData.interest;
+    const applications = funnelData.applications;
+    const screening = funnelData.screening;
+    const offers = funnelData.offers;
+    const acceptance = funnelData.acceptance;
+    
+    // 表層部：認知→興味
+    let surfaceGap = null;
+    if (awareness > 0 && interest > 0) {
+      const actual = (interest / awareness) * 100;
+      surfaceGap = actual - avgRates.awarenessToInterest;
+    }
+    
+    // 中層部：興味→内々定（複数ステップの平均乖離）
+    let middleGaps = [];
+    if (interest > 0 && applications > 0) {
+      middleGaps.push((applications / interest) * 100 - avgRates.interestToApplication);
+    }
+    if (applications > 0 && screening > 0) {
+      middleGaps.push((screening / applications) * 100 - avgRates.applicationToScreening);
+    }
+    if (screening > 0 && offers > 0) {
+      middleGaps.push((offers / screening) * 100 - avgRates.screeningToOffer);
+    }
+    const middleGap = middleGaps.length > 0 ? middleGaps.reduce((s, g) => s + g, 0) / middleGaps.length : null;
+    
+    // 深層部：内々定→承諾
+    let deepGap = null;
+    if (offers > 0 && acceptance > 0) {
+      const actual = (acceptance / offers) * 100;
+      deepGap = actual - avgRates.offerToAcceptance;
+    }
+    
+    return { surface: surfaceGap, middle: middleGap, deep: deepGap };
+  };
+  
+  const yieldGaps = calcPhaseYieldGap();
+  
+  // 採用基礎力の全体判定
+  const mindsetAxes = Object.keys(MINDSET_AXES);
+  const validMindsetScores = mindsetAxes.filter(k => mindsetScores[k] !== null && mindsetScores[k] !== undefined);
+  const mindsetAvg = validMindsetScores.length > 0
+    ? validMindsetScores.reduce((sum, k) => sum + mindsetScores[k], 0) / validMindsetScores.length
+    : null;
+  const isMindsetLow = mindsetAvg !== null && mindsetAvg < 5; // 10点満点で5未満は「低」
+  const hasMindsetData = validMindsetScores.length > 0;
+  
+  // データ不足チェック
+  const hasPhaseScores = phaseScores.surface.score > 0 || phaseScores.middle.score > 0 || phaseScores.deep.score > 0;
+  const hasYieldData = yieldGaps.surface !== null || yieldGaps.middle !== null || yieldGaps.deep !== null;
+  const hasInvestData = phaseInvestment.total > 0;
+  
+  if (!hasPhaseScores && !hasYieldData && !hasInvestData) {
+    return 'フェーズ別クロス分析に必要なデータが不足しています。';
+  }
+  
+  let output = [];
+  
+  // === ヘッダー ===
+  output.push('【フェーズ別クロス分析（躓きポイント特定）】');
+  
+  // === 採用基礎力サマリー（組織診断用）===
+  if (hasMindsetData) {
+    output.push('');
+    output.push(`＜採用基礎力（5軸）＞`);
+    mindsetAxes.forEach(key => {
+      const score = mindsetScores[key];
+      const name = MINDSET_AXES[key].name;
+      if (score !== null && score !== undefined) {
+        const level = score >= 7 ? '高' : score >= 4 ? '中' : '低';
+        output.push(`  ${name}: ${score}/10（${level}）`);
+      }
+    });
+    if (mindsetAvg !== null) {
+      output.push(`  → 全体平均: ${Math.round(mindsetAvg * 10) / 10}/10（${isMindsetLow ? '基礎力不足' : '基礎力あり'}）`);
+    }
+  }
+  
+  // === 各フェーズのクロス分析 ===
+  const phases = [
+    { key: 'surface', name: '表層部（認知→興味）' },
+    { key: 'middle',  name: '中層部（興味→内々定）' },
+    { key: 'deep',    name: '深層部（内々定→承諾）' }
+  ];
+  
+  output.push('');
+  output.push('＜フェーズ別クロス分析＞');
+  output.push('             魅力伝達力  投資配分  歩留まり乖離  判定');
+  
+  let criticalFindings = [];
+  
+  phases.forEach(phase => {
+    const attractScore = phaseScores[phase.key]?.score ?? 0;
+    const investPct = phaseInvestment[phase.key] ?? 0;
+    const yieldGap = yieldGaps[phase.key];
+    const yieldGapForJudge = yieldGap !== null ? yieldGap : 0;
+    
+    // 3次元パターン判定
+    const pattern = classifyPhasePattern3D(attractScore, investPct, yieldGapForJudge);
+    
+    // 歩留まり表示
+    const yieldText = yieldGap !== null
+      ? (yieldGap >= 0 ? `業界平均+${Math.round(yieldGap)}%` : `業界平均${Math.round(yieldGap)}%`)
+      : 'データ無し';
+    
+    output.push(`  ${phase.name}: ${attractScore}%  ${investPct}%  ${yieldText}  → ${pattern.icon}${pattern.id}${pattern.name}`);
+    
+    // パターン別の示唆
+    const suggestion = PATTERN_SUGGESTIONS_3D[pattern.id];
+    output.push(`    └ ${suggestion}`);
+    
+    // 組織診断：基礎力が低い場合、主犯の特定
+    if (hasMindsetData && yieldGap !== null && yieldGap < -10) {
+      const culprits = identifyMindsetCulprit(phase.key, mindsetScores, pattern);
+      if (culprits && culprits.length > 0) {
+        culprits.forEach(c => {
+          const specificSuggestion = MINDSET_PATTERN_SUGGESTIONS[c.key]?.[phase.key] || '';
+          const severityMark = c.severity === 'critical' ? '🚨' : '⚠';
+          output.push(`    └ ${severityMark} 主犯: ${c.name}（${c.score}/10）→ ${specificSuggestion}`);
+          
+          if (c.severity === 'critical') {
+            criticalFindings.push({
+              phase: phase.name,
+              pattern,
+              culprit: c,
+              suggestion: specificSuggestion
+            });
+          }
+        });
+      }
+    }
+  });
+  
+  // === 最重要課題のサマリー ===
+  if (criticalFindings.length > 0) {
+    output.push('');
+    output.push('＜最重要課題＞');
+    criticalFindings.forEach((f, i) => {
+      output.push(`${i + 1}. ${f.phase}が${f.pattern.icon}${f.pattern.name}：主犯は「${f.culprit.name}」（${f.culprit.score}/10）`);
+      output.push(`   → ${f.suggestion}`);
+    });
+  }
+  
+  // === パターン②（構造的問題）の特別警告 ===
+  phases.forEach(phase => {
+    const attractScore = phaseScores[phase.key]?.score ?? 0;
+    const investPct = phaseInvestment[phase.key] ?? 0;
+    const yieldGap = yieldGaps[phase.key];
+    if (yieldGap !== null && yieldGap < -10 && attractScore > 50 && investPct > 30) {
+      output.push('');
+      output.push(`⚠ 重要警告: ${phase.name}は「自己評価も投資も十分なのに結果が出ていない」最重要パターン`);
+      output.push(`  投資を増やしても改善しない。伝え方の質・ターゲットとのフィット・選考体験の根本見直しが必要。`);
+    }
+  });
+  
+  return output.join('\n');
+};
+
+// ========================================
 // リソース効率判定ロジック
 // ========================================
 
@@ -6189,131 +6505,106 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
     { label: '承諾', actual: safeAcceptance, target: targetAcceptance }
   ];
   
-  // 最大値は各行ごとに実績vs目標で比較（グローバルスケール廃止）
+  // 最大値を統一（実績と目標の大きい方を基準）
+  const globalMax = Math.max(safeAwareness, targetAwareness);
   
   return (
     <div className="flex gap-3">
       {/* 左側：棒グラフ */}
       <div className="flex-1">
-        {/* ヘッダー（X軸目盛りの代わりに説明） */}
-        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '50px' }}>
+        {/* X軸目盛り */}
+        <div className="flex items-center mb-2 ml-12">
           <div className="flex-1 flex justify-between text-[10px] text-gray-400">
-            <span>0%</span>
-            <span>各段ごとの達成度</span>
-            <span>100%</span>
+            <span>0</span>
+            <span>{Math.round(globalMax / 2)}</span>
+            <span>{globalMax}</span>
           </div>
         </div>
         
         {/* 棒グラフ */}
         <div className="space-y-2">
           {barData.map((item, idx) => {
-            // 各行ごとにスケール決定（実績と目標の大きい方が100%）
-            const rowMax = Math.max(item.actual, item.target, 1);
-            const actualWidth = (item.actual / rowMax) * 100 * animationProgress;
-            const targetWidth = (item.target / rowMax) * 100 * animationProgress;
-            // 達成率（目標に対する実績の割合）
-            const achievementRate = item.target > 0 ? Math.round((item.actual / item.target) * 100) : 0;
-            const isOverAchieved = achievementRate >= 100;
+            const actualWidth = (item.actual / globalMax) * 100 * animationProgress;
+            const targetWidth = (item.target / globalMax) * 100 * animationProgress;
+            // 数字がバーに被るかどうか（70%以上なら被る）
+            const actualTextOverlap = actualWidth > 70;
+            const targetTextOverlap = targetWidth > 70;
             
             return (
               <div key={item.label} className="flex items-start gap-2">
                 <div className="w-10 text-right text-xs text-gray-600 font-medium pt-1">{item.label}</div>
                 <div className="flex-1 space-y-0.5">
                   {/* 実績値（上段）- カラーバー */}
-                  <div className="flex items-center gap-1">
+                  <div 
+                    style={{ 
+                      height: '18px', 
+                      lineHeight: '18px', 
+                      position: 'relative', 
+                      backgroundColor: barBgColors[idx], 
+                      borderRadius: '4px', 
+                      overflow: 'hidden',
+                      textAlign: 'right',
+                      paddingRight: '6px'
+                    }}
+                  >
                     <div 
                       style={{ 
-                        height: '18px', 
-                        position: 'relative', 
-                        backgroundColor: barBgColors[idx], 
-                        borderRadius: '4px', 
-                        overflow: 'hidden',
-                        flex: 1
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        width: `${actualWidth}%`,
+                        height: '100%',
+                        backgroundColor: barColors[idx],
+                        borderRadius: '4px'
                       }}
-                    >
-                      <div 
-                        style={{ 
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          width: `${actualWidth}%`,
-                          height: '100%',
-                          backgroundColor: barColors[idx],
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
+                    />
                     <span 
                       style={{ 
+                        position: 'relative', 
+                        zIndex: 1, 
                         fontSize: '10px', 
-                        fontWeight: 600,
-                        color: '#6b7280',
-                        minWidth: '30px',
-                        textAlign: 'right',
-                        flexShrink: 0
+                        fontWeight: 500,
+                        color: actualTextOverlap ? '#ffffff' : '#6b7280' 
                       }}
                     >
                       {Math.round(item.actual * animationProgress)}
                     </span>
                   </div>
-                  {/* 目標目安（下段）- グレーの棒グラフ */}
-                  <div className="flex items-center gap-1">
+                  {/* 目標目安（下段）- グレーの棒グラフ（上段の半分の太さ） */}
+                  <div 
+                    style={{ 
+                      height: '9px', 
+                      lineHeight: '9px', 
+                      position: 'relative', 
+                      backgroundColor: '#f3f4f6', 
+                      borderRadius: '4px', 
+                      overflow: 'hidden',
+                      textAlign: 'right',
+                      paddingRight: '6px'
+                    }}
+                  >
                     <div 
                       style={{ 
-                        height: '9px', 
-                        position: 'relative', 
-                        backgroundColor: '#f3f4f6', 
-                        borderRadius: '4px', 
-                        overflow: 'hidden',
-                        flex: 1
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        width: `${targetWidth}%`,
+                        height: '100%',
+                        backgroundColor: '#9ca3af',
+                        borderRadius: '4px'
                       }}
-                    >
-                      <div 
-                        style={{ 
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          width: `${targetWidth}%`,
-                          height: '100%',
-                          backgroundColor: '#9ca3af',
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
+                    />
                     <span 
                       style={{ 
+                        position: 'relative', 
+                        zIndex: 1, 
                         fontSize: '9px',
-                        color: '#9ca3af',
-                        minWidth: '30px',
-                        textAlign: 'right',
-                        flexShrink: 0
+                        color: targetTextOverlap ? '#d1d5db' : '#9ca3af' 
                       }}
                     >
                       {Math.round(item.target * animationProgress)}
                     </span>
                   </div>
-                </div>
-                {/* 達成率表示 */}
-                <div 
-                  style={{ 
-                    minWidth: '38px',
-                    textAlign: 'center',
-                    paddingTop: '2px',
-                    flexShrink: 0
-                  }}
-                >
-                  <span 
-                    style={{ 
-                      fontSize: '10px', 
-                      fontWeight: 700,
-                      color: isOverAchieved ? '#16a34a' : '#dc2626',
-                      backgroundColor: isOverAchieved ? '#f0fdf4' : '#fef2f2',
-                      padding: '1px 4px',
-                      borderRadius: '3px'
-                    }}
-                  >
-                    {achievementRate}%
-                  </span>
                 </div>
               </div>
             );
@@ -10230,14 +10521,12 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
                 {!hasRequiredAnswers ? (
-                  <div className="mb-2">
-                    <div className="bg-gray-100 rounded-lg px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-400 text-sm">⚠</span>
-                        <span className="text-xs text-gray-500">{missingInputTabs.join('・')}が未入力です</span>
-                      </div>
-                      <div className="text-xs text-gray-400 mt-0.5 ml-6">「採用担当者問診」・「上層部問診」を入力するとランクが表示されます</div>
-                    </div>
+                  <div className="flex flex-col items-center justify-center py-6 text-center">
+                    <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-sm font-medium text-gray-500 mb-1">{missingInputTabs.join('・')}が未入力です</p>
+                    <p className="text-xs text-gray-400">すべての問診を入力すると<br />ランクが表示されます</p>
                   </div>
                 ) : (
                 <div className="mb-2">
@@ -16897,16 +17186,9 @@ const App = () => {
             <InputForm 
               data={currentData} 
               onChange={setCurrentData}
-              onStartDiagnosis={async () => {
-                // 自動保存してから診断開始（保存失敗でも診断は続行）
-                try {
-                  window.AUTH._suppressExpiredRedirect = true;
-                  await handleSave(true);
-                } catch (e) {
-                  console.warn('[診断開始] サイレント保存失敗（診断は続行）:', e.message);
-                } finally {
-                  window.AUTH._suppressExpiredRedirect = false;
-                }
+              onStartDiagnosis={() => {
+                // 自動保存してから診断開始
+                handleSave(true);
                 setShowAIDiagnosis(true);
               }}
               onImportPreInput={handleImportPreInput}
