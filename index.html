@@ -310,25 +310,6 @@ body {
   color: #3b82f6;
 }
 
-/* v44: アクティブ状態（担当診断/組織診断の選択表示） */
-.side-banner-btn.active-mode {
-  background: #3b82f6;
-  color: white;
-  transform: translateX(-4px);
-  box-shadow: -4px 4px 16px rgba(59, 130, 246, 0.3);
-}
-.side-banner-btn.active-mode-org {
-  background: #7c3aed;
-  color: white;
-  border-color: #7c3aed;
-  transform: translateX(-4px);
-  box-shadow: -4px 4px 16px rgba(124, 58, 237, 0.3);
-}
-.side-banner-btn.active-mode-org:hover {
-  background: #6d28d9;
-  box-shadow: -6px 6px 24px rgba(124, 58, 237, 0.4);
-}
-
 /* Pro診断ボタン - プレミアムスタイル */
 .side-banner-btn.pro-btn {
   background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 50%, #1e40af 100%);
@@ -17019,7 +17000,7 @@ const App = () => {
           {(aiSettings.sideButtons || DEFAULT_SIDE_BUTTONS).map((btn) => (
             <button
               key={btn.id}
-              className={`side-banner-btn ${btn.id === 'btn4' ? 'pro-btn' : ''} ${btn.id === 'btn2' && adviceMode === 'staff' ? 'active-mode' : ''} ${btn.id === 'btn3' && adviceMode === 'org' ? 'active-mode-org' : ''}`}
+              className={`side-banner-btn ${btn.id === 'btn4' ? 'pro-btn' : ''}`}
               onClick={() => handleSideButtonClick(btn.id)}
               disabled={isGeneratingAI}
             >
