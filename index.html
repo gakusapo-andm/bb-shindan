@@ -310,6 +310,25 @@ body {
   color: #3b82f6;
 }
 
+/* v44: アクティブ状態（担当診断/組織診断の選択表示） */
+.side-banner-btn.active-mode {
+  background: #3b82f6;
+  color: white;
+  transform: translateX(-4px);
+  box-shadow: -4px 4px 16px rgba(59, 130, 246, 0.3);
+}
+.side-banner-btn.active-mode-org {
+  background: #7c3aed;
+  color: white;
+  border-color: #7c3aed;
+  transform: translateX(-4px);
+  box-shadow: -4px 4px 16px rgba(124, 58, 237, 0.3);
+}
+.side-banner-btn.active-mode-org:hover {
+  background: #6d28d9;
+  box-shadow: -6px 6px 24px rgba(124, 58, 237, 0.4);
+}
+
 /* Pro診断ボタン - プレミアムスタイル */
 .side-banner-btn.pro-btn {
   background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 50%, #1e40af 100%);
@@ -10528,35 +10547,8 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
       {/* 改善アドバイスタブ */}
       {activeTab === 'advice' && (
         <>
-          <div className="flex gap-4 items-stretch">
-            {/* サイドボタン */}
-            <div className="flex flex-col gap-2 pt-2" style={{ minWidth: '36px' }}>
-              <button
-                onClick={() => setAdviceMode('staff')}
-                className={`py-4 px-1 rounded-lg text-xs font-bold transition-all ${
-                  adviceMode === 'staff'
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                }`}
-                style={{ writingMode: 'vertical-rl', letterSpacing: '0.15em' }}
-              >
-                担当診断
-              </button>
-              <button
-                onClick={() => setAdviceMode('org')}
-                className={`py-4 px-1 rounded-lg text-xs font-bold transition-all ${
-                  adviceMode === 'org'
-                    ? 'bg-purple-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                }`}
-                style={{ writingMode: 'vertical-rl', letterSpacing: '0.15em' }}
-              >
-                組織診断
-              </button>
-            </div>
-            
-            {/* メインコンテンツ */}
-            <div className="flex-1 grid grid-cols-12 gap-4 items-stretch">
+          {/* v44: サイドボタンを削除し、side-banner-btnに統合 */}
+          <div className="grid grid-cols-12 gap-4 items-stretch">
               {/* 左カラム */}
               <div className="col-span-5 flex flex-col gap-4">
                 <div className="section-card p-5 flex flex-col" style={{ minHeight: '650px' }}>
@@ -10681,7 +10673,6 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                 </div>
               </div>
             </div>
-          </div>
         </>
       )}
       
@@ -16126,6 +16117,14 @@ const App = () => {
         setReDiagnosisAdditionalInfo('');
         setShowReDiagnosisModal(true);
       }
+    } else if (buttonId === 'btn2') {
+      // v44: 担当診断 → adviceMode切替 + AI生成
+      setAdviceMode('staff');
+      handleGenerateAIWithButton(buttonId);
+    } else if (buttonId === 'btn3') {
+      // v44: 組織診断 → adviceMode切替 + AI生成
+      setAdviceMode('org');
+      handleGenerateAIWithButton(buttonId);
     } else if (buttonId === 'btn4') {
       // Pro診断ボタンの場合 - 決済確認モーダルを表示
       setProPaymentCode('');
@@ -17018,7 +17017,7 @@ const App = () => {
           {(aiSettings.sideButtons || DEFAULT_SIDE_BUTTONS).map((btn) => (
             <button
               key={btn.id}
-              className={`side-banner-btn ${btn.id === 'btn4' ? 'pro-btn' : ''}`}
+              className={`side-banner-btn ${btn.id === 'btn4' ? 'pro-btn' : ''} ${btn.id === 'btn2' && adviceMode === 'staff' ? 'active-mode' : ''} ${btn.id === 'btn3' && adviceMode === 'org' ? 'active-mode-org' : ''}`}
               onClick={() => handleSideButtonClick(btn.id)}
               disabled={isGeneratingAI}
             >
