@@ -10,6 +10,7 @@
   
   <!-- ============================================================ -->
   <!-- v44: setTimeout(1000)をmaster-data-loadedイベント駆動に変更, loadQuestionMasterにリトライ機能追加 -->
+  <!-- v45: 空の問診マスタースナップショット保存防止, 企業規模フォールバック追加, getEffectiveQuestionMaster改善 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -1700,11 +1701,17 @@ const getQuestionMasterFromStorage = () => {
 const getEffectiveQuestionMaster = (data) => {
   if (data && data.savedQuestionMaster && typeof data.savedQuestionMaster === 'object') {
     const saved = data.savedQuestionMaster;
-    // 最低限の構造チェック（baseキーが存在するか）
+    // v45-fix: base構造の存在だけでなく、実際に質問が存在するかチェック
+    // DEFAULT_QUESTION_MASTERが誤って保存された場合（空配列のみ）をスキップする
     if (saved.base) {
-      // recruitmentMethodがない古いスナップショットへの互換対応
-      if (!saved.recruitmentMethod) saved.recruitmentMethod = {};
-      return saved;
+      const hasAnyQuestions = Object.values(saved.base).some(sizeObj =>
+        sizeObj && typeof sizeObj === 'object' && Object.values(sizeObj).some(arr => Array.isArray(arr) && arr.length > 0)
+      );
+      if (hasAnyQuestions) {
+        // recruitmentMethodがない古いスナップショットへの互換対応
+        if (!saved.recruitmentMethod) saved.recruitmentMethod = {};
+        return saved;
+      }
     }
   }
   return getQuestionMasterFromStorage();
@@ -4640,8 +4647,21 @@ const calcScoresFromAnswers = (data) => {
   
   // 全質問を収集（depth質問・採用手法別質問含む）
   const getAllQuestions = (roleKey) => {
-    const baseQuestions = master.base?.[sizeCategory]?.[roleKey] || [];
-    const industryQuestions = master.industry?.[data.industry]?.[sizeCategory]?.[roleKey] || [];
+    // v45-fix: 指定規模に質問がない場合は他の規模にフォールバック
+    let baseQuestions = master.base?.[sizeCategory]?.[roleKey] || [];
+    if (baseQuestions.length === 0) {
+      for (const fbSize of ['small', 'medium', 'large'].filter(s => s !== sizeCategory)) {
+        baseQuestions = master.base?.[fbSize]?.[roleKey] || [];
+        if (baseQuestions.length > 0) break;
+      }
+    }
+    let industryQuestions = master.industry?.[data.industry]?.[sizeCategory]?.[roleKey] || [];
+    if (industryQuestions.length === 0 && data.industry) {
+      for (const fbSize of ['small', 'medium', 'large'].filter(s => s !== sizeCategory)) {
+        industryQuestions = master.industry?.[data.industry]?.[fbSize]?.[roleKey] || [];
+        if (industryQuestions.length > 0) break;
+      }
+    }
     const targetLayers = Object.keys(data.targetLayers || {}).filter(k => data.targetLayers[k]?.enabled);
     const targetQuestions = targetLayers.flatMap(layer => master.targetLayer?.[layer]?.[roleKey] || []);
     // 注力タイプ質問を追加
@@ -5014,15 +5034,31 @@ const calcGapCoefficient = (data) => {
   // 学生問診と同じロジックで質問を収集（担当者・上層部の両方から取得）
   const sourceRoles = ['staff', 'executive'];
   
-  // ベース質問を取得
-  const baseQuestions = sourceRoles.flatMap(role => 
+  // ベース質問を取得（v45-fix: 規模フォールバック付き）
+  let baseQuestions = sourceRoles.flatMap(role => 
     (master.base?.[sizeCategory]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
   );
+  if (baseQuestions.length === 0) {
+    for (const fbSize of ['small', 'medium', 'large'].filter(s => s !== sizeCategory)) {
+      baseQuestions = sourceRoles.flatMap(role => 
+        (master.base?.[fbSize]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
+      );
+      if (baseQuestions.length > 0) break;
+    }
+  }
   
   // 業種別質問を取得
-  const industryQuestions = sourceRoles.flatMap(role =>
+  let industryQuestions = sourceRoles.flatMap(role =>
     (master.industry?.[data.industry]?.[sizeCategory]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
   );
+  if (industryQuestions.length === 0 && data.industry) {
+    for (const fbSize of ['small', 'medium', 'large'].filter(s => s !== sizeCategory)) {
+      industryQuestions = sourceRoles.flatMap(role =>
+        (master.industry?.[data.industry]?.[fbSize]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
+      );
+      if (industryQuestions.length > 0) break;
+    }
+  }
   
   // ターゲット層別質問を取得
   const targetLayers = Object.keys(data.targetLayers || {}).filter(k => data.targetLayers[k]?.enabled);
@@ -6746,8 +6782,14 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
       if (Object.keys(answers).length > 0) {
         summary.push(`【${roleName}の回答】`);
         
-        // ベース質問
-        const baseQuestions = master.base?.[sizeCategory]?.[roleKey] || [];
+        // ベース質問（v45-fix: 規模フォールバック付き）
+        let baseQuestions = master.base?.[sizeCategory]?.[roleKey] || [];
+        if (baseQuestions.length === 0) {
+          for (const fbSize of ['small', 'medium', 'large'].filter(s => s !== sizeCategory)) {
+            baseQuestions = master.base?.[fbSize]?.[roleKey] || [];
+            if (baseQuestions.length > 0) break;
+          }
+        }
         baseQuestions.forEach(q => {
           if (answers[q.id]) {
             const isCorrect = answers[q.id] === q.correctAnswer;
@@ -6756,8 +6798,14 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
           }
         });
         
-        // 業種別質問
-        const industryQuestions = master.industry?.[data.industry]?.[sizeCategory]?.[roleKey] || [];
+        // 業種別質問（v45-fix: 規模フォールバック付き）
+        let industryQuestions = master.industry?.[data.industry]?.[sizeCategory]?.[roleKey] || [];
+        if (industryQuestions.length === 0 && data.industry) {
+          for (const fbSize of ['small', 'medium', 'large'].filter(s => s !== sizeCategory)) {
+            industryQuestions = master.industry?.[data.industry]?.[fbSize]?.[roleKey] || [];
+            if (industryQuestions.length > 0) break;
+          }
+        }
         industryQuestions.forEach(q => {
           if (answers[q.id]) {
             const isCorrect = answers[q.id] === q.correctAnswer;
@@ -8454,15 +8502,33 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             // 学生問診の場合は、担当者・上層部の質問からギャップチェック対象を取得
             const sourceRoles = roleKey === 'student' ? ['staff', 'executive'] : [roleKey];
             
-            // ベース質問を取得
-            const baseQuestions = sourceRoles.flatMap(role => 
+            // ベース質問を取得（v45-fix: 指定規模に質問がない場合は他の規模にフォールバック）
+            let baseQuestions = sourceRoles.flatMap(role => 
               (master.base?.[sizeCategory]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
             );
+            if (baseQuestions.length === 0) {
+              // 事前問診と同様: 他の規模を順に試す
+              const fallbackSizes = ['small', 'medium', 'large'].filter(s => s !== sizeCategory);
+              for (const fbSize of fallbackSizes) {
+                baseQuestions = sourceRoles.flatMap(role => 
+                  (master.base?.[fbSize]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
+                );
+                if (baseQuestions.length > 0) break;
+              }
+            }
             
-            // 業種別質問を取得
-            const industryQuestions = sourceRoles.flatMap(role =>
+            // 業種別質問を取得（v45-fix: 規模フォールバック付き）
+            let industryQuestions = sourceRoles.flatMap(role =>
               (master.industry?.[data.industry]?.[sizeCategory]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
             );
+            if (industryQuestions.length === 0 && data.industry) {
+              for (const fbSize of ['small', 'medium', 'large'].filter(s => s !== sizeCategory)) {
+                industryQuestions = sourceRoles.flatMap(role =>
+                  (master.industry?.[data.industry]?.[fbSize]?.[role] || []).map(q => ({ ...q, sourceRole: role }))
+                );
+                if (industryQuestions.length > 0) break;
+              }
+            }
             
             // ターゲット層別質問を取得
             const targetLayers = Object.keys(data.targetLayers || {}).filter(k => data.targetLayers[k]?.enabled);
@@ -15646,7 +15712,15 @@ const App = () => {
         id: currentData.id || currentData.inquiryNo || `cust_${Date.now()}`,
         updatedAt: new Date().toISOString(),
         aiResult: currentData.aiResult || (aiAdvice ? JSON.stringify(aiAdvice) : ''),
-        savedQuestionMaster: currentData.savedQuestionMaster || getQuestionMasterFromStorage()
+        savedQuestionMaster: (() => {
+          // v45-fix: 空のDEFAULT_QUESTION_MASTERを保存しない（問診マスター未読込時のガード）
+          const qm = currentData.savedQuestionMaster || getQuestionMasterFromStorage();
+          if (!qm || !qm.base) return null;
+          const hasAnyQuestions = Object.values(qm.base).some(sizeObj =>
+            sizeObj && typeof sizeObj === 'object' && Object.values(sizeObj).some(arr => Array.isArray(arr) && arr.length > 0)
+          );
+          return hasAnyQuestions ? qm : null;
+        })()
       };
       // 担当者IDはフロントエンドから送信しない（引き継ぎで変更された値をサーバー側で保持するため）
       delete toSave.assigneeId;
@@ -15902,7 +15976,13 @@ const App = () => {
             ...mergedData,
             id: mergedData.id || mergedData.inquiryNo || `cust_${Date.now()}`,
             updatedAt: new Date().toISOString(),
-            savedQuestionMaster: mergedData.savedQuestionMaster || getQuestionMasterFromStorage()
+            savedQuestionMaster: (() => {
+              // v45-fix: 空のDEFAULT_QUESTION_MASTERを保存しない
+              const qm = mergedData.savedQuestionMaster || getQuestionMasterFromStorage();
+              if (!qm || !qm.base) return null;
+              const hasQ = Object.values(qm.base).some(s => s && typeof s === 'object' && Object.values(s).some(a => Array.isArray(a) && a.length > 0));
+              return hasQ ? qm : null;
+            })()
           };
           delete saveData.assigneeId;
           delete saveData['担当者ID'];
