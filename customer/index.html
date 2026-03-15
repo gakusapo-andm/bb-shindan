@@ -62,13 +62,50 @@ button:not(:disabled):active {
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 <script>
+// ============================================================
+// 採用ブラックボックス診断® 事前問診フォーム
+// ファイル: customer/index.html（GitHub Pages配置）
+// ============================================================
+//
+// 【設計思想】
+// このフォームは「顧客企業の採用担当者・上層部」が BB診断の打ち合わせ前に入力する。
+// BB診断本体（Index-v51.html）からURLを発行し、顧客にメール等で送付する。
+// 入力データはBB診断の「事前データ取込」で吸い上げ、診断のベースデータになる。
+//
+// 【データフロー】
+// BB診断でURL発行 → 顧客がこのフォームで入力 → pre_inputs テーブルに保存
+// → BB診断で「事前データ取込」→ BB側のcurrentDataにマージ
+//
+// 【URL設計】
+// 担当者用: ?id={inquiry_no}&tk={token}&size={small|medium|large}
+// 上層部用: ?id={inquiry_no}&tk={token}&size={...}&role=exec
+// トークン: hash(id + 'gksp2026') → base36 8文字。BB診断のgeneratePreInputToken()と同一。
+// size: BB診断のgetCompanySizeCategory()と同一スケール (small≤100, medium=101-300, large=301+)
+//
+// 【担当者 vs 上層部の分離設計】
+// 同じpre_inputsレコードを共有する（customer_id=inquiry_noで1:1）。
+// 担当者は全ステップ入力、上層部は問診のみ。
+// read-merge-write（fix#7）で互いのデータを壊さずに保存する。
+// 上層部がexecutiveAnswers/executiveCompletedだけ書き、担当者のデータはDB最新値を維持。
+//
+// 【認証モデル】
+// Supabase anon key + RLSポリシー（pre_inputs_anon_select/insert/update）。
+// URLトークンはアプリ層バリデーション。DBレベルの認証はなし（顧客はログイン不要）。
+//
+// 【保存方式】
+// upsert ON CONFLICT customer_id — fix#4(問診完了即保存)とgoNextの同時実行で409を防ぐ。
+// DBカラム status は JSON内の status と同期（fix#2）。
+// '未開始'→'入力済み'→'完了' / '上層部完了'
+//
+// ============================================================
 // v2: Supabase統合DB対応版
 // v2.1: getQuestionMasterPublic/getRecruitmentMethodsPublic にフラット→ネスト変換追加（v50 SUPA_HANDLERS同等）
 // v3: URLトークン認証(?tk=), 企業規模URL指定(?size=), 担当者/上層部URL分離(?role=exec), 課題・挑戦ステップ追加
-// v3.1: バグ修正4件 + 運用改善5件
+// v3.1: バグ修正4件 + 運用改善5件 + hotfix(upsert, UNIQUE CONSTRAINT, 選考ステップ数, 課題マッピング)
 //   fix#1: リトライ時loading復元, fix#2: DB status同期, fix#3: 最終ステップ二重保存防止,
 //   fix#4: 問診完了即DB保存, fix#5: exec size未指定ガード, fix#6: ターゲット比率100%バリデーション,
 //   fix#7: 同時編集read-merge-write, fix#8: beforeunload警告, fix#9: phaseLabelsフォールバック明示
+//   hotfix: upsert化(409解消), customer_id UNIQUE CONSTRAINT, 選考ステップ数セレクター追加
 (function() {
   const params = new URLSearchParams(window.location.search);
   window.SUPABASE_CONFIG = {
@@ -274,6 +311,13 @@ const FUNNEL_PHASES = [
 ];
 
 // v3: ステップ定義（role/sizeに応じて動的生成）
+// 【設計意図】
+// 担当者と上層部で完全に異なるフローを提供する。
+// 担当者: 企業規模→職種→ターゲット→手法→課題→問診→ファネル の7ステップ（size指定済みなら6）
+// 上層部: 問診のみ1ステップ（担当者が入力した前提データは共有、上層部自身の回答のみ収集）
+// この分離により:
+//  - 上層部の負担を最小化（10-15分で完了）
+//  - 担当者と上層部の回答を独立収集 → BB診断で「認識ギャップ」を可視化
 const STEP_DEFS = {
   companySize: { id: 'companySize', label: '企業規模', icon: 'building' },
   jobType: { id: 'jobType', label: '採用職種', icon: 'briefcase' },
@@ -305,6 +349,13 @@ const STEPS = buildSteps('staff', false);
 // ========================================
 // API通信（v2: Supabase直接クエリ）
 // ========================================
+// 【設計意図】
+// 事前問診はBB診断のSupabase anonKeyを共有して直接クエリする。
+// GASを経由しない。これにより:
+//  - 顧客がログイン不要（anon RLSポリシーで制御）
+//  - BB診断と同じDBを参照するので問診マスター/採用手法マスターが常に最新
+//  - レイテンシが低い（GAS経由のコールドスタート問題を回避）
+// トレードオフ: anonKeyがフロントに露出するが、RLSで書き込み範囲を制限。
 
 // Supabase準備待機ヘルパー
 async function ensureSupabase() {
@@ -436,6 +487,13 @@ const gasPost = async (action, body = {}) => {
     console.log('[API POST] ' + action + ' Supabaseクエリ送信...');
     
     const handlers = {
+      // 【保存戦略】
+      // 1. SELECT で既存データを読む（read-merge-write の read）
+      // 2. ロール別マージ: execはexecutive*のみ上書き、staffはexecutive*以外を上書き（fix#7）
+      // 3. upsert ON CONFLICT customer_id でINSERT/UPDATE競合を解消（hotfix）
+      //    fix#4(問診完了即保存)とgoNext(最終ステップ保存)がほぼ同時に発火するため、
+      //    従来のSELECT→INSERT/UPDATE分岐では409 Conflictが発生していた。
+      // 4. DBカラムstatusをJSON内statusと同期（fix#2）
       saveCustomerPreInput: async () => {
         const customerId = body.id || body.customerId;
         const inputData = body.preInputData || body.inputData || {};
@@ -656,6 +714,13 @@ const StepCompanySize = ({ data, onChange }) => (
 // ========================================
 // v3: Step - 解決したいこと・過去に挑戦してきたこと
 // ========================================
+// 【設計意図】
+// 問診（A/B択一）に入る前に、担当者の「生の声」を自由記述で収集する。
+// 問診はスコアリング用の構造化データだが、この2フィールドは質的データ。
+// BB診断取込時に todayChallenge / pastChallenges にマッピングされ、
+// AI処方箋生成のコンテキストとして使用される。
+// 空欄でも次に進めるが、「ありのままで構いません」の文言で心理的ハードルを下げる。
+// フィールド名: challengeToSolve（BB側: todayChallenge）, pastAttempts（BB側: pastChallenges）
 const StepChallenges = ({ data, onChange }) => (
   <div className="glass-card rounded-2xl p-6 animate-in">
     <h2 className="text-xl font-bold text-gray-800 mb-2">採用課題について</h2>
@@ -981,6 +1046,13 @@ const StepMethod = ({ data, onChange, methodMaster }) => {
 // ========================================
 // Step 4 & 5: 問診（共通）
 // ========================================
+// 【設計意図】
+// 15分タイマー付きのA/B択一問診。直感回答を促す設計。
+// 質問セットは企業規模(size) × ターゲット層 × 採用手法カテゴリで動的に構築される。
+// タイマー終了で自動締切 → fix#4で即DB保存 → ブラウザ閉じても回答が失われない。
+// 「回答できない場合は飛ばしてよい」を明示し、無回答もデータとして扱う（無回答率も診断指標）。
+// 担当者問診と上層部問診は同じコンポーネントを roleKey='staff'/'executive' で切り替え。
+// 両者の回答を照合して「組織内認識ギャップ」をBB診断で可視化するのが最終目的。
 const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSeconds = 900, onQuizActive, onComplete, optional = false, optionalNote = '' }) => {
   const [timerStarted, setTimerStarted] = useState(false);
   const [timeUp, setTimeUp] = useState(false);
@@ -1434,6 +1506,35 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
           />
           <span className="text-gray-600 font-medium">人</span>
         </div>
+      </div>
+      
+      {/* v3.1 hotfix: 選考ステップ数 */}
+      <div className="mb-6 flex items-center gap-3">
+        <label className="text-sm font-bold text-gray-700">選考ステップ数：</label>
+        <select
+          value={yearData.screeningSteps || funnelData.screeningSteps || 1}
+          onChange={e => {
+            const v = parseInt(e.target.value);
+            onChange({
+              ...data,
+              funnelData: {
+                ...funnelData,
+                screeningSteps: v,
+                selectedYear: selectedYear,
+                yearData: {
+                  ...funnelData.yearData,
+                  [selectedYear]: { ...yearData, screeningSteps: v }
+                }
+              }
+            });
+          }}
+          className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+        >
+          {[1,2,3,4,5].map(n => (
+            <option key={n} value={n}>{n}段階</option>
+          ))}
+        </select>
+        <span className="text-xs text-gray-500">（1次面接、2次面接など）</span>
       </div>
       
       {activeChannels.length === 0 ? (
