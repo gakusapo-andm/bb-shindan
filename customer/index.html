@@ -63,6 +63,12 @@ button:not(:disabled):active {
 </style>
 <script>
 // v2: Supabase統合DB対応版
+// v2.1: getQuestionMasterPublic/getRecruitmentMethodsPublic にフラット→ネスト変換追加（v50 SUPA_HANDLERS同等）
+// v3: URLトークン認証(?tk=), 企業規模URL指定(?size=), 担当者/上層部URL分離(?role=exec), 課題・挑戦ステップ追加
+// v3.1: バグ修正4件 + 運用改善5件
+//   fix#1: リトライ時loading復元, fix#2: DB status同期, fix#3: 最終ステップ二重保存防止,
+//   fix#4: 問診完了即DB保存, fix#5: exec size未指定ガード, fix#6: ターゲット比率100%バリデーション,
+//   fix#7: 同時編集read-merge-write, fix#8: beforeunload警告, fix#9: phaseLabelsフォールバック明示
 (function() {
   const params = new URLSearchParams(window.location.search);
   window.SUPABASE_CONFIG = {
@@ -73,7 +79,20 @@ button:not(:disabled):active {
   window.GAS_CONFIG = {
     gasUrl: window.SUPABASE_CONFIG.url,
     customerId: params.get('id') || '',
+    token: params.get('tk') || '',
+    companySize: params.get('size') || '',  // small|medium|large
+    role: params.get('role') || 'staff',    // staff|exec
     deploymentMode: 'standalone'
+  };
+  // v3: URLトークン生成・検証（BB診断側と同じアルゴリズム）
+  window.generatePreInputToken = function(id) {
+    var s = id + 'gksp2026';
+    var h = 0;
+    for (var i = 0; i < s.length; i++) {
+      h = ((h << 5) - h) + s.charCodeAt(i);
+      h = h & h;
+    }
+    return Math.abs(h).toString(36).padStart(8, '0').slice(0, 8);
   };
 })();
 </script>
@@ -83,7 +102,7 @@ button:not(:disabled):active {
     window.SUPABASE_CONFIG.url,
     window.SUPABASE_CONFIG.anonKey
   );
-  console.log('[事前問診 v2] Supabase接続完了');
+  console.log('[事前問診 v3.1] Supabase接続完了');
 </script>
 </head>
 <body>
@@ -254,14 +273,34 @@ const FUNNEL_PHASES = [
   { key: 'acceptance', label: '承諾' }
 ];
 
-const STEPS = [
-  { id: 'jobType', label: '採用職種', icon: 'briefcase', num: 1 },
-  { id: 'target', label: 'ターゲット学生', icon: 'graduationCap', num: 2 },
-  { id: 'method', label: '採用手法', icon: 'signal', num: 3 },
-  { id: 'staff', label: '担当者問診', icon: 'user', num: 4 },
-  { id: 'executive', label: '上層部問診', icon: 'tie', num: 5 },
-  { id: 'funnel', label: 'ファネル数値', icon: 'chartBar', num: 6 }
-];
+// v3: ステップ定義（role/sizeに応じて動的生成）
+const STEP_DEFS = {
+  companySize: { id: 'companySize', label: '企業規模', icon: 'building' },
+  jobType: { id: 'jobType', label: '採用職種', icon: 'briefcase' },
+  target: { id: 'target', label: 'ターゲット学生', icon: 'graduationCap' },
+  method: { id: 'method', label: '採用手法', icon: 'signal' },
+  challenges: { id: 'challenges', label: '課題・挑戦', icon: 'lightBulb' },
+  staff: { id: 'staff', label: '担当者問診', icon: 'user' },
+  executive: { id: 'executive', label: '上層部問診', icon: 'tie' },
+  funnel: { id: 'funnel', label: 'ファネル数値', icon: 'chartBar' },
+};
+
+function buildSteps(role, hasUrlSize) {
+  let steps;
+  if (role === 'exec') {
+    steps = [STEP_DEFS.executive];
+  } else {
+    steps = [];
+    if (!hasUrlSize) steps.push(STEP_DEFS.companySize);
+    steps.push(STEP_DEFS.jobType, STEP_DEFS.target, STEP_DEFS.method);
+    steps.push(STEP_DEFS.challenges);
+    steps.push(STEP_DEFS.staff, STEP_DEFS.funnel);
+  }
+  return steps.map((s, i) => ({ ...s, num: i + 1 }));
+}
+
+// デフォルト値（ProgressBar初期表示用。App内で上書きされる）
+const STEPS = buildSteps('staff', false);
 
 // ========================================
 // API通信（v2: Supabase直接クエリ）
@@ -299,13 +338,80 @@ const gasGet = async (action, params = {}) => {
       getQuestionMasterPublic: async () => {
         const { data, error } = await sb.from('questions').select('*').order('sort_order');
         if (error) throw error;
-        return { success: true, data: data || [] };
+        const rows = data || [];
+        if (rows.length === 0) return { success: true, data: null };
+        // v50同等: フラット行 → ネスト構造に変換
+        const nested = { base: {}, recruitmentMethod: {}, industry: {}, targetLayer: {}, depth: {} };
+        rows.forEach(row => {
+          const qObj = {
+            id: row.question_id || '', question: row.question_text || '',
+            choiceA: row.choice_a || '', choiceB: row.choice_b || '',
+            studentQuestion: row.student_question || '',
+            studentChoiceA: row.student_choice_a || '', studentChoiceB: row.student_choice_b || '',
+            correctAnswer: row.correct_answer || 'A', points: row.points || 2,
+            axisType: row.axis_type || '', axisKey: row.axis_key || '',
+            gapCheck: row.gap_check || false, depthKey: row.depth_phase || null
+          };
+          const section = row.section || 'base';
+          const role = row.role || 'staff';
+          if (section === 'base') {
+            const size = row.company_size || 'small';
+            if (!nested.base[size]) nested.base[size] = {};
+            if (!nested.base[size][role]) nested.base[size][role] = [];
+            nested.base[size][role].push(qObj);
+          } else if (section === 'recruitmentMethod') {
+            const cat = row.method_category || '';
+            if (!nested.recruitmentMethod[cat]) nested.recruitmentMethod[cat] = {};
+            if (!nested.recruitmentMethod[cat][role]) nested.recruitmentMethod[cat][role] = [];
+            nested.recruitmentMethod[cat][role].push(qObj);
+          } else if (section === 'industry') {
+            const ind = row.industry || '';
+            const sz = row.company_size || 'small';
+            if (!nested.industry[ind]) nested.industry[ind] = {};
+            if (!nested.industry[ind][sz]) nested.industry[ind][sz] = {};
+            if (!nested.industry[ind][sz][role]) nested.industry[ind][sz][role] = [];
+            nested.industry[ind][sz][role].push(qObj);
+          } else if (section === 'targetLayer') {
+            const layer = row.target_layer || '';
+            if (!nested.targetLayer[layer]) nested.targetLayer[layer] = {};
+            if (!nested.targetLayer[layer][role]) nested.targetLayer[layer][role] = [];
+            nested.targetLayer[layer][role].push(qObj);
+          } else if (section === 'depth') {
+            const phase = row.depth_phase || '';
+            if (!nested.depth[phase]) nested.depth[phase] = {};
+            if (!nested.depth[phase][role]) nested.depth[phase][role] = [];
+            nested.depth[phase][role].push(qObj);
+          }
+        });
+        return { success: true, data: nested };
       },
       
       getRecruitmentMethodsPublic: async () => {
         const { data, error } = await sb.from('recruitment_methods').select('*');
         if (error) throw error;
-        return { success: true, data: data || [] };
+        const rows = data || [];
+        if (rows.length === 0) return { success: true, data: {} };
+        // v50同等: フラット行 → { key: { name, category, ... } } に変換
+        const nested = {};
+        rows.forEach(row => {
+          const key = row.key || '';
+          if (!key) return;
+          let targetLayers = row.target_layers;
+          if (typeof targetLayers === 'string') {
+            try { targetLayers = JSON.parse(targetLayers); } catch(e) { targetLayers = []; }
+          }
+          nested[key] = {
+            name: row.name || '', category: row.category || '',
+            targetLayers: Array.isArray(targetLayers) ? targetLayers : [],
+            description: row.description || '',
+            phaseMapping: {
+              surface: parseFloat(row.phase_surface) || 0,
+              middle: parseFloat(row.phase_middle) || 0,
+              deep: parseFloat(row.phase_deep) || 0
+            }
+          };
+        });
+        return { success: true, data: nested };
       },
     };
     
@@ -336,18 +442,45 @@ const gasPost = async (action, body = {}) => {
         if (!customerId) return { success: false, error: 'IDがありません' };
         
         const existing = await sb.from('pre_inputs')
-          .select('id')
+          .select('id, input_data')
           .eq('customer_id', customerId)
           .maybeSingle();
         
+        // v3.1 fix#7: read-merge-write で同時編集のデータ喪失を防ぐ
+        let merged = inputData;
+        if (existing.data?.input_data) {
+          const current = existing.data.input_data;
+          const role = window.GAS_CONFIG.role || 'staff';
+          if (role === 'exec') {
+            // 上層部: 自分のキーだけ上書き、担当者のデータは最新DBから維持
+            merged = {
+              ...current,
+              executiveAnswers: inputData.executiveAnswers || {},
+              executiveCompleted: inputData.executiveCompleted || false,
+            };
+          } else {
+            // 担当者: 上層部のデータは最新DBから維持、それ以外を上書き
+            merged = {
+              ...inputData,
+              executiveAnswers: current.executiveAnswers || inputData.executiveAnswers || {},
+              executiveCompleted: current.executiveCompleted || inputData.executiveCompleted || false,
+            };
+          }
+        }
+        
+        // v3.1 fix#2: JSON内のstatusをDBカラムにも同期
+        const dbStatus = merged.status === '完了' ? '完了'
+          : merged.executiveCompleted ? '上層部完了'
+          : '入力済み';
+        
         if (existing.data) {
           const { error } = await sb.from('pre_inputs')
-            .update({ input_data: inputData, status: '入力済み' })
+            .update({ input_data: merged, status: dbStatus })
             .eq('id', existing.data.id);
           if (error) throw error;
         } else {
           const { error } = await sb.from('pre_inputs')
-            .insert({ customer_id: customerId, input_data: inputData, status: '入力済み' });
+            .insert({ customer_id: customerId, input_data: merged, status: dbStatus });
           if (error) throw error;
         }
         return { success: true };
@@ -447,10 +580,10 @@ const CountdownTimer = ({ totalSeconds, onTimeUp, isRunning }) => {
 // ========================================
 // プログレスバー
 // ========================================
-const ProgressBar = ({ currentStep, totalSteps }) => (
+const ProgressBar = ({ currentStep, totalSteps, steps }) => (
   <div className="glass-card rounded-2xl p-4 mb-6">
     <div className="flex items-center justify-between mb-3">
-      {STEPS.map((step, i) => (
+      {(steps || STEPS).map((step, i) => (
         <React.Fragment key={step.id}>
           <div className="flex flex-col items-center">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
@@ -464,13 +597,106 @@ const ProgressBar = ({ currentStep, totalSteps }) => (
               i === currentStep ? 'text-blue-700 font-bold' : 'text-gray-400'
             }`}>{step.label}</span>
           </div>
-          {i < STEPS.length - 1 && (
+          {i < (steps || STEPS).length - 1 && (
             <div className={`flex-1 h-0.5 mx-1 rounded ${
               i < currentStep ? 'bg-green-400' : 'bg-gray-200'
             }`} />
           )}
         </React.Fragment>
       ))}
+    </div>
+  </div>
+);
+
+// ========================================
+// Step 1: 採用職種選定
+// ========================================
+// ========================================
+// v3: Step - 企業規模選択（URLにsize未指定時のみ表示）
+// ========================================
+// v3.1 BugA fix: BB診断のgetCompanySizeCategory()と同じ3段階に統一
+const COMPANY_SIZES = [
+  { key: 'small', label: '100名以下', desc: 'スタートアップ・小規模〜中小企業', icon: '🏠' },
+  { key: 'medium', label: '101〜300名', desc: '中堅企業', icon: '🏢' },
+  { key: 'large', label: '301名以上', desc: '大企業', icon: '🏙️' },
+];
+
+const StepCompanySize = ({ data, onChange }) => (
+  <div className="glass-card rounded-2xl p-6 animate-in">
+    <h2 className="text-xl font-bold text-gray-800 mb-2">貴社の従業員規模を選択してください</h2>
+    <p className="text-sm text-gray-500 mb-6">規模に応じた問診内容を出し分けます</p>
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {COMPANY_SIZES.map(size => {
+        const selected = data.companySize === size.key;
+        return (
+          <button key={size.key}
+            onClick={() => onChange({ ...data, companySize: size.key })}
+            className={`flex flex-col items-center gap-2 p-6 rounded-xl border-2 transition-all ${
+              selected ? 'border-blue-500 bg-blue-50 shadow-md' : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+            }`}>
+            <span className="text-3xl">{size.icon}</span>
+            <span className={`font-bold text-base ${selected ? 'text-blue-800' : 'text-gray-700'}`}>{size.label}</span>
+            <span className="text-xs text-gray-500">{size.desc}</span>
+            {selected && (
+              <svg className="w-6 h-6 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  </div>
+);
+
+// ========================================
+// v3: Step - 解決したいこと・過去に挑戦してきたこと
+// ========================================
+const StepChallenges = ({ data, onChange }) => (
+  <div className="glass-card rounded-2xl p-6 animate-in">
+    <h2 className="text-xl font-bold text-gray-800 mb-2">採用課題について</h2>
+    <p className="text-sm text-gray-500 mb-6">問診前にお聞かせください。ありのままで構いません。</p>
+    
+    <div className="mb-6">
+      <label className="block text-sm font-bold text-gray-700 mb-2">
+        <span className="flex items-center gap-2">
+          <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          今、一番解決したい採用課題は何ですか？
+        </span>
+      </label>
+      <textarea
+        value={data.challengeToSolve || ''}
+        onChange={e => onChange({ ...data, challengeToSolve: e.target.value })}
+        rows={4}
+        placeholder="例：内定辞退が多い、母集団が集まらない、採用コストが高い、欲しい人材像が定まっていない…"
+        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+      />
+    </div>
+    
+    <div>
+      <label className="block text-sm font-bold text-gray-700 mb-2">
+        <span className="flex items-center gap-2">
+          <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          過去にどんな取り組みを試されましたか？
+        </span>
+      </label>
+      <textarea
+        value={data.pastAttempts || ''}
+        onChange={e => onChange({ ...data, pastAttempts: e.target.value })}
+        rows={4}
+        placeholder="例：ナビサイトを増やした、インターンを始めた、リクルーター制度を導入した、特に何もしていない…"
+        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+      />
+    </div>
+    
+    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+      <p className="text-xs text-blue-700">
+        空欄でも次に進めます。お打ち合わせ当日、この内容をもとに深掘りヒアリングいたします。
+      </p>
     </div>
   </div>
 );
@@ -763,6 +989,14 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
   const answers = data[answersKey] || {};
   const answeredCount = Object.keys(answers).filter(k => answers[k]).length;
   
+  // v3.1 fix#8: 問診中のブラウザ閉じ・リロード防止
+  useEffect(() => {
+    if (!timerStarted || timeUp || quizFinished) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [timerStarted, timeUp, quizFinished]);
+  
   // 完了判定: フラグ + 実際に回答がある場合のみ「回答済み」とする
   const isAlreadyCompleted = data[completedKey] === true && answeredCount > 0;
   
@@ -772,6 +1006,11 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
     setConfirming(true);
     const newData = { ...data, [completedKey]: true };
     onChange(newData);
+    // v3.1 fix#4: 問診完了時に即座にDB保存（ブラウザ閉じ対策）
+    (async () => {
+      try { await API.savePreInput(newData); }
+      catch(e) { console.error('[問診完了保存エラー]', e); }
+    })();
     if (onQuizActive) onQuizActive(false);
     if (onComplete) onComplete(newData);
   }, [timeUp, quizFinished]);
@@ -1068,11 +1307,11 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
   ];
   
   const getPlaceholder = (phaseKey, channelKey) => {
-    // 1. GASマスターのphaseLabels
+    // 1. DBマスターのphaseLabels（v3.1 note#9: recruitment_methodsテーブルにphaseLabels列追加で解消予定）
     if (methods[channelKey]?.phaseLabels?.[phaseKey]) return methods[channelKey].phaseLabels[phaseKey];
-    // 2. ローカルDEFAULTのphaseLabels（GASに新列がない場合のフォールバック）
+    // 2. ローカルDEFAULTのphaseLabels（DB未対応手法のフォールバック）
     if (DEFAULT_RECRUITMENT_METHODS[channelKey]?.phaseLabels?.[phaseKey]) return DEFAULT_RECRUITMENT_METHODS[channelKey].phaseLabels[phaseKey];
-    // 3. 最終フォールバック
+    // 3. 最終フォールバック（DBに新規追加手法でDEFAULTにもない場合）
     const FALLBACK = { awareness: '認知数', interest: '興味数', contact: '接触数', screening: '選考参加数', offer: '内々定数', acceptance: '承諾数' };
     return FALLBACK[phaseKey] || '数値を入力';
   };
@@ -1322,20 +1561,29 @@ const CompletionScreen = () => (
 );
 
 // ========================================
-// メインApp
+// メインApp (v3.1: バグ修正4件 + 運用改善5件)
 // ========================================
 const App = () => {
   const toast = useToast();
+  const urlRole = window.GAS_CONFIG.role || 'staff';
+  const urlSize = window.GAS_CONFIG.companySize || '';
+  const urlToken = window.GAS_CONFIG.token || '';
+  const customerId = API.customerId;
+  const isExec = urlRole === 'exec';
+  
+  const isTokenValid = useMemo(() => {
+    if (!customerId || !urlToken) return false;
+    return urlToken === window.generatePreInputToken(customerId);
+  }, [customerId, urlToken]);
+  
+  const steps = useMemo(() => buildSteps(urlRole, !!urlSize), [urlRole, urlSize]);
+  
   const [currentStep, setCurrentStep] = useState(0);
   const [data, setData] = useState({
-    jobType: '',
-    jobTypeOther: '',
-    targetLayers: {},
-    recruitmentMethods: {},
-    staffAnswers: {},
-    executiveAnswers: {},
-    funnelData: {},
-    status: '入力中'
+    jobType: '', jobTypeOther: '', companySize: urlSize || '',
+    targetLayers: {}, recruitmentMethods: {},
+    staffAnswers: {}, executiveAnswers: {}, funnelData: {},
+    challengeToSolve: '', pastAttempts: '', status: '入力中'
   });
   const [questionMaster, setQuestionMaster] = useState(null);
   const [methodMaster, setMethodMaster] = useState(null);
@@ -1347,487 +1595,232 @@ const App = () => {
   const [privacyAgreed, setPrivacyAgreed] = useState(false);
   const [started, setStarted] = useState(false);
   const [quizActive, setQuizActive] = useState(false);
-  
-  // 初期ロード（リトライ機能付き）
   const maxRetries = 2;
   const [retryCount, setRetryCount] = useState(0);
   
   useEffect(() => {
     (async () => {
+      // v3.1 fix#1: リトライ時にloading状態を復元
+      if (retryCount > 0) setLoading(true);
       try {
-        console.log('[事前問診] 初期ロード開始 customerId=' + API.customerId + ' retry=' + retryCount);
-        
-        // まずpingでAPI接続確認
-        const pingRes = await gasGet('ping');
-        if (!pingRes.success) {
-          throw new Error('GAS APIに接続できません。URLを確認してください。');
+        if (customerId && !isTokenValid) {
+          setError('このURLは無効です。\n正しいURLを担当コンサルタントから受け取ってください。');
+          setLoading(false); return;
         }
-        console.log('[事前問診] API接続OK version=' + (pingRes.version || '不明'));
+        if (!customerId) {
+          setError('問い合わせ番号が指定されていません。\nURLに ?id=XXXXX&tk=YYYYY の形式でアクセスしてください。');
+          setLoading(false); return;
+        }
+        console.log('[事前問診 v3.1] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
+        const pingRes = await gasGet('ping');
+        if (!pingRes.success) throw new Error('サーバーに接続できません。');
         
-        // 既存データをロード
         const preRes = await API.loadPreInput();
         if (preRes.success && preRes.data) {
-          // 回答が空なのに完了フラグが立っている不整合を修正
-          const loadedData = { ...preRes.data };
-          const staffHasAnswers = Object.keys(loadedData.staffAnswers || {}).filter(k => loadedData.staffAnswers[k]).length > 0;
-          const execHasAnswers = Object.keys(loadedData.executiveAnswers || {}).filter(k => loadedData.executiveAnswers[k]).length > 0;
-          if (loadedData.staffCompleted && !staffHasAnswers) loadedData.staffCompleted = false;
-          if (loadedData.executiveCompleted && !execHasAnswers) loadedData.executiveCompleted = false;
-          
-          setData(prev => ({ ...prev, ...loadedData }));
-          if (loadedData.status === '完了') {
-            setCompleted(true);
+          const ld = { ...preRes.data };
+          const sHas = Object.keys(ld.staffAnswers || {}).filter(k => ld.staffAnswers[k]).length > 0;
+          const eHas = Object.keys(ld.executiveAnswers || {}).filter(k => ld.executiveAnswers[k]).length > 0;
+          if (ld.staffCompleted && !sHas) ld.staffCompleted = false;
+          if (ld.executiveCompleted && !eHas) ld.executiveCompleted = false;
+          if (urlSize) ld.companySize = urlSize;
+          setData(prev => ({ ...prev, ...ld }));
+          if (isExec && ld.executiveCompleted) setCompleted(true);
+          else if (!isExec && ld.status === '完了') setCompleted(true);
+          // v3.1 fix#5: exec URLにsize指定なし＆担当者も未入力の場合は警告
+          if (isExec && !urlSize && !ld.companySize) {
+            console.warn('[事前問診 v3.1] 上層部アクセスだが企業規模が不明。フォールバック適用。');
           }
+        } else if (isExec && !urlSize) {
+          // v3.1 fix#5: 担当者の事前データも存在しない場合
+          setError('担当者の方がまだ事前問診を開始していません。\n担当者の方の問診完了後に再度アクセスしてください。\n\n※URLに &size= パラメータが含まれている場合はこのメッセージは表示されません。');
+          setLoading(false); return;
         }
         
-        // 問診マスターをロード（v40: リトライ付き）
         let qLoaded = false;
-        for (let qAttempt = 0; qAttempt < 3 && !qLoaded; qAttempt++) {
+        for (let qa = 0; qa < 3 && !qLoaded; qa++) {
           const qRes = await API.loadQuestionMaster();
-          if (qRes.success && qRes.data) {
-            setQuestionMaster(qRes.data);
-            console.log('[事前問診] 問診マスター読み込み完了');
-            qLoaded = true;
-          } else if (qRes.success && !qRes.data) {
-            console.warn('[事前問診] 問診マスターシートが空です');
-            qLoaded = true; // データなしだが正常応答
-          } else {
-            console.warn('[事前問診] 問診マスター読み込み失敗 (attempt ' + (qAttempt + 1) + '/3):', qRes.error || '不明');
-            if (qAttempt < 2) {
-              await new Promise(r => setTimeout(r, 1500 * (qAttempt + 1)));
-            } else {
-              setError('問診マスターの読み込みに失敗しました: ' + (qRes.error || '不明なエラー') + '\n\nページを再読み込みしてください。');
-            }
-          }
+          if (qRes.success && qRes.data) { setQuestionMaster(qRes.data); qLoaded = true; }
+          else if (qRes.success) { qLoaded = true; }
+          else { if (qa < 2) await new Promise(r => setTimeout(r, 1500*(qa+1)));
+            else setError('問診マスターの読み込みに失敗しました。\nページを再読み込みしてください。'); }
         }
-        
-        // 採用手法マスターをロード
         const mRes = await API.loadRecruitmentMethods();
-        if (mRes.success && mRes.data) {
-          setMethodMaster(mRes.data);
-          console.log('[事前問診] 採用手法マスター読み込み完了');
-        } else {
-          console.warn('[事前問診] 採用手法マスターが空です');
-        }
+        if (mRes.success && mRes.data) setMethodMaster(mRes.data);
       } catch (e) {
-        console.error('[事前問診] ロードエラー:', e);
-        if (retryCount < maxRetries) {
-          console.log('[事前問診] リトライ ' + (retryCount + 1) + '/' + maxRetries);
-          setRetryCount(prev => prev + 1);
-          return; // useEffectが再発火
-        }
-        setError('データの読み込みに失敗しました。\n' + e.message + '\n\nページを再読み込みするか、URLが正しいことを確認してください。');
-      } finally {
-        setLoading(false);
-      }
+        if (retryCount < maxRetries) { setRetryCount(prev => prev + 1); return; }
+        setError('データの読み込みに失敗しました。\n' + e.message);
+      } finally { setLoading(false); }
     })();
   }, [retryCount]);
   
-  // 質問を取得（roleKey: staff/executive）
+  const determinedSize = urlSize || data.companySize || '';
+  
   const getQuestions = useCallback((roleKey) => {
     if (!questionMaster) return [];
-    
-    // ベース質問（規模はsmallをデフォルト、実際にはコンサルタント側で設定）
-    const sizes = ['small', 'medium', 'large'];
     let questions = [];
-    for (const size of sizes) {
-      const qs = questionMaster.base?.[size]?.[roleKey];
-      if (qs && qs.length > 0) {
-        questions = [...questions, ...qs];
-        break;
+    if (determinedSize) {
+      const qs = questionMaster.base?.[determinedSize]?.[roleKey];
+      if (qs && qs.length > 0) questions = [...qs];
+    } else {
+      for (const sz of ['small','medium','large']) {
+        const qs = questionMaster.base?.[sz]?.[roleKey];
+        if (qs && qs.length > 0) { questions = [...qs]; break; }
       }
     }
-    
-    // ターゲット層質問
-    const targetLayers = Object.keys(data.targetLayers || {}).filter(k => data.targetLayers[k]?.enabled);
-    targetLayers.forEach(layer => {
-      const qs = questionMaster.targetLayer?.[layer]?.[roleKey] || [];
-      questions = [...questions, ...qs];
+    Object.keys(data.targetLayers || {}).filter(k => data.targetLayers[k]?.enabled).forEach(layer => {
+      questions = [...questions, ...(questionMaster.targetLayer?.[layer]?.[roleKey] || [])];
     });
-    
-    // 注力タイプ質問
-    ['surface', 'middle', 'deep'].forEach(depth => {
-      const qs = questionMaster.depth?.[depth]?.[roleKey] || [];
-      questions = [...questions, ...qs];
+    ['surface','middle','deep'].forEach(d => {
+      questions = [...questions, ...(questionMaster.depth?.[d]?.[roleKey] || [])];
     });
-    
-    // 採用手法別質問（アクティブなカテゴリのみ）
-    const mMaster = methodMaster && Object.keys(methodMaster).length > 0 ? methodMaster : DEFAULT_RECRUITMENT_METHODS;
-    const activeMethods = Object.keys(data.recruitmentMethods || {}).filter(k => data.recruitmentMethods[k]?.active);
-    const activeCategories = [...new Set(activeMethods.map(k => mMaster[k]?.category).filter(Boolean))];
-    activeCategories.forEach(cat => {
-      // 新フォーマット: カテゴリ名でダイレクト取得
-      const newQs = questionMaster.recruitmentMethod?.[cat]?.[roleKey] || [];
-      questions = [...questions, ...newQs];
-      // 旧フォーマット: 手法キーでカテゴリ一致するものも収集
+    const mM = methodMaster && Object.keys(methodMaster).length > 0 ? methodMaster : DEFAULT_RECRUITMENT_METHODS;
+    const actMethods = Object.keys(data.recruitmentMethods || {}).filter(k => data.recruitmentMethods[k]?.active);
+    const actCats = [...new Set(actMethods.map(k => mM[k]?.category).filter(Boolean))];
+    actCats.forEach(cat => {
+      questions = [...questions, ...(questionMaster.recruitmentMethod?.[cat]?.[roleKey] || [])];
       Object.entries(questionMaster.recruitmentMethod || {}).forEach(([key, roles]) => {
-        if (mMaster[key] && mMaster[key].category === cat) {
-          const oldQs = roles?.[roleKey] || [];
-          questions = [...questions, ...oldQs];
-        }
+        if (mM[key] && mM[key].category === cat) questions = [...questions, ...(roles?.[roleKey] || [])];
       });
     });
-    
-    // ID重複排除
     const seen = new Set();
-    return questions.filter(q => {
-      if (seen.has(q.id)) return false;
-      seen.add(q.id);
-      return true;
-    });
-  }, [questionMaster, data.targetLayers, data.recruitmentMethods, methodMaster]);
+    return questions.filter(q => { if (seen.has(q.id)) return false; seen.add(q.id); return true; });
+  }, [questionMaster, data.targetLayers, data.recruitmentMethods, methodMaster, determinedSize]);
   
-  // 自動保存
-  const saveProgress = useCallback(async (newData) => {
+  const saveProgress = useCallback(async (nd) => {
     setSaving(true);
-    try {
-      await API.savePreInput(newData || data);
-    } catch (e) {
-      console.error('保存エラー:', e);
-      toast('保存に失敗しました。通信状態をご確認ください。', 'error', 4000);
-    } finally {
-      setSaving(false);
-    }
+    try { await API.savePreInput(nd || data); }
+    catch (e) { toast('保存に失敗しました。', 'error', 4000); }
+    finally { setSaving(false); }
   }, [data]);
   
-  // ステップ移動
   const goNext = async () => {
     if (navigating) return;
     setNavigating(true);
     try {
       window.scrollTo(0, 0);
-      await saveProgress(data);
-      
-      if (currentStep >= STEPS.length - 1) {
-        const finalData = { ...data, status: '完了' };
-        setData(finalData);
-        await saveProgress(finalData);
-        setCompleted(true);
+      if (currentStep >= steps.length - 1) {
+        // v3.1 fix#3: 最終ステップはfinalDataのみ保存（二重保存防止）
+        const finalData = isExec ? { ...data, executiveCompleted: true } : { ...data, status: '完了' };
+        setData(finalData); await saveProgress(finalData); setCompleted(true);
       } else {
+        await saveProgress(data);
         setCurrentStep(prev => prev + 1);
       }
-    } finally {
-      setNavigating(false);
-    }
+    } finally { setNavigating(false); }
   };
-  
   const goPrev = () => {
-    if (navigating) return;
-    setNavigating(true);
-    window.scrollTo(0, 0);
-    setCurrentStep(prev => Math.max(0, prev - 1));
+    if (navigating) return; setNavigating(true);
+    window.scrollTo(0, 0); setCurrentStep(prev => Math.max(0, prev - 1));
     setTimeout(() => setNavigating(false), 300);
   };
   
-  // バリデーション
   const canProceed = useMemo(() => {
-    switch (STEPS[currentStep]?.id) {
-      case 'jobType': return !!data.jobType;
-      case 'target': {
-        const enabledLayers = Object.values(data.targetLayers || {}).filter(v => v?.enabled);
-        return enabledLayers.length > 0;
-      }
-      case 'method': {
-        const activeMethods = Object.values(data.recruitmentMethods || {}).filter(v => v?.active);
-        return activeMethods.length > 0;
-      }
-      default: return true;
+    const sid = steps[currentStep]?.id;
+    if (sid === 'companySize') return !!data.companySize;
+    if (sid === 'jobType') return !!data.jobType;
+    if (sid === 'target') {
+      const hasEnabled = Object.values(data.targetLayers || {}).some(v => v?.enabled);
+      if (!hasEnabled) return false;
+      // v3.1 fix#6: 比率入力がある場合は100%チェック
+      const total = Object.values(data.targetLayers || {}).filter(v => v?.enabled).reduce((s, v) => s + (v?.ratio || 0), 0);
+      if (total > 0 && total !== 100) return false;
+      return true;
     }
-  }, [currentStep, data]);
+    if (sid === 'method') return Object.values(data.recruitmentMethods || {}).some(v => v?.active);
+    return true;
+  }, [currentStep, data, steps]);
   
-  // 質問セット（常に計算 - hooks順序保証のため条件分岐の前に配置）
   const staffQuestions = useMemo(() => getQuestions('staff'), [getQuestions]);
   const executiveQuestions = useMemo(() => getQuestions('executive'), [getQuestions]);
   
-  // 問題セットが変わった場合、完了フラグをリセット
   useEffect(() => {
     if (!questionMaster || !started) return;
-    const checkAndReset = (roleKey, questions) => {
-      const completedKey = `${roleKey}Completed`;
-      const answersKey = `${roleKey}Answers`;
-      if (!data[completedKey]) return;
-      const answers = data[answersKey] || {};
-      const answeredIds = new Set(Object.keys(answers).filter(k => answers[k]));
-      const currentIds = new Set(questions.map(q => q.id));
-      const staleAnswers = [...answeredIds].filter(id => !currentIds.has(id));
-      if (staleAnswers.length > 0) {
-        setData(prev => ({ ...prev, [completedKey]: false, [answersKey]: {} }));
-      }
+    const chk = (rk, qs) => {
+      if (!data[rk+'Completed']) return;
+      const ans = data[rk+'Answers'] || {};
+      const aIds = new Set(Object.keys(ans).filter(k => ans[k]));
+      const cIds = new Set(qs.map(q => q.id));
+      if ([...aIds].some(id => !cIds.has(id))) setData(p => ({ ...p, [rk+'Completed']: false, [rk+'Answers']: {} }));
     };
-    checkAndReset('staff', staffQuestions);
-    checkAndReset('executive', executiveQuestions);
+    if (!isExec) chk('staff', staffQuestions);
+    if (isExec) chk('executive', executiveQuestions);
   }, [staffQuestions, executiveQuestions, questionMaster, started]);
   
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">読み込み中...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return (<div className="min-h-screen flex items-center justify-center"><div className="text-center"><div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div><p className="text-gray-600">読み込み中...</p></div></div>);
+  if (error) return (<div className="min-h-screen flex items-center justify-center p-4"><div className="glass-card rounded-2xl p-8 text-center max-w-md"><div className="flex justify-center mb-4"><SolidIcon name="warning" className="w-14 h-14 text-amber-500" /></div><p className="text-red-600 font-bold mb-4 whitespace-pre-line">{error}</p><button onClick={() => window.location.reload()} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold">再読み込み</button></div></div>);
+  if (completed) return (<div className="min-h-screen flex items-center justify-center p-4"><CompletionScreen /></div>);
   
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="glass-card rounded-2xl p-8 text-center max-w-md">
-          <div className="flex justify-center mb-4"><SolidIcon name="warning" className="w-14 h-14 text-amber-500" /></div>
-          <p className="text-red-600 font-bold mb-4">{error}</p>
-          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold">
-            再読み込み
-          </button>
-        </div>
-      </div>
-    );
-  }
-  
-  if (completed) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <CompletionScreen />
-      </div>
-    );
-  }
-  
-  // 個人情報同意画面
   if (!started) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
         <div className="glass-card rounded-2xl p-8 animate-in">
           <div className="text-center mb-6">
-            <img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0iX+ODrOOCpOODpOODvF8xIiBkYXRhLW5hbWU9IuODrOOCpOODpOODvCAxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMTEuMDQgMzUyLjMiPgogIDxkZWZzPgogICAgPHN0eWxlPgogICAgICAuY2xzLTEgewogICAgICAgIGZpbGw6IG5vbmU7CiAgICAgIH0KCiAgICAgIC5jbHMtMiB7CiAgICAgICAgZmlsbDogIzAwMmUzYjsKICAgICAgfQoKICAgICAgLmNscy0zIHsKICAgICAgICBmaWxsOiAjZmZlMjAwOwogICAgICB9CgogICAgICAuY2xzLTQgewogICAgICAgIGZpbGw6ICNjZjJhMjc7CiAgICAgIH0KCiAgICAgIC5jbHMtNSB7CiAgICAgICAgZmlsbDogIzI2YThhYTsKICAgICAgfQoKICAgICAgLmNscy02IHsKICAgICAgICBmaWxsOiAjZmZmOwogICAgICAgIHN0cm9rZTogIzA0MDAwMDsKICAgICAgICBzdHJva2UtbWl0ZXJsaW1pdDogMTA7CiAgICAgIH0KICAgIDwvc3R5bGU+CiAgPC9kZWZzPgogIDxwYXRoIGNsYXNzPSJjbHMtMiIgZD0ibTE1NS40NSwxNzUuMzdjLTExLjg1LDAtMjEuNDksOS42NC0yMS40OSwyMS40OXM5LjY0LDIxLjQ5LDIxLjQ5LDIxLjQ5LDIxLjQ5LTkuNjQsMjEuNDktMjEuNDktOS42NC0yMS40OS0yMS40OS0yMS40OVptMCwzMy4xOGMtNi40NiwwLTExLjY5LTUuMjMtMTEuNjktMTEuNjlzNS4yMy0xMS42OSwxMS42OS0xMS42OSwxMS42OSw1LjIzLDExLjY5LDExLjY5LTUuMjMsMTEuNjktMTEuNjksMTEuNjlaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0xIiBkPSJtMTU1LjQ1LDIzMC45NWM5LjM0LDAsMTcuODEtMy43NiwyMy45Ny05Ljg0bC4yOS0uMDUuMDUtLjI5YzYuMDgtNi4xNyw5Ljg0LTE0LjYzLDkuODQtMjMuOTdzLTMuNzYtMTcuODEtOS44NC0yMy45N2wtLjA1LS4yOS0uMjktLjA1Yy02LjE3LTYuMDgtMTQuNjMtOS44NC0yMy45Ny05Ljg0cy0xNy44MSwzLjc2LTIzLjk3LDkuODRsLS4yOS4wNS0uMDUuMjljLTYuMDgsNi4xNy05Ljg0LDE0LjYzLTkuODQsMjMuOTdzMy43NiwxNy44MSw5Ljg0LDIzLjk3bC4wNS4yOS4yOS4wNWM2LjE3LDYuMDgsMTQuNjMsOS44NCwyMy45Nyw5Ljg0WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtMiIgZD0ibTE1NS40NSwxNjIuNjZjOS4zNCwwLDE3LjgxLDMuNzYsMjMuOTcsOS44NGwuMjkuMDUtNi4wNy0zMi44MmMtOS4xOCwzLjgzLTE3LjI3LDQuNjMtMTcuNjMsNC42NmwtLjU3LjA1LS41Ny0uMDVjLS4zNS0uMDMtOC40NS0uODItMTcuNjItNC42NmwtNi4wNywzMi44Mi4yOS0uMDVjNi4xNy02LjA4LDE0LjYzLTkuODQsMjMuOTctOS44NFoiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTIiIGQ9Im0xMjEuMywxOTYuOGMwLTkuMzQsMy43Ni0xNy44MSw5Ljg0LTIzLjk3bC4wNS0uMjlMMCwxOTYuOGwxMzEuMTksMjQuMjYtLjA1LS4yOWMtNi4wOC02LjE3LTkuODQtMTQuNjMtOS44NC0yMy45N1oiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTIiIGQ9Im0xNzkuNDIsMjIxLjEyYy02LjE3LDYuMDgtMTQuNjMsOS44NC0yMy45Nyw5Ljg0cy0xNy44MS0zLjc2LTIzLjk3LTkuODRsLS4yOS0uMDUsMjQuMjYsMTMxLjE5LDI0LjI2LTEzMS4xOS0uMjkuMDVaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0yIiBkPSJtMTg5LjU5LDE5Ni44YzAsOS4zNC0zLjc2LDE3LjgxLTkuODQsMjMuOTdsLS4wNS4yOSwxMzEuMTktMjQuMjYtMTMxLjE5LTI0LjI2LjA1LjI5YzYuMDgsNi4xNyw5Ljg0LDE0LjYzLDkuODQsMjMuOTdaIi8+CiAgPHBvbHlnb24gY2xhc3M9ImNscy00IiBwb2ludHM9IjEyOC4yMSAxNTUuMTUgODUuMjQgMTI1LjE4IDExNC43NyAxNjkuMzggMTI1Ljk2IDE2Ny4zMiAxMjguMjEgMTU1LjE1Ii8+CiAgPHBvbHlnb24gY2xhc3M9ImNscy00IiBwb2ludHM9IjExMy43OSAyMjQuMDQgODMuODIgMjY3LjAyIDEyOC4wMiAyMzcuNDggMTI1Ljk2IDIyNi4yOSAxMTMuNzkgMjI0LjA0Ii8+CiAgPHBvbHlnb24gY2xhc3M9ImNscy00IiBwb2ludHM9IjE4Mi42OSAyMzguNDYgMjI1LjY2IDI2OC40MyAxOTYuMTIgMjI0LjIzIDE4NC45NCAyMjYuMjkgMTgyLjY5IDIzOC40NiIvPgogIDxwb2x5Z29uIGNsYXNzPSJjbHMtNCIgcG9pbnRzPSIxODQuOTQgMTY3LjMyIDE5Ny4xIDE2OS41NyAyMjcuMDcgMTI2LjU5IDE4Mi44NyAxNTYuMTMgMTg0Ljk0IDE2Ny4zMiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE3MC4wOSwzMDYuNTdsLTIuOTUsMTUuOTdjNjAuMzItNS41NiwxMDguNDgtNTMuNzIsMTE0LjA0LTExNC4wNGwtMTUuOTcsMi45NWMtNi41Myw0OS40NC00NS42OCw4OC41OS05NS4xMiw5NS4xMloiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTQiIGQ9Im00NS42OCwyMTEuNDVsLTE1Ljk3LTIuOTVjNS41Niw2MC4zMiw1My43MiwxMDguNDgsMTE0LjA0LDExNC4wNGwtMi45NS0xNS45N2MtNDkuNDQtNi41My04OC41OS00NS42OC05NS4xMi05NS4xMloiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTYiIGQ9Im0xNTUuNDUsMTQ0LjQ0LTE4LjE5LTQuNzEiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTUiIGQ9Im0xNTQuODgsMTQ0LjM5Yy0uMzUtLjAzLTguNDUtLjgyLTE3LjYyLTQuNjZsLTYuMDcsMzIuODIuMjktLjA1YzYuMTctNi4wOCwxNC42My05Ljg0LDIzLjk3LTkuODR2LTE4LjIyaDBzLS41Ny0uMDUtLjU3LS4wNVoiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTUiIGQ9Im0xMzEuMTksMTcyLjZMMCwxOTYuODZoMTIxLjNjMC05LjM0LDMuNzYtMTcuODEsOS44NC0yMy45N2wuMDUtLjI5WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtNSIgZD0ibTE1NS40NSwyMzEuMDFoMHYxMjEuM2wyNC4zMS0xMzEuNDdjLTYuMTksNi4yOC0xNC44LDEwLjE4LTI0LjMxLDEwLjE4WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtNSIgZD0ibTE4OS43NCwxOTYuODZoMTIxLjNsLTEzMS40NywyNC4zMWM2LjI4LTYuMTksMTAuMTgtMTQuOCwxMC4xOC0yNC4zMVoiLz4KICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xNTUuNDUsMTYyLjY2YzkuMzQsMCwxNy44MSwzLjc2LDIzLjk3LDkuODRsLjI5LjA1LTYuMDctMzIuODJjLTkuMTgsMy44My0xNy4yNyw0LjYzLTE3LjYzLDQuNjZsLS41Ny4wNS0uNTctLjA1Yy0uMzUtLjAzLTguNDUtLjgyLTE3LjYyLTQuNjZsLTYuMDcsMzIuODIuMjktLjA1YzYuMTctNi4wOCwxNC42My05Ljg0LDIzLjk3LTkuODRaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0zIiBkPSJtMTIxLjMsMTk2LjhjMC05LjM0LDMuNzYtMTcuODEsOS44NC0yMy45N2wuMDUtLjI5TDAsMTk2LjhsMTMxLjE5LDI0LjI2LS4wNS0uMjljLTYuMDgtNi4xNy05Ljg0LTE0LjYzLTkuODQtMjMuOTdaIi8+CiAgPHBhdGggY2xhc3M9ImNscy0zIiBkPSJtMTc5LjQyLDIyMS4xMmMtNi4xNyw2LjA4LTE0LjYzLDkuODQtMjMuOTcsOS44NHMtMTcuODEtMy43Ni0yMy45Ny05Ljg0bC0uMjktLjA1LDI0LjI2LDEzMS4xOSwyNC4yNi0xMzEuMTktLjI5LjA1WiIvPgogIDxwYXRoIGNsYXNzPSJjbHMtMyIgZD0ibTE4OS41OSwxOTYuOGMwLDkuMzQtMy43NiwxNy44MS05Ljg0LDIzLjk3bC0uMDUuMjksMTMxLjE5LTI0LjI2LTEzMS4xOS0yNC4yNi4wNS4yOWM2LjA4LDYuMTcsOS44NCwxNC42Myw5Ljg0LDIzLjk3WiIvPgogIDxnPgogICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTU1LjQ1LDE3NS4zN2MtMTEuODUsMC0yMS40OSw5LjY0LTIxLjQ5LDIxLjQ5czkuNjQsMjEuNDksMjEuNDksMjEuNDksMjEuNDktOS42NCwyMS40OS0yMS40OS05LjY0LTIxLjQ5LTIxLjQ5LTIxLjQ5Wm0wLDMzLjE4Yy02LjQ2LDAtMTEuNjktNS4yMy0xMS42OS0xMS42OXM1LjIzLTExLjY5LDExLjY5LTExLjY5LDExLjY5LDUuMjMsMTEuNjksMTEuNjktNS4yMywxMS42OS0xMS42OSwxMS42OVoiLz4KICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTEyMS4zLDE5Ni44aDBzLTkwLjc4LDAtOTAuNzgsMGw5NS43My0xNy43YzEuMzgtMi4yOCwzLjAyLTQuMzgsNC44OS02LjI3bC4wNS0uMjlMMCwxOTYuOGwxMzEuMTksMjQuMjYtLjA1LS4yOWMtNi4wOC02LjE3LTkuODQtMTQuNjMtOS44NC0yMy45N1oiLz4KICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE3My4wOSwyMjYuMDRsLTE3LjY0LDk1LjR2LTkwLjQ5Yy05LjM0LDAtMTcuODEtMy43Ni0yMy45Ny05Ljg0bC0uMjktLjA1LDI0LjI2LDEzMS4xOSwyNC4yNi0xMzEuMTktLjI5LjA1Yy0xLjksMS44OC00LjAzLDMuNTMtNi4zMyw0LjkyWiIvPgogICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTc5LjcxLDE3Mi41NWwuMDUuMjljNi4wOCw2LjE3LDkuODQsMTQuNjMsOS44NCwyMy45NywwLC4wMiwwLC4wNCwwLC4wNWg5MC41NWwtOTUuNSwxNy42NmMtMS4zOCwyLjI3LTMuMDIsNC4zNy00Ljg4LDYuMjZsLS4wNS4yOSwxMzEuMTktMjQuMjYtMTMxLjE5LTI0LjI2WiIvPgogICAgPGc+CiAgICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE3My42NCwxMzkuNzNjLTkuMTgsMy44My0xNy4yNyw0LjYzLTE3LjYzLDQuNjZsLS41Ny4wNS0uNTctLjA1cy0uMTUtLjAyLS4zMS0uMDNsLjA5LDE4LjMyYy4yNiwwLC41Mi0uMDIuNzgtLjAyLDkuMzQsMCwxNy44MSwzLjc2LDIzLjk3LDkuODRsLjI5LjA1LTYuMDctMzIuODJaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTE0Mi42OSwxNDEuNzFjLTEuNzMtLjU1LTMuNTYtMS4yLTUuNDQtMS45OWwtNi4wNywzMi44Mi4yOS0uMDVjMS45NS0xLjkzLDQuMTQtMy42Miw2LjUxLTUuMDNsNC43MS0yNS43NVoiLz4KICAgIDwvZz4KICA8L2c+CiAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMjgxLjE4LDE4NS4xN2MtMy4yMy0zNS4wMi0yMC44NC02NS45My00Ni44NC04Ni43OWwzLjY0LDI0LjEtLjQyLjEzYzE0LjY5LDE2LjIzLDI0LjY0LDM2LjgyLDI3LjY1LDU5LjYxbDE1Ljk3LDIuOTVaIi8+CiAgPGc+CiAgICA8cG9seWdvbiBjbGFzcz0iY2xzLTQiIHBvaW50cz0iMjUyLjEyIDQwLjg2IDIzMi44OCAzMi43MyAyMzIuODggNDguNCAyNTIuMTIgNDAuODYiLz4KICAgIDxnPgogICAgICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xMDUuOTgsNTkuMzVzMTIuNjktMjguOTUsNDkuNDQtMjcuNjJMMTU1LjQ1LDAsNTguNzcsNDAuODZsNDcuMjEsMTguNDhaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJjbHMtNCIgZD0ibTIyOC40OCwxMDEuMmwtMi40NS0xNi4yMWMyLjg4LTEuNjMsNC44Mi00LjcyLDQuODItOC4yNiwwLTQuMTUtMi42Ny03LjY4LTYuMzgtOC45NnYtMjEuNDJoLS4wM3MwLTE3LjE5LDAtMTcuMTlMMTU1LjQ1LDBsLjAyLDMxLjczYzM2Ljc1LTEuMzQsNDkuNDQsMjcuNjIsNDkuNDQsMjcuNjJsMTMuMDItNS4xdjEzLjY1Yy0zLjU0LDEuMzgtNi4wNCw0LjgxLTYuMDQsOC44NCwwLDMuNDEsMS44LDYuNCw0LjUsOC4wN2wtMi40OCwxNi4zOS0yLjU0LDE2LjgxYzMuMS45Niw2LjQsMS40Nyw5LjgyLDEuNDdzNi43Mi0uNTIsOS44Mi0xLjQ3bC0yLjU0LTE2LjgxWiIvPgogICAgICA8Zz4KICAgICAgICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xMTUuODUsNjguOTFjNS45Ny00LjEyLDEzLTYuMywyMC4zMy02LjMsNi45MywwLDEzLjY1LDEuOTMsMTkuNTIsNS40M3YtMzAuMTZzLS4wNCwwLS4wNiwwYy0yNS40MiwwLTQ2LjAyLDE2LjMxLTQ2LjAyLDM2LjQzLDAsLjAyLDAsLjA1LDAsLjA3LDEuODQtMi4wNSwzLjkzLTMuODgsNi4yMy01LjQ3WiIvPgogICAgICAgIDxwYXRoIGNsYXNzPSJjbHMtMyIgZD0ibTE0Ny44MywxMzcuNTljMi41MS44LDUuMTIsMS4yMiw3LjgxLDEuMjIuMDIsMCwuMDQsMCwuMDYsMHYtNC4xNmMtMi41LDEuMjktNS4xNCwyLjI4LTcuODcsMi45NFoiLz4KICAgICAgPC9nPgogICAgICA8cGF0aCBjbGFzcz0iY2xzLTMiIGQ9Im0xNTUuNjQsMTM4Ljgxcy4wNCwwLC4wNiwwdi02NS4wOWMtMTEuMDItNy45LTI1Ljg0LTguNzEtMzcuMTUtLjktMy4zLDIuMjgtNi4wMiw1LjA5LTguMTMsOC4yNi4xOC43NS4zOCwxLjQ5LjYyLDIuMjItMi4zOSwxLjA2LTQuMzIsMi43My01LjUsNC45Ni0zLjYyLDYuODYsMS4xNCwxNi40NywxMC42MiwyMS40NywxLjMuNjksMi42MiwxLjI1LDMuOTQsMS42OS4zOCwyLjg1LDEuMzEsNS4zNCwyLjU4LDcuMTMsMi4xNCwzLjYzLDYuMDksNy44NSwxMS4xNywxMS42NSw0LjM2LDMuMjUsOC43OCw1LjYyLDEyLjUzLDYuODcsMi45NCwxLjEzLDYuMDUsMS43Myw5LjI3LDEuNzNaIi8+CiAgICAgIDxnPgogICAgICAgIDxnPgogICAgICAgICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTk1LjU1LDY4LjkxYy01Ljk3LTQuMTItMTMtNi4zLTIwLjMzLTYuMy02LjkzLDAtMTMuNjUsMS45My0xOS41Miw1LjQzdi0zMC4xNnMuMDQsMCwuMDYsMGMyNS40MiwwLDQ2LjAyLDE2LjMxLDQ2LjAyLDM2LjQzLDAsLjAyLDAsLjA1LDAsLjA3LTEuODQtMi4wNS0zLjkzLTMuODgtNi4yMy01LjQ3WiIvPgogICAgICAgICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTYzLjU3LDEzNy41OWMtMi41MS44LTUuMTIsMS4yMi03LjgxLDEuMjItLjAyLDAtLjA0LDAtLjA2LDB2LTQuMTZjMi41LDEuMjksNS4xNCwyLjI4LDcuODcsMi45NFoiLz4KICAgICAgICA8L2c+CiAgICAgICAgPHBhdGggY2xhc3M9ImNscy00IiBkPSJtMTU1Ljc2LDEzOC44MXMtLjA0LDAtLjA2LDB2LTY1LjA5YzExLjAyLTcuOSwyNS44NC04LjcxLDM3LjE1LS45LDMuMywyLjI4LDYuMDIsNS4wOSw4LjEzLDguMjYtLjE4Ljc1LS4zOCwxLjQ5LS42MiwyLjIyLDIuMzksMS4wNiw0LjMyLDIuNzMsNS41LDQuOTYsMy42Miw2Ljg2LTEuMTQsMTYuNDctMTAuNjIsMjEuNDctMS4zLjY5LTIuNjIsMS4yNS0zLjk0LDEuNjktLjM4LDIuODUtMS4zMSw1LjM0LTIuNTgsNy4xMy0yLjE0LDMuNjMtNi4wOSw3Ljg1LTExLjE3LDExLjY1LTQuMzYsMy4yNS04Ljc4LDUuNjItMTIuNTMsNi44Ny0yLjk0LDEuMTMtNi4wNSwxLjczLTkuMjcsMS43M1oiLz4KICAgICAgPC9nPgogICAgICA8cGF0aCBjbGFzcz0iY2xzLTQiIGQ9Im05OS42OSw4NS40Yy40NC0uODQuOTYtMS42MiwxLjU0LTIuMzctLjAxLS4wNC0uMDItLjA4LS4wMy0uMTItMzkuMDgsMTguNzgtNjcuMDgsNTcuMDktNzEuMjQsMTAyLjJsMTUuOTctMi45NWM0LjU1LTM0LjQzLDI0LjkzLTYzLjg2LDUzLjU4LTgwLjc3LTIuMzEtNS4zMi0yLjQzLTExLjAzLjE5LTE1Ljk5WiIvPgogICAgPC9nPgogIDwvZz4KPC9zdmc+" alt="Gakusapo" className="h-16 mx-auto mb-4" style={{ height: '64px', margin: '0 auto 16px' }} />
             <h1 className="text-2xl font-bold text-gray-800">採用ブラックボックス診断<sup className="text-xs">®</sup></h1>
-            <p className="text-sm text-gray-500 mt-1">事前問診フォーム</p>
+            <p className="text-sm text-gray-500 mt-1">{isExec ? '上層部問診フォーム' : '事前問診フォーム'}</p>
           </div>
-          
-          <div className="p-5 bg-gray-50 border border-gray-200 rounded-xl mb-6">
-            <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              本診断について
-            </h3>
-            <p className="text-sm text-gray-700 leading-relaxed mb-4">
-              本フォームは、貴社の採用活動における「見えていない課題（ブラックボックス）」を数値化・可視化するための専門ツールです。
-              お打ち合わせ当日に<span className="font-bold text-blue-700">貴社だけの具体的な「解決策」</span>をご提示するため、現状の数値や課題感について、ありのままをご回答ください。
-            </p>
-            <div className="flex flex-col gap-2 text-sm text-gray-700">
-              <div className="flex items-center gap-2">
-                <SolidIcon name="clock" className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                <span><span className="font-bold">所要時間：</span>20〜30分程度（設問数：約50問）</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <SolidIcon name="save" className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                <span><span className="font-bold">途中保存：</span>回答内容は一時保存が可能です。中断する場合は「保存」ボタンを押してください。</span>
+          {isExec ? (
+            <div className="p-5 bg-purple-50 border border-purple-200 rounded-xl mb-6">
+              <h3 className="font-bold text-gray-800 mb-3">上層部の方へ</h3>
+              <p className="text-sm text-gray-700 leading-relaxed">本フォームは<span className="font-bold text-purple-700">経営層・管理職の方専用</span>の問診です。貴社の採用方針・ビジョンについてご自身のお考えをそのままお答えください。担当者の方の回答と照合し、組織内の認識ギャップを分析いたします。</p>
+              <p className="text-sm text-gray-600 mt-3">所要時間：10〜15分程度</p>
+            </div>
+          ) : (
+            <div className="p-5 bg-gray-50 border border-gray-200 rounded-xl mb-6">
+              <h3 className="font-bold text-gray-800 mb-3">本診断について</h3>
+              <p className="text-sm text-gray-700 leading-relaxed mb-4">貴社の採用活動における「見えていない課題」を数値化・可視化するための専門ツールです。お打ち合わせ当日に<span className="font-bold text-blue-700">貴社だけの具体的な「解決策」</span>をご提示します。</p>
+              <div className="flex flex-col gap-2 text-sm text-gray-700">
+                <div className="flex items-center gap-2"><SolidIcon name="clock" className="w-4 h-4 text-blue-500 flex-shrink-0" /><span><span className="font-bold">所要時間：</span>20〜30分程度</span></div>
+                <div className="flex items-center gap-2"><SolidIcon name="save" className="w-4 h-4 text-blue-500 flex-shrink-0" /><span><span className="font-bold">途中保存：</span>回答内容は一時保存が可能です。</span></div>
               </div>
             </div>
-          </div>
-          
+          )}
           <div className="p-5 bg-blue-50 border border-blue-200 rounded-xl mb-6">
-            <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              情報の取り扱いについて
-            </h3>
+            <h3 className="font-bold text-gray-800 mb-3">情報の取り扱いについて</h3>
             <ul className="text-sm text-gray-700 space-y-2">
-              <li className="flex items-start gap-2">
-                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
-                <span>ご入力いただく情報には、貴社の採用戦略・人員計画・予算配分など、<span className="font-bold">企業の機密性の高い情報</span>が含まれます。</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
-                <span>これらの情報は、株式会社Gakusapoが<span className="font-bold">厳重に管理</span>し、本診断の目的以外には一切使用いたしません。</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
-                <span>第三者への提供・開示は行いません。診断完了後、ご希望に応じてデータの削除にも対応いたします。</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" />
-                <span>AI（生成AI）を活用した分析を行う場合がありますが、入力データがAIの学習に使用されることはありません。</span>
-              </li>
+              <li className="flex items-start gap-2"><SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" /><span>ご入力いただく情報は、株式会社Gakusapoが<span className="font-bold">厳重に管理</span>し、本診断の目的以外には一切使用いたしません。</span></li>
+              <li className="flex items-start gap-2"><SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" /><span>第三者への提供・開示は行いません。</span></li>
             </ul>
           </div>
-          
-          <label className={`flex items-start gap-3 p-4 border-2 rounded-xl cursor-pointer transition mb-6 ${
-            privacyAgreed ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200 hover:border-blue-300'
-          }`}>
-            <input
-              type="checkbox"
-              checked={privacyAgreed}
-              onChange={(e) => setPrivacyAgreed(e.target.checked)}
-              className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-            />
-            <span className="text-sm text-gray-800 leading-relaxed">
-              上記の情報の取り扱いについて確認し、
-              <span className="font-bold text-blue-700">個人情報および企業情報の取り扱いに同意</span>
-              のうえ、事前問診を開始します。
-            </span>
+          <label className={`flex items-start gap-3 p-4 border-2 rounded-xl cursor-pointer transition mb-6 ${privacyAgreed ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200 hover:border-blue-300'}`}>
+            <input type="checkbox" checked={privacyAgreed} onChange={e => setPrivacyAgreed(e.target.checked)} className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 cursor-pointer" />
+            <span className="text-sm text-gray-800 leading-relaxed">上記の情報の取り扱いについて確認し、<span className="font-bold text-blue-700">個人情報および企業情報の取り扱いに同意</span>のうえ、{isExec ? '上層部問診' : '事前問診'}を開始します。</span>
           </label>
-          
-          <button
-            disabled={!privacyAgreed}
-            onClick={() => setStarted(true)}
-            className={`btn-ripple w-full py-4 rounded-xl font-bold text-lg transition shadow-lg ${
-              privacyAgreed
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 hover:shadow-xl'
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-            }`}
-          >
-            {privacyAgreed ? '問診を開始する →' : '上記に同意してください'}
+          <button disabled={!privacyAgreed} onClick={() => setStarted(true)}
+            className={`btn-ripple w-full py-4 rounded-xl font-bold text-lg transition shadow-lg ${privacyAgreed ? (isExec ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white') : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+            {isExec ? '上層部問診を開始する' : '事前問診を開始する'}
           </button>
         </div>
       </div>
     );
   }
   
+  const currentStepDef = steps[currentStep];
+  const nextDisabled = !canProceed || navigating;
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
-      {/* ヘッダー */}
-      <div className="text-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">
-          採用ブラックボックス診断<sup className="text-xs">®</sup>
-        </h1>
-        <p className="text-sm text-gray-500 mt-1">事前問診フォーム</p>
-        {saving && (
-          <span className="inline-block mt-2 text-xs text-blue-500 bg-blue-50 px-3 py-1 rounded-full">
-            保存中...
-          </span>
-        )}
-      </div>
-      
-      <ProgressBar currentStep={currentStep} totalSteps={STEPS.length} />
-      
-      {/* Step Content */}
-      {STEPS[currentStep]?.id === 'jobType' && (
-        <StepJobType data={data} onChange={setData} />
+      <ProgressBar currentStep={currentStep} totalSteps={steps.length} steps={steps} />
+      {currentStepDef?.id === 'companySize' && <StepCompanySize data={data} onChange={d => setData(d)} />}
+      {currentStepDef?.id === 'jobType' && <StepJobType data={data} onChange={d => setData(d)} />}
+      {currentStepDef?.id === 'target' && <StepTarget data={data} onChange={d => setData(d)} />}
+      {currentStepDef?.id === 'method' && <StepMethod data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
+      {currentStepDef?.id === 'challenges' && <StepChallenges data={data} onChange={d => setData(d)} />}
+      {currentStepDef?.id === 'staff' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="staff" questions={staffQuestions} title="担当者問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, staffCompleted: true}))} />}
+      {currentStepDef?.id === 'executive' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="executive" questions={executiveQuestions} title="上層部問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, executiveCompleted: true}))} />}
+      {currentStepDef?.id === 'funnel' && <StepFunnel data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
+      {!quizActive && (
+        <div className="flex items-center justify-between mt-6 mb-8">
+          <button onClick={goPrev} disabled={currentStep === 0} className={`px-4 py-3 rounded-xl font-bold transition ${currentStep === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}>← 戻る</button>
+          <span className="text-sm text-gray-400">{saving ? <span className="flex items-center gap-1.5 text-blue-500"><svg className="w-3.5 h-3.5" style={{animation:'spin 0.8s linear infinite'}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><circle cx="12" cy="12" r="10" className="opacity-25"/><path d="M4 12a8 8 0 018-8" className="opacity-75"/></svg>保存中...</span> : `${currentStep+1} / ${steps.length}`}</span>
+          <button onClick={goNext} disabled={nextDisabled}
+            className={`btn-ripple px-6 py-3 rounded-xl font-bold transition shadow-lg flex items-center gap-2 ${nextDisabled ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : currentStep >= steps.length-1 ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white' : isExec ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'}`}>
+            {navigating ? (currentStep >= steps.length-1 ? '送信中...' : '保存中...') : currentStep >= steps.length-1 ? <span className="inline-flex items-center gap-1.5">送信する<SolidIcon name="checkCircle" className="w-5 h-5" /></span> : '次へ →'}
+          </button>
+        </div>
       )}
-      {STEPS[currentStep]?.id === 'target' && (
-        <StepTarget data={data} onChange={setData} />
-      )}
-      {STEPS[currentStep]?.id === 'method' && (
-        <StepMethod data={data} onChange={setData} methodMaster={methodMaster} />
-      )}
-      {STEPS[currentStep]?.id === 'staff' && (
-        <StepQuestionnaire
-          data={data}
-          onChange={setData}
-          roleKey="staff"
-          questions={staffQuestions}
-          title="採用担当者 問診"
-          timerSeconds={900}
-          onQuizActive={setQuizActive}
-          onComplete={async (newData) => {
-            setNavigating(true);
-            setData(newData);
-            await saveProgress(newData);
-            setCurrentStep(prev => prev + 1);
-            window.scrollTo(0, 0);
-            setNavigating(false);
-          }}
-        />
-      )}
-      {STEPS[currentStep]?.id === 'executive' && (
-        <StepQuestionnaire
-          data={data}
-          onChange={setData}
-          roleKey="executive"
-          questions={executiveQuestions}
-          title="上層部（経営者・役員）問診"
-          timerSeconds={900}
-          optional={true}
-          optionalNote="より正確な診断結果をお求めの場合はご回答ください。スキップしても送信可能です。"
-          onQuizActive={setQuizActive}
-          onComplete={async (newData) => {
-            setNavigating(true);
-            setData(newData);
-            await saveProgress(newData);
-            setCurrentStep(prev => prev + 1);
-            window.scrollTo(0, 0);
-            setNavigating(false);
-          }}
-        />
-      )}
-      {STEPS[currentStep]?.id === 'funnel' && (
-        <StepFunnel data={data} onChange={setData} methodMaster={methodMaster} />
-      )}
-      
-      {/* ナビゲーション（問診回答中・遷移中は非表示） */}
-      {!quizActive && (() => {
-        const stepId = STEPS[currentStep]?.id;
-        const isQuizStep = stepId === 'staff' || stepId === 'executive';
-        const answersKey = stepId === 'staff' ? 'staffAnswers' : 'executiveAnswers';
-        const hasAnswers = isQuizStep && Object.keys(data[answersKey] || {}).filter(k => data[answersKey][k]).length > 0;
-        const isQuizCompleted = isQuizStep && data[`${stepId}Completed`] === true && hasAnswers;
-        const isQuizSkipped = isQuizStep && data[`${stepId}Skipped`] === true;
-        const isQuizNotStarted = isQuizStep && !isQuizCompleted && !isQuizSkipped;
-        // 問診ステップで未完了かつ未スキップの場合: 問診コンポーネントが遷移を管理するためナビ非表示
-        if (isQuizNotStarted) return null;
-        
-        // 問診完了済み or 通常ステップ: ナビ表示
-        const staffHasAnswers = Object.keys(data.staffAnswers || {}).filter(k => data.staffAnswers[k]).length > 0;
-        const backDisabled = navigating || currentStep === 0 || (stepId === 'executive' && !(data.staffCompleted && staffHasAnswers));
-        const nextDisabled = navigating || !canProceed;
-        return (
-          <div className="flex justify-between items-center mt-6 mb-10">
-            <button
-              onClick={goPrev}
-              disabled={backDisabled}
-              className={`btn-ripple px-6 py-3 rounded-xl font-bold transition ${
-                backDisabled
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-sm'
-              }`}
-            >
-              ← 前へ
-            </button>
-            
-            <span className="text-sm text-gray-400">
-              {navigating ? (
-                <span className="inline-flex items-center gap-2 text-blue-500">
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <circle cx="12" cy="12" r="10" className="opacity-25" />
-                    <path d="M4 12a8 8 0 018-8" className="opacity-75" />
-                  </svg>
-                  保存中...
-                </span>
-              ) : (
-                `${currentStep + 1} / ${STEPS.length}`
-              )}
-            </span>
-            
-            <button
-              onClick={goNext}
-              disabled={nextDisabled}
-              className={`btn-ripple px-6 py-3 rounded-xl font-bold transition shadow-lg flex items-center gap-2 ${
-                nextDisabled
-                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                  : currentStep >= STEPS.length - 1
-                    ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700'
-                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
-              }`}
-            >
-              {navigating && (
-                <svg className="w-4 h-4 flex-shrink-0" style={{ animation: 'spin 0.8s linear infinite' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                  <circle cx="12" cy="12" r="10" className="opacity-25" /><path d="M4 12a8 8 0 018-8" className="opacity-75" />
-                </svg>
-              )}
-              {navigating
-                ? (currentStep >= STEPS.length - 1 ? '送信中...' : '保存中...')
-                : currentStep >= STEPS.length - 1
-                  ? <span className="inline-flex items-center gap-1.5">送信する<SolidIcon name="checkCircle" className="w-5 h-5" /></span>
-                  : '次へ →'
-              }
-            </button>
-          </div>
-        );
-      })()}
     </div>
   );
 };
+
 
 ReactDOM.createRoot(document.getElementById('root')).render(<ToastProvider><App /></ToastProvider>);
 </script>
