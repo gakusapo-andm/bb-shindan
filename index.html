@@ -204,7 +204,7 @@ body {
 }
 
 /* ============================================
-   5. UIコンポーネント　
+   5. UIコンポーネント
    ============================================ */
 
 /* タイプダイヤモンドアイコン */
@@ -3050,12 +3050,15 @@ const SUPA_HANDLERS = {
   // ── Supabase Authログイン ──
   login: async function(sb, params) {
     var idToken = params.id_token || params.idToken;
+    var nonce = params.nonce; // v49: raw nonce for Supabase Auth
     if (!idToken) return { success: false, error: 'IDトークンがありません' };
     try {
-      var authRes = await sb.auth.signInWithIdToken({
+      var authPayload = {
         provider: 'google',
         token: idToken,
-      });
+      };
+      if (nonce) authPayload.nonce = nonce; // v49: pass raw nonce to match hashed nonce in id_token
+      var authRes = await sb.auth.signInWithIdToken(authPayload);
       if (authRes.error) return { success: false, error: authRes.error.message };
 
       var email = authRes.data.user.email;
@@ -3198,19 +3201,35 @@ const GoogleLoginScreen = ({ onLoginSuccess }) => {
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const btnRef = React.useRef(null);
+  const nonceRef = React.useRef(null); // v49: store raw nonce for Supabase
+
+  // v49: Generate random nonce and its SHA-256 hash for Google GSI
+  const generateNonce = async () => {
+    const rawNonce = crypto.randomUUID();
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(rawNonce));
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashedNonce = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return { rawNonce, hashedNonce };
+  };
 
   React.useEffect(() => {
-    const initGSI = () => {
+    const initGSI = async () => {
       if (!window.google?.accounts?.id) {
         // GSIライブラリがまだ読み込まれていない場合はリトライ
         setTimeout(initGSI, 500);
         return;
       }
+
+      // v49: Generate nonce pair
+      const { rawNonce, hashedNonce } = await generateNonce();
+      nonceRef.current = rawNonce;
       
       window.google.accounts.id.initialize({
         client_id: window.OAUTH_CONFIG.clientId,
         callback: handleCredentialResponse,
-        auto_select: true
+        auto_select: true,
+        nonce: hashedNonce  // v49: pass hashed nonce to Google GSI
       });
       
       if (btnRef.current) {
@@ -3239,7 +3258,7 @@ const GoogleLoginScreen = ({ onLoginSuccess }) => {
       
       // v47: Supabase Authでログイン（SUPA_HANDLERSのloginハンドラーを使用）
       const sb = await ensureSupabase();
-      const data = await SUPA_HANDLERS.login(sb, { idToken: idToken });
+      const data = await SUPA_HANDLERS.login(sb, { idToken: idToken, nonce: nonceRef.current });
       
       if (!data.success) {
         setError(data.error || 'ログインに失敗しました');
@@ -15845,18 +15864,26 @@ const App = () => {
   }, []);
   
   // 再ログイン処理（バナーから呼び出し）
-  const handleRelogin = () => {
+  const handleRelogin = async () => {
     // Google Sign-Inを再初期化してプロンプト表示
     if (window.google?.accounts?.id) {
+      // v49: Generate nonce pair for re-login
+      const encoder = new TextEncoder();
+      const rawNonce = crypto.randomUUID();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(rawNonce));
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashedNonce = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
       window.google.accounts.id.initialize({
         client_id: window.OAUTH_CONFIG.clientId,
+        nonce: hashedNonce,  // v49: pass hashed nonce to Google GSI
         callback: async (response) => {
           if (response?.credential) {
             const idToken = response.credential;
             // v47: Supabase Authで再検証
             try {
               const sb = await ensureSupabase();
-              const data = await SUPA_HANDLERS.login(sb, { idToken: idToken });
+              const data = await SUPA_HANDLERS.login(sb, { idToken: idToken, nonce: rawNonce });
               if (data.success) {
                 window.AUTH.idToken = idToken;
                 window.AUTH.user = data.user;
