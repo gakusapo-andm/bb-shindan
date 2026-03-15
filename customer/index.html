@@ -1361,12 +1361,14 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
     onChange({ ...data, funnelData: { ...funnelData, selectedYear: year } });
   };
   
-  // BB診断と同じフェーズキー
+  // BB診断と同じフェーズキー（選考ステップ数に応じて動的展開）
+  const screeningSteps = yearData.screeningSteps || funnelData.screeningSteps || 1;
   const phases = [
     { key: 'awareness', label: '認知' },
     { key: 'interest', label: '興味' },
     { key: 'contact', label: '接触' },
-    { key: 'screening', label: '選考' },
+    { key: 'screening', label: '選考', rowSpan: screeningSteps,
+      subLabels: screeningSteps === 1 ? [''] : Array.from({length: screeningSteps}, (_, i) => `${i + 1}次面接`) },
     { key: 'offer', label: '内々定' },
     { key: 'acceptance', label: '承諾' }
   ];
@@ -1381,29 +1383,33 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
     return FALLBACK[phaseKey] || '数値を入力';
   };
   
-  // BB診断と同じ channelData 形式: {phase}_{channelKey}
-  const getChannelValue = (phaseKey, channelKey) => yearData.channelData?.[`${phaseKey}_${channelKey}`] ?? '';
+  // BB診断と同じ channelData 形式: {phase}_{channelKey} or {phase}_{subIdx}_{channelKey}
+  const getChannelValue = (phaseKey, channelKey, subIdx) => {
+    const dataKey = subIdx !== undefined ? `${phaseKey}_${subIdx}_${channelKey}` : `${phaseKey}_${channelKey}`;
+    return yearData.channelData?.[dataKey] ?? '';
+  };
   
-  const setChannelValue = (phaseKey, channelKey, value) => {
-    const dataKey = `${phaseKey}_${channelKey}`;
+  const setChannelValue = (phaseKey, channelKey, value, subIdx) => {
+    const dataKey = subIdx !== undefined ? `${phaseKey}_${subIdx}_${channelKey}` : `${phaseKey}_${channelKey}`;
     const newChannelData = {
       ...yearData.channelData,
       [dataKey]: value === '' ? '' : (parseInt(value) || 0)
     };
     
     // BB診断と同じキーで合計を再計算
-    const calcTotal = (pk) => activeChannels.reduce((sum, ch) => {
-      const v = newChannelData[`${pk}_${ch.key}`];
+    const calcTotalInner = (pk, si) => activeChannels.reduce((sum, ch) => {
+      const k = si !== undefined ? `${pk}_${si}_${ch.key}` : `${pk}_${ch.key}`;
+      const v = newChannelData[k];
       return sum + (parseInt(v) || 0);
     }, 0);
     
     const totals = {
-      targetAwareness: calcTotal('awareness'),
-      interest: calcTotal('interest'),
-      applications: calcTotal('contact'),
-      screening: calcTotal('screening'),
-      offers: calcTotal('offer'),
-      acceptance: calcTotal('acceptance')
+      targetAwareness: calcTotalInner('awareness'),
+      interest: calcTotalInner('interest'),
+      applications: calcTotalInner('contact'),
+      screening: screeningSteps > 1 ? calcTotalInner('screening', 0) : calcTotalInner('screening'),
+      offers: calcTotalInner('offer'),
+      acceptance: calcTotalInner('acceptance')
     };
     
     onChange({
@@ -1424,8 +1430,9 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
     });
   };
   
-  const calcTotal = (phaseKey) => activeChannels.reduce((sum, ch) => {
-    const v = getChannelValue(phaseKey, ch.key);
+  const calcTotal = (phaseKey, subIdx) => activeChannels.reduce((sum, ch) => {
+    const k = subIdx !== undefined ? `${phaseKey}_${subIdx}_${ch.key}` : `${phaseKey}_${ch.key}`;
+    const v = yearData.channelData?.[k] ?? '';
     return sum + (parseInt(v) || 0);
   }, 0);
   
@@ -1591,28 +1598,59 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
                 </tr>
               </thead>
               <tbody>
-                {phases.map(phase => (
-                  <tr key={phase.key}>
-                    <td className="border border-gray-200 px-2 py-2 font-bold text-gray-800 bg-gray-50 text-xs sticky left-0 z-10">
-                      {phase.label}
-                    </td>
-                    <td className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-600 bg-blue-50">
-                      {calcTotal(phase.key) || ''}
-                    </td>
-                    {activeChannels.map(ch => (
-                      <td key={ch.key} className="border border-gray-200 px-1 py-1">
-                        <input
-                          type="number"
-                          min="0"
-                          value={getChannelValue(phase.key, ch.key)}
-                          onChange={e => setChannelValue(phase.key, ch.key, e.target.value)}
-                          placeholder={getPlaceholder(phase.key, ch.key)}
-                          className="w-full px-1 py-1.5 border border-gray-200 rounded text-center text-xs focus:ring-2 focus:ring-blue-500 placeholder-gray-300"
-                        />
+                {phases.map(phase => {
+                  // 選考展開: subLabelsがある場合は複数行レンダリング
+                  if (phase.subLabels && phase.subLabels.length > 1) {
+                    return phase.subLabels.map((subLabel, subIdx) => (
+                      <tr key={`${phase.key}_${subIdx}`}>
+                        {subIdx === 0 && (
+                          <td rowSpan={phase.rowSpan} className="border border-gray-200 px-2 py-2 font-bold text-gray-800 bg-gray-50 text-xs sticky left-0 z-10">
+                            {phase.label}
+                          </td>
+                        )}
+                        <td className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-600 bg-blue-50">
+                          <div className="text-[10px] text-gray-400">{subLabel}</div>
+                          {calcTotal(phase.key, subIdx) || ''}
+                        </td>
+                        {activeChannels.map(ch => (
+                          <td key={ch.key} className="border border-gray-200 px-1 py-1">
+                            <input
+                              type="number"
+                              min="0"
+                              value={getChannelValue(phase.key, ch.key, subIdx)}
+                              onChange={e => setChannelValue(phase.key, ch.key, e.target.value, subIdx)}
+                              placeholder={subLabel || getPlaceholder(phase.key, ch.key)}
+                              className="w-full px-1 py-1.5 border border-gray-200 rounded text-center text-xs focus:ring-2 focus:ring-blue-500 placeholder-gray-300"
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ));
+                  }
+                  // 通常行（展開なし）
+                  return (
+                    <tr key={phase.key}>
+                      <td className="border border-gray-200 px-2 py-2 font-bold text-gray-800 bg-gray-50 text-xs sticky left-0 z-10">
+                        {phase.label}
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      <td className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-600 bg-blue-50">
+                        {calcTotal(phase.key) || ''}
+                      </td>
+                      {activeChannels.map(ch => (
+                        <td key={ch.key} className="border border-gray-200 px-1 py-1">
+                          <input
+                            type="number"
+                            min="0"
+                            value={getChannelValue(phase.key, ch.key)}
+                            onChange={e => setChannelValue(phase.key, ch.key, e.target.value)}
+                            placeholder={getPlaceholder(phase.key, ch.key)}
+                            className="w-full px-1 py-1.5 border border-gray-200 rounded text-center text-xs focus:ring-2 focus:ring-blue-500 placeholder-gray-300"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1620,12 +1658,18 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
           {/* 合計サマリー */}
           <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="grid grid-cols-6 gap-2 text-center">
-              {phases.map(phase => (
-                <div key={phase.key}>
-                  <div className="text-[10px] text-gray-500">{phase.label}</div>
-                  <div className="text-sm font-bold text-blue-700">{calcTotal(phase.key) || '-'}</div>
-                </div>
-              ))}
+              {phases.map(phase => {
+                // screening展開時は1次面接の値をサマリーに表示
+                const total = (phase.subLabels && phase.subLabels.length > 1) 
+                  ? calcTotal(phase.key, 0) 
+                  : calcTotal(phase.key);
+                return (
+                  <div key={phase.key}>
+                    <div className="text-[10px] text-gray-500">{phase.label}{phase.subLabels?.length > 1 ? '(1次)' : ''}</div>
+                    <div className="text-sm font-bold text-blue-700">{total || '-'}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
