@@ -488,36 +488,32 @@ const gasPost = async (action, body = {}) => {
     
     const handlers = {
       // 【保存戦略】
-      // 1. SELECT で既存データを読む（read-merge-write の read）
-      // 2. ロール別マージ: execはexecutive*のみ上書き、staffはexecutive*以外を上書き（fix#7）
-      // 3. upsert ON CONFLICT customer_id でINSERT/UPDATE競合を解消（hotfix）
-      //    fix#4(問診完了即保存)とgoNext(最終ステップ保存)がほぼ同時に発火するため、
-      //    従来のSELECT→INSERT/UPDATE分岐では409 Conflictが発生していた。
-      // 4. DBカラムstatusをJSON内statusと同期（fix#2）
+      // 全保存を常にupsert ON CONFLICT customer_id で実行。
+      // SELECT→IF/ELSE分岐を廃止し、INSERT/UPDATE競合を根本的に解消。
+      // fix#4(問診完了即保存)とgoNext(最終ステップ保存)が同時発火しても安全。
       saveCustomerPreInput: async () => {
         const customerId = body.id || body.customerId;
         const inputData = body.preInputData || body.inputData || {};
         if (!customerId) return { success: false, error: 'IDがありません' };
         
+        // read: 既存データを読む（ロール別マージ用）
         const existing = await sb.from('pre_inputs')
           .select('id, input_data')
           .eq('customer_id', customerId)
           .maybeSingle();
         
-        // v3.1 fix#7: read-merge-write で同時編集のデータ喪失を防ぐ
+        // merge: ロール別マージ（fix#7）
         let merged = inputData;
         if (existing.data?.input_data) {
           const current = existing.data.input_data;
           const role = window.GAS_CONFIG.role || 'staff';
           if (role === 'exec') {
-            // 上層部: 自分のキーだけ上書き、担当者のデータは最新DBから維持
             merged = {
               ...current,
               executiveAnswers: inputData.executiveAnswers || {},
               executiveCompleted: inputData.executiveCompleted || false,
             };
           } else {
-            // 担当者: 上層部のデータは最新DBから維持、それ以外を上書き
             merged = {
               ...inputData,
               executiveAnswers: current.executiveAnswers || inputData.executiveAnswers || {},
@@ -526,25 +522,18 @@ const gasPost = async (action, body = {}) => {
           }
         }
         
-        // v3.1 fix#2: JSON内のstatusをDBカラムにも同期
+        // DB status同期（fix#2）
         const dbStatus = merged.status === '完了' ? '完了'
           : merged.executiveCompleted ? '上層部完了'
           : '入力済み';
         
-        if (existing.data) {
-          const { error } = await sb.from('pre_inputs')
-            .update({ input_data: merged, status: dbStatus })
-            .eq('id', existing.data.id);
-          if (error) throw error;
-        } else {
-          // v3.1 hotfix: upsertで409競合を解消（fix#4即保存とgoNextの同時実行対策）
-          const { error } = await sb.from('pre_inputs')
-            .upsert(
-              { customer_id: customerId, input_data: merged, status: dbStatus },
-              { onConflict: 'customer_id' }
-            );
-          if (error) throw error;
-        }
+        // write: 常にupsert（INSERT or UPDATE on conflict）
+        const { error } = await sb.from('pre_inputs')
+          .upsert(
+            { customer_id: customerId, input_data: merged, status: dbStatus },
+            { onConflict: 'customer_id' }
+          );
+        if (error) throw error;
         return { success: true };
       },
     };
