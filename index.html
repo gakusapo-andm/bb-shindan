@@ -64,7 +64,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v47] Supabase接続完了');
+    console.log('[BB診断 v49] Supabase接続完了');
   </script>
   
   <script src="https://cdn.tailwindcss.com"></script>
@@ -2441,7 +2441,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v47' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v49' };
   },
 
   // ── デバッグデータロード（互換用）──
