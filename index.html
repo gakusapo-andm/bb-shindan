@@ -14,17 +14,30 @@
   <!-- v46: 担当者のみ回答時に上層部の保存済みスコアがチャートに反映するバグ修正（execRadar/mindsetをhasExecAnswersでガード） -->
   <!-- v47: GAS API → Supabase 統合DB 移行（API層のみ差し替え、UI変更なし） -->
   <!-- v48: 03_patch.sql DB関数統合（reserve_inquiry_no RPC化、master save RPC化、password fallback削除） -->
+  <!-- v50: diagnosis_data全データ保存修正, HandoverPanelプロパティ名統一, Public版ハンドラーネスト変換, saveLayerMediaUsage安全化 -->
+  <!-- v51: generatePreInputToken追加, 事前問診URL ?tk=&size=&role= 対応, リダイレクト全パラメータ転送 -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
+    // v51: 全URLパラメータを転送（?tk=, ?size=, ?role= 含む）
     (function() {
       var params = new URLSearchParams(window.location.search);
       if (params.get('id') && !window.location.pathname.includes('/customer')) {
-        var newUrl = window.location.pathname.replace(/\/?$/, '/') + 'customer/?id=' + encodeURIComponent(params.get('id'));
+        var newUrl = window.location.pathname.replace(/\/?$/, '/') + 'customer/?' + params.toString();
         window.location.replace(newUrl);
         return;
       }
     })();
+    // v51: 事前問診URLトークン生成（事前問診v3.1と同一アルゴリズム）
+    window.generatePreInputToken = function(id) {
+      var s = id + 'gksp2026';
+      var h = 0;
+      for (var i = 0; i < s.length; i++) {
+        h = ((h << 5) - h) + s.charCodeAt(i);
+        h = h & h;
+      }
+      return Math.abs(h).toString(36).padStart(8, '0').slice(0, 8);
+    };
   </script>
   <script>
     // ★★★ Supabase 接続設定 ★★★
@@ -64,7 +77,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v49] Supabase接続完了');
+    console.log('[BB診断 v50] Supabase接続完了');
   </script>
   
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1797,13 +1810,18 @@ const getCompanySizeCategory = (sizeLabel) => {
   if (!sizeLabel) return 'small';
   
   // キーベースの判定（COMPANY_SIZE_LISTのkey）
-  if (sizeLabel === 'micro' || sizeLabel === 'small') return 'small';  // ～30名, 31～100名 → small (100名以下)
+  if (sizeLabel === 'micro' || sizeLabel === 'small') return 'small';  // ≤100名 → small
   if (sizeLabel === 'medium') return 'medium';                          // 101～300名 → medium
   if (sizeLabel === 'large' || sizeLabel === 'enterprise') return 'large'; // 301名以上 → large
   
-  // ラベルベースの判定（後方互換性）
-  if (sizeLabel.includes('30名') || sizeLabel.includes('100名') || sizeLabel.includes('50名')) return 'small';
-  if (sizeLabel.includes('300名')) return 'medium';
+  // v51 BugA fix: ラベルベースの判定（先頭数値で判定。旧includes方式は"100〜300名"を誤判定していた）
+  var nums = sizeLabel.match(/\d+/g);
+  if (nums && nums.length > 0) {
+    var first = parseInt(nums[0]);
+    if (first >= 300) return 'large';    // "300〜500名", "500〜1000名", "1000名以上"
+    if (first >= 100) return 'medium';   // "100〜300名"
+    return 'small';                       // "50名未満", "50〜100名"
+  }
   return 'large';
 };
 
@@ -2441,7 +2459,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v49' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v50' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -2538,6 +2556,51 @@ const SUPA_HANDLERS = {
     }
 
     // 2. bb_diagnoses を upsert
+    // v50: funnelData オブジェクトからの抽出（個別プロパティが未設定の場合のフォールバック）
+    var fd = c.funnelData || {};
+    var funnelAwareness = c.funnelAwareness || fd.targetAwareness || fd.awareness || 0;
+    var funnelInterest = c.funnelInterest || fd.interest || 0;
+    var funnelApplications = c.funnelApplications || fd.applications || 0;
+    var funnelScreening = c.funnelScreening || fd.screening || 0;
+    var funnelOffers = c.funnelOffers || fd.offers || 0;
+    var funnelAcceptance = c.funnelAcceptance || fd.acceptance || 0;
+
+    // v50: diagnosis_data に全データバックアップを構築
+    // normalizeGASCustomer が fullData から復元する全フィールドを網羅する
+    var existingDiagData = (c.diagnosisData && typeof c.diagnosisData === 'object' && Object.keys(c.diagnosisData).length > 0) ? c.diagnosisData : {};
+    var fullBackup = Object.assign({}, existingDiagData, {
+      // 回答データ（個別カラムにも保存するが、バックアップとしても保持）
+      staffAnswers: c.staffAnswers || existingDiagData.staffAnswers || {},
+      executiveAnswers: c.executiveAnswers || existingDiagData.executiveAnswers || {},
+      studentAnswers: c.studentAnswers || existingDiagData.studentAnswers || {},
+      // スコアデータ（DBに個別カラムがないため、ここが唯一の保存先）
+      staffScores: c.staffScores || existingDiagData.staffScores || {},
+      executiveScores: c.executiveScores || existingDiagData.executiveScores || {},
+      studentScores: c.studentScores || existingDiagData.studentScores || {},
+      mindsetScores: c.mindsetScores || existingDiagData.mindsetScores || {},
+      staffMindsetScores: c.staffMindsetScores || existingDiagData.staffMindsetScores || {},
+      execMindsetScores: c.execMindsetScores || existingDiagData.execMindsetScores || {},
+      depthScores: c.depthScores || existingDiagData.depthScores || {},
+      // ファネル・手法・ターゲット
+      funnelData: c.funnelData || existingDiagData.funnelData || {},
+      channelLabels: c.channelLabels || existingDiagData.channelLabels || null,
+      recruitmentMethods: c.recruitmentMethods || existingDiagData.recruitmentMethods || {},
+      targetLayers: c.targetLayers || existingDiagData.targetLayers || {},
+      yieldSettings: c.yieldSettings || existingDiagData.yieldSettings || {},
+      industryAverages: c.industryAverages || existingDiagData.industryAverages || {},
+      adjustedAverages: c.adjustedAverages || existingDiagData.adjustedAverages || {},
+      // メモ・課題・目標
+      todayChallenge: c.todayChallenge || existingDiagData.todayChallenge || '',
+      pastChallenges: c.pastChallenges || existingDiagData.pastChallenges || '',
+      improvementGoals: c.improvementGoals || existingDiagData.improvementGoals || {},
+      targetNotes: c.targetNotes || existingDiagData.targetNotes || '',
+      // 問診マスタースナップショット
+      savedQuestionMaster: c.savedQuestionMaster || existingDiagData.savedQuestionMaster || null,
+      questionMasterId: c.questionMasterId || existingDiagData.questionMasterId || null,
+      // 決裁者モードフラグ
+      isDecisionMaker: c.isDecisionMaker || existingDiagData.isDecisionMaker || false,
+    });
+
     var diagData = {
       company_id: companyId,
       inquiry_no: c.inquiryNo || c.id,
@@ -2552,20 +2615,25 @@ const SUPA_HANDLERS = {
       score_vision_empathy: c.scoreVisionEmpathy || 0,
       score_selection_ux: c.scoreSelectionUX || 0,
       score_dialogue: c.scoreDialogue || 0,
-      funnel_awareness: c.funnelAwareness || 0,
-      funnel_interest: c.funnelInterest || 0,
-      funnel_applications: c.funnelApplications || 0,
-      funnel_screening: c.funnelScreening || 0,
-      funnel_offers: c.funnelOffers || 0,
-      funnel_acceptance: c.funnelAcceptance || 0,
+      funnel_awareness: funnelAwareness,
+      funnel_interest: funnelInterest,
+      funnel_applications: funnelApplications,
+      funnel_screening: funnelScreening,
+      funnel_offers: funnelOffers,
+      funnel_acceptance: funnelAcceptance,
       ai_result: c.aiResult || '',
       notes: c.notes || '',
       staff_answers: c.staffAnswers || {},
       executive_answers: c.executiveAnswers || {},
       student_answers: c.studentAnswers || {},
-      diagnosis_data: c.diagnosisData || {},
-      assignee_id: c.assigneeId || null,
+      diagnosis_data: fullBackup,
     };
+    // v50: assignee_id は明示的に値がある場合のみ設定（undefinedの場合はDB既存値を保持）
+    // handleSaveで delete toSave.assigneeId しているため、通常の保存では含まれない
+    // 引き継ぎ実行時のみ assignee_id が設定される
+    if (c.assigneeId !== undefined && c.assigneeId !== null) {
+      diagData.assignee_id = c.assigneeId;
+    }
 
     var res = await sb.from('bb_diagnoses')
       .upsert(diagData, { onConflict: 'inquiry_no' })
@@ -2670,12 +2738,46 @@ const SUPA_HANDLERS = {
   saveYieldMaster: async function(sb, data) {
     var masterData = data.masterData;
     if (!masterData) return { success: false, error: 'データがありません' };
+
+    // v49: ネスト構造 → フラット配列に変換
+    // 4D: master[method][region][industry][size] = { rates }
+    // 値オブジェクト判定: awarenessToInterest プロパティを持つか
+    if (!Array.isArray(masterData) && typeof masterData === 'object') {
+      var flatRows = [];
+      var isRates = function(obj) {
+        return obj && typeof obj === 'object' && ('awarenessToInterest' in obj || 'rate_awareness_to_interest' in obj);
+      };
+      var pushRate = function(method, region, industry, size, rates) {
+        flatRows.push({
+          method_category: method || '',
+          region: region || '',
+          industry: industry || '',
+          company_size: size || '',
+          rate_awareness_to_interest: rates.awarenessToInterest || rates.rate_awareness_to_interest || 0,
+          rate_interest_to_application: rates.interestToApplication || rates.rate_interest_to_application || 0,
+          rate_application_to_screening: rates.applicationToScreening || rates.rate_application_to_screening || 0,
+          rate_screening_to_offer: rates.screeningToOffer || rates.rate_screening_to_offer || 0,
+          rate_offer_to_acceptance: rates.offerToAcceptance || rates.rate_offer_to_acceptance || 0
+        });
+      };
+      // 再帰的に走査して rates オブジェクトを発見
+      var walk = function(obj, keys) {
+        if (!obj || typeof obj !== 'object') return;
+        if (isRates(obj)) {
+          // keys = [method?, region?, industry?, size?] の順
+          pushRate(keys[0] || '', keys[1] || '', keys[2] || '', keys[3] || '', obj);
+          return;
+        }
+        Object.entries(obj).forEach(function(e) { walk(e[1], keys.concat(e[0])); });
+      };
+      walk(masterData, []);
+      masterData = flatRows;
+    }
+
     if (!Array.isArray(masterData) || masterData.length === 0) {
-      // 空配列の場合は全削除のみ
       await sb.from('yield_rates').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       return { success: true };
     }
-    // id列を除去（DB側で自動採番）
     var cleaned = masterData.map(function(r) {
       var row = Object.assign({}, r);
       delete row.id;
@@ -2753,10 +2855,10 @@ const SUPA_HANDLERS = {
   },
 
   // ── 質問マスター取得（公開版、事前問診用）──
+  // v50: 認証版と同じネスト構造を返すように変換追加
   getQuestionMasterPublic: async function(sb) {
-    var res = await sb.from('questions').select('*').order('sort_order');
-    if (res.error) throw new Error(res.error.message);
-    return { success: true, data: res.data || [] };
+    // 認証版と同じロジックを使用（RLSで公開アクセスが許可されている前提）
+    return SUPA_HANDLERS.getQuestionMaster(sb);
   },
 
   // ── 質問マスター保存（v48: RPC replace_questions でアトミック置換）──
@@ -2764,6 +2866,118 @@ const SUPA_HANDLERS = {
   saveQuestionMaster: async function(sb, data) {
     var questionsData = data.questionsData;
     if (!questionsData) return { success: false, error: 'データがありません' };
+
+    // v49: ネスト構造 { base: { small: { staff: [...] } } } → フラット配列に変換
+    var flatRows = [];
+    if (!Array.isArray(questionsData) && typeof questionsData === 'object') {
+      var sections = ['base', 'industry', 'targetLayer', 'depth', 'recruitmentMethod'];
+      sections.forEach(function(section) {
+        var sectionData = questionsData[section];
+        if (!sectionData || typeof sectionData !== 'object') return;
+
+        if (section === 'base') {
+          // base[size][role] = [questions]
+          Object.entries(sectionData).forEach(function(sizeEntry) {
+            var size = sizeEntry[0]; var roles = sizeEntry[1];
+            Object.entries(roles || {}).forEach(function(roleEntry) {
+              var role = roleEntry[0]; var questions = roleEntry[1];
+              (questions || []).forEach(function(q, idx) {
+                flatRows.push({
+                  section: 'base', company_size: size, role: role,
+                  industry: null, target_layer: null, depth_phase: q.depthKey || null, method_category: null,
+                  question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
+                  student_question: q.studentQuestion || '', student_choice_a: q.studentChoiceA || '', student_choice_b: q.studentChoiceB || '',
+                  correct_answer: q.correctAnswer || 'A', points: q.points || 2,
+                  axis_type: q.axisType || '', axis_key: q.axisKey || '', gap_check: q.gapCheck || false,
+                  sort_order: flatRows.length
+                });
+              });
+            });
+          });
+        } else if (section === 'recruitmentMethod') {
+          // recruitmentMethod[category][role] = [questions]
+          Object.entries(sectionData).forEach(function(catEntry) {
+            var cat = catEntry[0]; var roles = catEntry[1];
+            Object.entries(roles || {}).forEach(function(roleEntry) {
+              var role = roleEntry[0]; var questions = roleEntry[1];
+              (questions || []).forEach(function(q) {
+                flatRows.push({
+                  section: 'recruitmentMethod', company_size: null, role: role,
+                  industry: null, target_layer: null, depth_phase: q.depthKey || null, method_category: cat,
+                  question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
+                  student_question: q.studentQuestion || '', student_choice_a: q.studentChoiceA || '', student_choice_b: q.studentChoiceB || '',
+                  correct_answer: q.correctAnswer || 'A', points: q.points || 2,
+                  axis_type: q.axisType || '', axis_key: q.axisKey || '', gap_check: q.gapCheck || false,
+                  sort_order: flatRows.length
+                });
+              });
+            });
+          });
+        } else if (section === 'industry') {
+          // industry[ind][size][role] = [questions]
+          Object.entries(sectionData).forEach(function(indEntry) {
+            var ind = indEntry[0]; var sizes = indEntry[1];
+            Object.entries(sizes || {}).forEach(function(sizeEntry) {
+              var size = sizeEntry[0]; var roles = sizeEntry[1];
+              Object.entries(roles || {}).forEach(function(roleEntry) {
+                var role = roleEntry[0]; var questions = roleEntry[1];
+                (questions || []).forEach(function(q) {
+                  flatRows.push({
+                    section: 'industry', company_size: size, role: role,
+                    industry: ind, target_layer: null, depth_phase: q.depthKey || null, method_category: null,
+                    question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
+                    student_question: q.studentQuestion || '', student_choice_a: q.studentChoiceA || '', student_choice_b: q.studentChoiceB || '',
+                    correct_answer: q.correctAnswer || 'A', points: q.points || 2,
+                    axis_type: q.axisType || '', axis_key: q.axisKey || '', gap_check: q.gapCheck || false,
+                    sort_order: flatRows.length
+                  });
+                });
+              });
+            });
+          });
+        } else if (section === 'targetLayer') {
+          // targetLayer[layer][role] = [questions]
+          Object.entries(sectionData).forEach(function(layerEntry) {
+            var layer = layerEntry[0]; var roles = layerEntry[1];
+            Object.entries(roles || {}).forEach(function(roleEntry) {
+              var role = roleEntry[0]; var questions = roleEntry[1];
+              (questions || []).forEach(function(q) {
+                flatRows.push({
+                  section: 'targetLayer', company_size: null, role: role,
+                  industry: null, target_layer: layer, depth_phase: q.depthKey || null, method_category: null,
+                  question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
+                  student_question: q.studentQuestion || '', student_choice_a: q.studentChoiceA || '', student_choice_b: q.studentChoiceB || '',
+                  correct_answer: q.correctAnswer || 'A', points: q.points || 2,
+                  axis_type: q.axisType || '', axis_key: q.axisKey || '', gap_check: q.gapCheck || false,
+                  sort_order: flatRows.length
+                });
+              });
+            });
+          });
+        } else if (section === 'depth') {
+          // depth[phase][role] = [questions]
+          Object.entries(sectionData).forEach(function(phaseEntry) {
+            var phase = phaseEntry[0]; var roles = phaseEntry[1];
+            Object.entries(roles || {}).forEach(function(roleEntry) {
+              var role = roleEntry[0]; var questions = roleEntry[1];
+              (questions || []).forEach(function(q) {
+                flatRows.push({
+                  section: 'depth', company_size: null, role: role,
+                  industry: null, target_layer: null, depth_phase: phase, method_category: null,
+                  question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
+                  student_question: q.studentQuestion || '', student_choice_a: q.studentChoiceA || '', student_choice_b: q.studentChoiceB || '',
+                  correct_answer: q.correctAnswer || 'A', points: q.points || 2,
+                  axis_type: q.axisType || '', axis_key: q.axisKey || '', gap_check: q.gapCheck || false,
+                  sort_order: flatRows.length
+                });
+              });
+            });
+          });
+        }
+      });
+      questionsData = flatRows;
+    }
+
     if (!Array.isArray(questionsData) || questionsData.length === 0) {
       await sb.from('questions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       return { success: true };
@@ -2870,10 +3084,9 @@ const SUPA_HANDLERS = {
   },
 
   // ── 採用手法マスター取得（公開版、事前問診用）──
+  // v50: 認証版と同じネスト構造を返すように変換追加
   getRecruitmentMethodsPublic: async function(sb) {
-    var res = await sb.from('recruitment_methods').select('*');
-    if (res.error) throw new Error(res.error.message);
-    return { success: true, data: res.data || [] };
+    return SUPA_HANDLERS.getRecruitmentMethods(sb);
   },
 
   // ── 採用手法マスター保存（v48: RPC replace_recruitment_methods でアトミック置換）──
@@ -2881,6 +3094,27 @@ const SUPA_HANDLERS = {
   saveRecruitmentMethods: async function(sb, data) {
     var methodsData = data.methodsData;
     if (!methodsData) return { success: false, error: 'データがありません' };
+
+    // v49: ネスト構造 { key: { name, category, ... } } → フラット配列に変換
+    if (!Array.isArray(methodsData) && typeof methodsData === 'object') {
+      var flatRows = [];
+      Object.entries(methodsData).forEach(function(entry) {
+        var key = entry[0]; var m = entry[1];
+        if (!m || typeof m !== 'object') return;
+        flatRows.push({
+          key: key,
+          name: m.name || '',
+          category: m.category || '',
+          target_layers: JSON.stringify(m.targetLayers || []),
+          description: m.description || '',
+          phase_surface: m.phaseMapping?.surface || 0,
+          phase_middle: m.phaseMapping?.middle || 0,
+          phase_deep: m.phaseMapping?.deep || 0
+        });
+      });
+      methodsData = flatRows;
+    }
+
     if (!Array.isArray(methodsData) || methodsData.length === 0) {
       await sb.from('recruitment_methods').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       return { success: true };
@@ -2904,22 +3138,38 @@ const SUPA_HANDLERS = {
     return { success: true, data: res.data || [] };
   },
 
-  // ── 媒体利用率マスター保存（v48: delete + upsert で安全に置換）──
+  // ── 媒体利用率マスター保存（v50: エラー時リカバリ付き）──
   saveLayerMediaUsage: async function(sb, data) {
     var usageData = data.usageData;
     if (!usageData) return { success: false, error: 'データがありません' };
-    // 全削除 → 全INSERT（媒体利用率にはRPC関数がないためインライン実装を維持）
-    await sb.from('media_usage_rates').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    if (Array.isArray(usageData) && usageData.length > 0) {
-      var rows = usageData.map(function(r) {
-        var row = Object.assign({}, r);
-        delete row.id;
-        delete row.created_at;
-        delete row.updated_at;
-        return row;
-      });
-      var res = await sb.from('media_usage_rates').insert(rows);
-      if (res.error) throw new Error('媒体利用率保存失敗: ' + res.error.message);
+    if (!Array.isArray(usageData) || usageData.length === 0) {
+      // 空データの場合のみ全削除（意図的なクリア）
+      await sb.from('media_usage_rates').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      return { success: true };
+    }
+    var rows = usageData.map(function(r) {
+      var row = Object.assign({}, r);
+      delete row.id;
+      delete row.created_at;
+      delete row.updated_at;
+      return row;
+    });
+    // v50: 先にINSERTを試み、成功したら旧データを削除（データ消失防止）
+    // 一時的に重複するが、全件成功後に旧データを消すので安全
+    try {
+      // 現在のIDリストを取得
+      var oldRes = await sb.from('media_usage_rates').select('id');
+      var oldIds = (oldRes.data || []).map(function(r) { return r.id; });
+      // 新データINSERT
+      var insRes = await sb.from('media_usage_rates').insert(rows).select('id');
+      if (insRes.error) throw new Error('媒体利用率保存失敗: ' + insRes.error.message);
+      // 旧データ削除（INSERTが成功した後のみ）
+      if (oldIds.length > 0) {
+        await sb.from('media_usage_rates').delete().in('id', oldIds);
+      }
+    } catch(e) {
+      // INSERT失敗時: 旧データはそのまま残る
+      throw e;
     }
     return { success: true };
   },
@@ -4419,7 +4669,7 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
   const hasContent = (obj) => obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).length > 0;
   
   // 1. 診断データJSON から全データ復元（最も信頼性の高いバックアップ）
-  const fullData = safeParse(c['診断データJSON']) || {};
+  const fullData = safeParse(c['診断データJSON']) || safeParse(c.diagnosisData) || {};
   
   // 2. 回答データ: GASパース済み → 列の生JSON → fullData → 空
   const staffAnswers = (hasContent(c.staffAnswers) ? c.staffAnswers : null)
@@ -8561,7 +8811,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             </div>
           </div>
           
-          {/* 事前問診パネル */}
+          {/* 事前問診パネル (v51: ?tk=&size=&role= 対応) */}
           {data.inquiryNo && (
             <div className="mt-6 pt-6 border-t border-gray-200">
               <h4 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
@@ -8573,24 +8823,31 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                   <span className={`text-xs px-2 py-0.5 rounded-full font-normal ${
                     data._preInputStatus === '完了' 
                       ? 'bg-green-100 text-green-700' 
-                      : 'bg-amber-100 text-amber-700'
+                      : data._preInputStatus === '上層部完了'
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'bg-amber-100 text-amber-700'
                   }`}>
-                    {data._preInputStatus === '完了' ? '回答済み' : '入力中'}
+                    {data._preInputStatus === '完了' ? '回答済み' : data._preInputStatus === '上層部完了' ? '上層部済' : '入力中'}
                   </span>
                 )}
               </h4>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* URL発行・コピー */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* 担当者用URL発行 */}
                 <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl">
-                  <p className="text-xs text-indigo-700 mb-3">
-                    顧客に送付する事前問診フォームのURLを生成します。
+                  <p className="text-xs text-indigo-700 mb-2 font-bold">担当者用URL</p>
+                  <p className="text-xs text-indigo-600 mb-3">
+                    採用担当者に送付する事前問診フォームのURLです。
                   </p>
                   <button
                     onClick={() => {
-                      const url = 'https://gakusapo-andm.github.io/bb-shindan/customer/?id=' + encodeURIComponent(data.inquiryNo);
+                      const id = data.inquiryNo;
+                      const tk = window.generatePreInputToken(id);
+                      const size = getCompanySizeCategory(data.companySize);
+                      const base = 'https://gakusapo-andm.github.io/bb-shindan/customer/';
+                      const url = base + '?id=' + encodeURIComponent(id) + '&tk=' + tk + (size ? '&size=' + size : '');
                       navigator.clipboard.writeText(url).then(() => {
-                        alert('URLをコピーしました。\n\n' + url);
+                        alert('担当者用URLをコピーしました。\n\n' + url);
                       }).catch(() => {
                         prompt('以下のURLをコピーしてください:', url);
                       });
@@ -8600,13 +8857,42 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                     </svg>
-                    URL発行・コピー
+                    担当者URL コピー
+                  </button>
+                </div>
+                
+                {/* 上層部用URL発行 */}
+                <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl">
+                  <p className="text-xs text-purple-700 mb-2 font-bold">上層部用URL</p>
+                  <p className="text-xs text-purple-600 mb-3">
+                    経営層・管理職に送付する上層部専用問診URLです。
+                  </p>
+                  <button
+                    onClick={() => {
+                      const id = data.inquiryNo;
+                      const tk = window.generatePreInputToken(id);
+                      const size = getCompanySizeCategory(data.companySize);
+                      const base = 'https://gakusapo-andm.github.io/bb-shindan/customer/';
+                      const url = base + '?id=' + encodeURIComponent(id) + '&tk=' + tk + (size ? '&size=' + size : '') + '&role=exec';
+                      navigator.clipboard.writeText(url).then(() => {
+                        alert('上層部用URLをコピーしました。\n\n' + url);
+                      }).catch(() => {
+                        prompt('以下のURLをコピーしてください:', url);
+                      });
+                    }}
+                    className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium text-sm transition flex items-center justify-center gap-2 shadow"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    上層部URL コピー
                   </button>
                 </div>
                 
                 {/* 事前データ取込 */}
                 <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                  <p className="text-xs text-green-700 mb-3">
+                  <p className="text-xs text-green-700 mb-2 font-bold">データ取込</p>
+                  <p className="text-xs text-green-600 mb-3">
                     顧客が入力した事前問診データを取り込みます。
                   </p>
                   <button
@@ -11523,8 +11809,8 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
           valB = b.inquiryNo || '';
           break;
         case 'score':
-          valA = calcFinalScore(a);
-          valB = calcFinalScore(b);
+          valA = calcFinalScore(a) || a.finalScore || a.totalScore || 0;
+          valB = calcFinalScore(b) || b.finalScore || b.totalScore || 0;
           break;
         case 'industry':
           valA = a.industry || '';
@@ -11707,7 +11993,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
               {sortedCustomers.map((c, idx) => {
                 // calcFinalScoreでスコアを計算し、0の場合は保存されたfinalScoreを使用
                 const calculatedScore = calcFinalScore(c);
-                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c['総合スコア'] || 0);
+                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || c['総合スコア'] || 0);
                 const rank = determineRank(score);
                 return (
                   <tr 
@@ -11760,7 +12046,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
         <div className="space-y-2 max-h-[500px] overflow-y-auto">
           {sortedCustomers.map(c => {
             const calculatedScore = calcFinalScore(c);
-            const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c['総合スコア'] || 0);
+            const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || c['総合スコア'] || 0);
             const rank = determineRank(score);
             return (
               <div 
@@ -11801,7 +12087,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
             {['S', 'A', 'B', 'C', 'D'].map(rank => {
               const count = filteredCustomers.filter(c => {
                 const calculatedScore = calcFinalScore(c);
-                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c['総合スコア'] || 0);
+                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || c['総合スコア'] || 0);
                 return determineRank(score) === rank;
               }).length;
               return (
@@ -12393,15 +12679,17 @@ const HandoverPanel = () => {
   // フィルタ済み顧客
   const filteredCustomers = useMemo(() => {
     return allCustomers.filter(c => {
-      const rawId = c['担当者ID'] ?? c.assigneeId ?? '';
+      // v50: Supabase版プロパティ名に統一（GASカラム名フォールバック付き）
+      const rawId = c.assigneeId ?? c['担当者ID'] ?? '';
       const paddedId = String(rawId || '').padStart(4, '0');
-      const assigneeId = (paddedId && paddedId !== '0000') ? paddedId : String(c['問い合わせNo'] || '').padStart(13, '0').substring(0, 4);
+      const inquiryNo = c.inquiryNo || c['問い合わせNo'] || '';
+      const assigneeId = (paddedId && paddedId !== '0000') ? paddedId : String(inquiryNo).padStart(13, '0').substring(0, 4);
       if (filterAssignee !== 'all' && assigneeId !== filterAssignee) return false;
       if (searchText) {
         const text = searchText.toLowerCase();
-        const name = (c['会社名'] || '').toLowerCase();
-        const no = (c['問い合わせNo'] || '').toLowerCase();
-        const contact = (c['担当者名'] || '').toLowerCase();
+        const name = (c.companyName || c['会社名'] || '').toLowerCase();
+        const no = (c.inquiryNo || c['問い合わせNo'] || '').toLowerCase();
+        const contact = (c.contactName || c['担当者名'] || '').toLowerCase();
         if (!name.includes(text) && !no.includes(text) && !contact.includes(text)) return false;
       }
       return true;
@@ -12413,7 +12701,7 @@ const HandoverPanel = () => {
     if (selectedCustomers.size === filteredCustomers.length) {
       setSelectedCustomers(new Set());
     } else {
-      setSelectedCustomers(new Set(filteredCustomers.map(c => c['問い合わせNo'])));
+      setSelectedCustomers(new Set(filteredCustomers.map(c => c.inquiryNo || c['問い合わせNo'])));
     }
   };
   
@@ -12428,9 +12716,11 @@ const HandoverPanel = () => {
   
   // 担当者IDの取得ヘルパー（統一ロジック）
   const getAssigneeId = (c) => {
-    const raw = c['担当者ID'] ?? c.assigneeId ?? '';
+    // v50: Supabase版プロパティ名優先
+    const raw = c.assigneeId ?? c['担当者ID'] ?? '';
     const padded = String(raw || '').padStart(4, '0');
-    return (padded && padded !== '0000') ? padded : String(c['問い合わせNo'] || '').padStart(13, '0').substring(0, 4);
+    const inquiryNo = c.inquiryNo || c['問い合わせNo'] || '';
+    return (padded && padded !== '0000') ? padded : String(inquiryNo).padStart(13, '0').substring(0, 4);
   };
   
   // 引き継ぎ実行
@@ -12439,7 +12729,7 @@ const HandoverPanel = () => {
     if (!toStudentId) { setError('引き継ぎ先メンバーを選択してください'); return; }
     
     const toMember = memberMap[toStudentId];
-    const selectedList = allCustomers.filter(c => selectedCustomers.has(c['問い合わせNo']));
+    const selectedList = allCustomers.filter(c => selectedCustomers.has(c.inquiryNo || c['問い合わせNo']));
     const fromIds = [...new Set(selectedList.map(c => getAssigneeId(c)))];
     const fromNames = fromIds.map(id => memberMap[id]?.name || id).join(', ');
     
@@ -12594,7 +12884,7 @@ const HandoverPanel = () => {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredCustomers.map((c, i) => {
-                  const no = c['問い合わせNo'] || '';
+                  const no = c.inquiryNo || c['問い合わせNo'] || '';
                   const aid = getAssigneeId(c);
                   const selected = selectedCustomers.has(no);
                   return (
@@ -12611,14 +12901,14 @@ const HandoverPanel = () => {
                           className="rounded border-gray-300 text-orange-500 focus:ring-orange-400"
                         />
                       </td>
-                      <td className="px-3 py-2 font-medium text-gray-800">{c['会社名'] || '-'}</td>
+                      <td className="px-3 py-2 font-medium text-gray-800">{c.companyName || c['会社名'] || '-'}</td>
                       <td className="px-3 py-2 font-mono text-xs text-gray-500">{no}</td>
                       <td className="px-3 py-2">
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs">
                           {aid} {memberMap[aid]?.name ? `(${memberMap[aid].name})` : ''}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{(c['診断日時'] || '').split(' ')[0]}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{(c.diagnosisDate || c['診断日時'] || '').split(' ')[0]}</td>
                     </tr>
                   );
                 })}
@@ -15149,7 +15439,7 @@ function saveCustomer(customer) {
     customer.companySize || '',
     customer.diagnosisDate || '',
     customer.inquiryNo || '',
-    customer.finalScore || 0,
+    customer.finalScore || customer.totalScore || 0,
     customer.rank || '',
     customer.diagnosisType || '',
     customer.notes || '',
@@ -16564,7 +16854,9 @@ const App = () => {
       }
       
       const preInput = typeof result.data === 'string' ? JSON.parse(result.data) : result.data;
-      const status = preInput.status || result.status || '';
+      const status = preInput.status === '完了' ? '完了'
+        : preInput.executiveCompleted ? '上層部完了'
+        : preInput.status || result.status || '';
       
       // 職種キー→ラベル変換
       const JOB_TYPE_LABELS = {
