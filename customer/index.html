@@ -488,9 +488,9 @@ const gasPost = async (action, body = {}) => {
     
     const handlers = {
       // 【保存戦略】
-      // 全保存を常にupsert ON CONFLICT customer_id で実行。
-      // SELECT→IF/ELSE分岐を廃止し、INSERT/UPDATE競合を根本的に解消。
-      // fix#4(問診完了即保存)とgoNext(最終ステップ保存)が同時発火しても安全。
+      // PostgRESTのupsertはスキーマキャッシュ問題で409が解消しないため、
+      // DB側のRPC関数(upsert_pre_input)でSQL ON CONFLICTを直接実行する。
+      // SECURITY DEFINER なのでRLSをバイパスし、確実にupsertされる。
       saveCustomerPreInput: async () => {
         const customerId = body.id || body.customerId;
         const inputData = body.preInputData || body.inputData || {};
@@ -527,12 +527,12 @@ const gasPost = async (action, body = {}) => {
           : merged.executiveCompleted ? '上層部完了'
           : '入力済み';
         
-        // write: 常にupsert（INSERT or UPDATE on conflict）
-        const { error } = await sb.from('pre_inputs')
-          .upsert(
-            { customer_id: customerId, input_data: merged, status: dbStatus },
-            { onConflict: 'customer_id' }
-          );
+        // write: RPC経由でDB側ON CONFLICT実行（PostgREST upsertの409問題を回避）
+        const { error } = await sb.rpc('upsert_pre_input', {
+          p_customer_id: customerId,
+          p_input_data: merged,
+          p_status: dbStatus
+        });
         if (error) throw error;
         return { success: true };
       },
