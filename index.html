@@ -2615,7 +2615,50 @@ const SUPA_HANDLERS = {
   getYieldMaster: async function(sb) {
     var res = await sb.from('yield_rates').select('*');
     if (res.error) throw new Error(res.error.message);
-    return { success: true, data: res.data || [] };
+    var rows = res.data || [];
+    if (rows.length === 0) return { success: true, data: null };
+
+    // v49: フラット行 → ネスト構造に変換
+    // 新4D構造: master[methodCategory][region][industry][companySize] = { awarenessToInterest, ... }
+    var nested = {};
+    rows.forEach(function(row) {
+      var method = row.method_category || '';
+      var region = row.region || '';
+      var industry = row.industry || '';
+      var size = row.company_size || '';
+      var rates = {
+        awarenessToInterest: parseFloat(row.rate_awareness_to_interest) || 0,
+        interestToApplication: parseFloat(row.rate_interest_to_application) || 0,
+        applicationToScreening: parseFloat(row.rate_application_to_screening) || 0,
+        screeningToOffer: parseFloat(row.rate_screening_to_offer) || 0,
+        offerToAcceptance: parseFloat(row.rate_offer_to_acceptance) || 0
+      };
+
+      if (method) {
+        // 新4D構造: method → region → industry → size
+        if (!nested[method]) nested[method] = {};
+        if (region) {
+          if (!nested[method][region]) nested[method][region] = {};
+          if (!nested[method][region][industry]) nested[method][region][industry] = {};
+          nested[method][region][industry][size] = rates;
+        } else {
+          // regionなし: method → industry → size
+          if (!nested[method][industry]) nested[method][industry] = {};
+          nested[method][industry][size] = rates;
+        }
+      } else {
+        // methodなし: 旧3D構造 region → industry → size
+        if (region) {
+          if (!nested[region]) nested[region] = {};
+          if (!nested[region][industry]) nested[region][industry] = {};
+          nested[region][industry][size] = rates;
+        } else {
+          if (!nested[industry]) nested[industry] = {};
+          nested[industry][size] = rates;
+        }
+      }
+    });
+    return { success: true, data: nested };
   },
 
   // ── 歩留まりマスター保存（v48: RPC replace_yield_rates でアトミック置換）──
@@ -2649,7 +2692,64 @@ const SUPA_HANDLERS = {
   getQuestionMaster: async function(sb) {
     var res = await sb.from('questions').select('*').order('sort_order');
     if (res.error) throw new Error(res.error.message);
-    return { success: true, data: res.data || [] };
+    var rows = res.data || [];
+    if (rows.length === 0) return { success: true, data: null };
+
+    // v49: フラット行 → UIが期待するネスト構造に変換
+    // { base: { small: { staff: [...], executive: [...] }, ... }, recruitmentMethod: { ... }, industry: {}, targetLayer: {}, depth: {} }
+    var nested = { base: {}, recruitmentMethod: {}, industry: {}, targetLayer: {}, depth: {} };
+
+    rows.forEach(function(row) {
+      var qObj = {
+        id: row.question_id || '',
+        question: row.question_text || '',
+        choiceA: row.choice_a || '',
+        choiceB: row.choice_b || '',
+        studentQuestion: row.student_question || '',
+        studentChoiceA: row.student_choice_a || '',
+        studentChoiceB: row.student_choice_b || '',
+        correctAnswer: row.correct_answer || 'A',
+        points: row.points || 2,
+        axisType: row.axis_type || '',
+        axisKey: row.axis_key || '',
+        gapCheck: row.gap_check || false,
+        depthKey: row.depth_phase || null
+      };
+
+      var section = row.section || 'base';
+      var role = row.role || 'staff';
+
+      if (section === 'base') {
+        var size = row.company_size || 'small';
+        if (!nested.base[size]) nested.base[size] = {};
+        if (!nested.base[size][role]) nested.base[size][role] = [];
+        nested.base[size][role].push(qObj);
+      } else if (section === 'recruitmentMethod') {
+        var cat = row.method_category || '';
+        if (!nested.recruitmentMethod[cat]) nested.recruitmentMethod[cat] = {};
+        if (!nested.recruitmentMethod[cat][role]) nested.recruitmentMethod[cat][role] = [];
+        nested.recruitmentMethod[cat][role].push(qObj);
+      } else if (section === 'industry') {
+        var ind = row.industry || '';
+        var sz = row.company_size || 'small';
+        if (!nested.industry[ind]) nested.industry[ind] = {};
+        if (!nested.industry[ind][sz]) nested.industry[ind][sz] = {};
+        if (!nested.industry[ind][sz][role]) nested.industry[ind][sz][role] = [];
+        nested.industry[ind][sz][role].push(qObj);
+      } else if (section === 'targetLayer') {
+        var layer = row.target_layer || '';
+        if (!nested.targetLayer[layer]) nested.targetLayer[layer] = {};
+        if (!nested.targetLayer[layer][role]) nested.targetLayer[layer][role] = [];
+        nested.targetLayer[layer][role].push(qObj);
+      } else if (section === 'depth') {
+        var phase = row.depth_phase || '';
+        if (!nested.depth[phase]) nested.depth[phase] = {};
+        if (!nested.depth[phase][role]) nested.depth[phase][role] = [];
+        nested.depth[phase][role].push(qObj);
+      }
+    });
+
+    return { success: true, data: nested };
   },
 
   // ── 質問マスター取得（公開版、事前問診用）──
@@ -2742,7 +2842,31 @@ const SUPA_HANDLERS = {
   getRecruitmentMethods: async function(sb) {
     var res = await sb.from('recruitment_methods').select('*');
     if (res.error) throw new Error(res.error.message);
-    return { success: true, data: res.data || [] };
+    var rows = res.data || [];
+    if (rows.length === 0) return { success: true, data: {} };
+
+    // v49: フラット行 → { key: { name, category, targetLayers, description, phaseMapping } }
+    var nested = {};
+    rows.forEach(function(row) {
+      var key = row.key || '';
+      if (!key) return;
+      var targetLayers = row.target_layers;
+      if (typeof targetLayers === 'string') {
+        try { targetLayers = JSON.parse(targetLayers); } catch(e) { targetLayers = []; }
+      }
+      nested[key] = {
+        name: row.name || '',
+        category: row.category || '',
+        targetLayers: Array.isArray(targetLayers) ? targetLayers : [],
+        description: row.description || '',
+        phaseMapping: {
+          surface: parseFloat(row.phase_surface) || 0,
+          middle: parseFloat(row.phase_middle) || 0,
+          deep: parseFloat(row.phase_deep) || 0
+        }
+      };
+    });
+    return { success: true, data: nested };
   },
 
   // ── 採用手法マスター取得（公開版、事前問診用）──
