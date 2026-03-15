@@ -15,7 +15,40 @@
   <!-- v47: GAS API → Supabase 統合DB 移行（API層のみ差し替え、UI変更なし） -->
   <!-- v48: 03_patch.sql DB関数統合（reserve_inquiry_no RPC化、master save RPC化、password fallback削除） -->
   <!-- v50: diagnosis_data全データ保存修正, HandoverPanelプロパティ名統一, Public版ハンドラーネスト変換, saveLayerMediaUsage安全化 -->
-  <!-- v51: generatePreInputToken追加, 事前問診URL ?tk=&size=&role= 対応, リダイレクト全パラメータ転送 -->
+  <!-- v51: generatePreInputToken追加, 事前問診URL ?tk=&size=&role= 対応, リダイレクト全パラメータ転送, 課題マッピング -->
+  <!--
+    ============================================================
+    【設計思想メモ】
+
+    ■ 事前問診との連携アーキテクチャ
+    BB診断(本ファイル) → URL発行 → 顧客が customer/index.html で入力 → pre_inputs テーブル
+    → BB診断の「事前データ取込」ボタン → handleImportPreInput() → currentData にマージ
+
+    ■ フィールド名マッピング（事前問診 → BB診断）
+    事前問診側のフィールド名とBB診断側のフィールド名は歴史的経緯で異なる。
+    handleImportPreInput の buildMergedData() 内で変換する。
+      challengeToSolve → todayChallenge（今日解決したいこと）
+      pastAttempts     → pastChallenges（過去に挑戦してきたこと）
+      staffAnswers     → staffAnswers（同名、そのまま）
+      executiveAnswers → executiveAnswers（同名、そのまま）
+      funnelData       → funnelData（深くマージ。screeningSteps含む）
+      targetLayers     → targetLayers（そのまま）
+      recruitmentMethods → recruitmentMethods（active/priorityをマージ、budget等は保持）
+
+    ■ 企業規模の統一スケール（全システム共通）
+    getCompanySizeCategory() が Source of Truth。
+      small  = 100名以下（micro + small）
+      medium = 101〜300名
+      large  = 301名以上（large + enterprise）
+    DB関数 get_company_size()、事前問診 COMPANY_SIZES も同一境界値。
+    InputFormのセレクトボックスはテキストラベル("50〜100名"等)で保存される。
+    getCompanySizeCategory() が先頭数値を抽出してキーに変換する。
+
+    ■ トークン認証
+    generatePreInputToken(id) = hash(id + 'gksp2026') → base36 8文字
+    事前問診側で同一関数で検証。DB認証ではなくアプリ層バリデーション。
+    ============================================================
+  -->
   <!-- ============================================================ -->
   <script>
     // 事前問診リダイレクト: ?id= パラメータ付きアクセスはcustomer/に転送
@@ -29,6 +62,11 @@
       }
     })();
     // v51: 事前問診URLトークン生成（事前問診v3.1と同一アルゴリズム）
+    // 【設計意図】
+    // URLの ?tk= パラメータとして付与し、事前問診側で検証する。
+    // DB認証ではなくアプリ層の簡易バリデーション。目的は「URLを知らない人のアクセス防止」。
+    // シード 'gksp2026' は固定。暗号学的強度は求めていない（推測困難なら十分）。
+    // BB診断側と事前問診側で同一アルゴリズムを持つ。関数を共有する仕組みはなく、コピー。
     window.generatePreInputToken = function(id) {
       var s = id + 'gksp2026';
       var h = 0;
@@ -1806,6 +1844,11 @@ const findMethodQuestionTargetArray = (master, categoryName, mMaster, roleKey, q
 };
 
 // 人数規模からカテゴリを判定（質問マスターは3段階: small/medium/large）
+// 【企業規模スケール統一】全システム共通の Source of Truth
+// この関数がBB診断、事前問診、DB関数(get_company_size)全てのベース。
+// small(≤100名) / medium(101-300名) / large(301名+) の3段階。
+// COMPANY_SIZE_LIST(5段階キー)やInputFormテキストラベルを正規化する。
+// v51 BugA fix: 旧includes方式は"100〜300名"を誤判定 → 先頭数値抽出方式に修正。
 const getCompanySizeCategory = (sizeLabel) => {
   if (!sizeLabel) return 'small';
   
@@ -8811,7 +8854,15 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             </div>
           </div>
           
-          {/* 事前問診パネル (v51: ?tk=&size=&role= 対応) */}
+          {/* 事前問診パネル (v51: ?tk=&size=&role= 対応)
+              【設計意図】
+              3ボタン構成: 担当者URL / 上層部URL / データ取込
+              - 担当者URLと上層部URLを分離することで、BB診断の②→④の流れで担当者URLを、
+                ⑤の流れで上層部URLをそれぞれ発行できる。
+              - URL生成はクライアントサイド完結（generatePreInputToken + getCompanySizeCategory）。
+              - 上層部URLには必ず &size= を含める（事前問診側fix#5のガード条件）。
+              - データ取込は handleImportPreInput() を呼び出し、確認後にcurrentDataにマージ。
+          */}
           {data.inquiryNo && (
             <div className="mt-6 pt-6 border-t border-gray-200">
               <h4 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
@@ -16826,7 +16877,19 @@ const App = () => {
     }
   };
   
+  // ========================================
   // 事前問診データ取込
+  // ========================================
+  // 【設計意図】
+  // pre_inputs テーブルから顧客の事前入力データを読み取り、BB診断の currentData にマージする。
+  // フィールド名変換（事前問診→BB診断）:
+  //   challengeToSolve → todayChallenge, pastAttempts → pastChallenges
+  // マージ方針:
+  //   - 問診回答(staffAnswers/executiveAnswers): 事前問診データで上書き
+  //   - 採用手法: active/priorityは上書き、budget等の既存データは保持
+  //   - ファネル: yearData構造を深くマージ（screeningSteps含む）
+  //   - メモ: 職種情報を追記（既存メモは保持）
+  // 上書き確認ダイアログを表示し、ユーザーが明示的に承認してからマージする。
   const handleImportPreInput = async (inquiryNo) => {
     if (!inquiryNo) {
       alert('問い合わせ番号がありません。');
@@ -16897,8 +16960,10 @@ const App = () => {
         (methodList ? methodList + '\n' : '') +
         `担当者問診: ${staffCount}問回答\n` +
         `上層部問診: ${execCount}問回答\n` +
-        `ファネル: ${funnelSummary}\n\n` +
-        `※ 現在の入力内容に上書きされます。よろしいですか？`
+        `ファネル: ${funnelSummary}\n` +
+        (preInput.challengeToSolve ? `課題: ${preInput.challengeToSolve.substring(0, 40)}...\n` : '') +
+        (preInput.pastAttempts ? `過去の取組: ${preInput.pastAttempts.substring(0, 40)}...\n` : '') +
+        `\n※ 現在の入力内容に上書きされます。よろしいですか？`
       );
       
       if (!confirmed) return;
@@ -16958,6 +17023,9 @@ const App = () => {
           executiveAnswers: preInput.executiveAnswers || prev.executiveAnswers,
           // ファネル（BB診断形式で深くマージ）
           funnelData: mergedFunnel,
+          // v51 fix: 課題フィールドのマッピング（事前問診→BB診断のフィールド名変換）
+          todayChallenge: preInput.challengeToSolve || prev.todayChallenge || '',
+          pastChallenges: preInput.pastAttempts || prev.pastChallenges || '',
           // メモ（職種情報追記）
           notes: mergedNotes,
           remarks: mergedNotes,
