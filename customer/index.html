@@ -479,8 +479,12 @@ const gasPost = async (action, body = {}) => {
             .eq('id', existing.data.id);
           if (error) throw error;
         } else {
+          // v3.1 hotfix: upsertで409競合を解消（fix#4即保存とgoNextの同時実行対策）
           const { error } = await sb.from('pre_inputs')
-            .insert({ customer_id: customerId, input_data: merged, status: dbStatus });
+            .upsert(
+              { customer_id: customerId, input_data: merged, status: dbStatus },
+              { onConflict: 'customer_id' }
+            );
           if (error) throw error;
         }
         return { success: true };
