@@ -762,6 +762,12 @@ input[type="range"]::-moz-range-thumb {
   display: none !important;
 }
 
+/* PDF出力時: 不要な余白を除去してコンテンツを詰める */
+.pdf-export-mode.diagnosis-sheet {
+  min-height: 0 !important;
+  padding-bottom: 12px !important;
+}
+
 /* ============================================
    10. 印刷用スタイル
    ============================================ */
