@@ -11773,8 +11773,8 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
         </div>
       )}
       
-      {/* フッタータブ */}
-      <div className="tab-bar mt-4 rounded-xl overflow-hidden">
+      {/* フッタータブ（印刷時非表示） */}
+      <div className="tab-bar mt-4 rounded-xl overflow-hidden no-print">
         <div 
           className={`tab-item ${activeTab === 'result' ? 'active' : ''}`}
           onClick={() => setActiveTab('result')}
@@ -17705,22 +17705,23 @@ const App = () => {
       // PDF出力用クラスを削除
       sheetRef.current.classList.remove('pdf-export-mode');
       
-      // PDFを生成
+      // PDFを生成（コンテンツの縦横比を維持し、縦が全て収まるようにページサイズを動的に決定）
       const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-      
-      const pdfWidth = 297;
-      const pdfHeight = 210;
       const imgWidth = capturedCanvas.width;
       const imgHeight = capturedCanvas.height;
-      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
-      const finalWidth = imgWidth * ratio;
-      const finalHeight = imgHeight * ratio;
-      const offsetX = (pdfWidth - finalWidth) / 2;
-      const offsetY = (pdfHeight - finalHeight) / 2;
+      
+      // 幅をA4横幅(297mm)に固定し、高さをコンテンツ比率から算出
+      const pdfWidth = 297;
+      const pdfHeight = pdfWidth * (imgHeight / imgWidth);
+      
+      const pdf = new jsPDF({
+        orientation: pdfWidth >= pdfHeight ? 'landscape' : 'portrait',
+        unit: 'mm',
+        format: [pdfWidth, pdfHeight]
+      });
       
       const imgData = capturedCanvas.toDataURL('image/png', 1.0);
-      pdf.addImage(imgData, 'PNG', offsetX, offsetY, finalWidth, finalHeight);
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
       pdf.save(`採用BB診断_${currentData.companyName || '企業名未設定'}_${currentData.diagnosisDate}.pdf`);
       
     } catch (e) {
@@ -17770,21 +17771,7 @@ const App = () => {
         </div>
       )}
       {/* GASモード：ユーザー情報バー */}
-      {isGasMode && gasUser && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs py-1.5 px-4 flex justify-between items-center no-print">
-          <div className="flex items-center gap-4">
-            <span className="opacity-80">🔒 セキュアモード</span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-              <span className="font-medium">{gasUser.name}</span>
-              <span className="opacity-70">（{gasUser.roleLabel}）</span>
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="opacity-70">{gasUser.email}</span>
-          </div>
-        </div>
-      )}
+      {/* v51: セキュアモードバー削除済み */}
       
       {/* ヘッダー */}
       <header className="bg-white/90 backdrop-blur-lg shadow-sm sticky top-0 z-50 no-print">
