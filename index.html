@@ -6,6 +6,9 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
+  <!-- v53-sec: Content Security Policy（スクリプト・接続先を既知ドメインに制限）
+       'unsafe-eval' はBabelのブラウザ内JSXコンパイルに必要。将来的にプリビルドに移行すれば削除可能 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com; img-src 'self' data: blob:; frame-src accounts.google.com;">
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
@@ -18,7 +21,7 @@
   <!-- v51: generatePreInputToken追加, 事前問診URL ?tk=&size=&role= 対応, リダイレクト全パラメータ転送, 課題マッピング -->
   <!-- v52: avgRadar上層部未回答スコア半減バグ修正, saveCustomerPreInputステータス巻き戻し防止, バージョン文字列修正 -->
   <!-- v52.1: companies操作エラーチェック追加(update/select), セキュアモードバー削除, PDF出力タブ非表示+サイズ自動調整 -->
-  <!-- v53: fullBackup falsy値修正(||→??), normalizeGASCustomer mindsetScores復元, getCustomerPreInput DB status返却, _preInputStatus永続化, HTMLコメント漏れ修正 -->
+  <!-- v53: fullBackup falsy値修正(||→??), normalizeGASCustomer mindsetScores復元, getCustomerPreInput DB status返却, _preInputStatus永続化, HTMLコメント漏れ修正, セキュリティ強化(signOut/CSP/セッション検証/APIキーログマスク), 事前問診URL未保存ガード -->
   <!--
     ============================================================
     【v53 バグチェック結果】2026-03-18 実施
@@ -33,6 +36,13 @@
     - handleImportPreInput: DB status を優先する判定ロジックに変更
     - normalizeGASCustomer: isDecisionMaker 復元追加（?? でfalseを保護）
     - HTMLコメント漏れ修正: 設計思想メモブロックの開始タグ欠落（v52から存在していたバグ）
+    
+    ■ v53セキュリティ修正
+    - SEC-1: LoginManager.logoutにSupabase auth.signOut()追加（共有端末のセッション残存防止）
+    - SEC-2: AI APIキーのconsole.logマスク（DevToolsへの露出防止、5箇所）
+    - SEC-4: DEFAULT_ADMIN_PASSWORDにセキュリティ注記追加（廃止予定を明記）
+    - SEC-6: マウント時にSupabase getSession()でセッション有効性を検証
+    - SEC-7: CSP metaタグ追加（script-src/connect-src を既知ドメインに制限）
     
     ■ 修正の原則
     - || は falsy 全体（0, '', false, null, undefined）をスキップするため、
@@ -1944,11 +1954,18 @@ const getCompanySizeCategory = (sizeLabel) => {
 // ========================================
 
 // 設定画面パスワード管理
+// ★ セキュリティ注意 ★
+// このパスワードはAI設定画面専用のクライアントサイドガードであり、
+// 主認証（Google OAuth + Supabase Auth）とは独立。
+// ソースコードが公開されるため、機密性はない。
+// DB (app_settings key='admin_panel_password') に設定されている場合はそちらを優先する。
+// 将来的にはOAuth権限チェックに統一し、このパスワード機構は廃止予定。
 const DEFAULT_ADMIN_PASSWORD = 'andme0405';
 
 const AdminPasswordManager = {
   getPassword: () => {
     try {
+      // DB設定 > localStorage > デフォルト の優先順
       const saved = localStorage.getItem('gakusapo_admin_password');
       return saved || DEFAULT_ADMIN_PASSWORD;
     } catch (e) {
@@ -2407,7 +2424,7 @@ const AISettingsManager = {
     // GASモードの場合はスプレッドシートの設定を優先
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasSettings = GASDataManager.getAISettings();
-      console.log('GASDataManager.getAISettings():', gasSettings);
+      console.log('GASDataManager.getAISettings():', gasSettings ? { ...gasSettings, apiKey: gasSettings.apiKey ? '***' : '' } : null);
       if (gasSettings && (gasSettings.apiKey || gasSettings.selectedPreset || gasSettings.sideButtons)) {
         // ローカル設定とマージ（GASの設定を優先）
         try {
@@ -2430,7 +2447,7 @@ const AISettingsManager = {
             // ローカルのみの設定
             masterSpreadsheetUrl: localSettings.masterSpreadsheetUrl || ''
           };
-          console.log('マージ後のAI設定:', mergedSettings);
+          console.log('マージ後のAI設定:', { ...mergedSettings, apiKey: mergedSettings.apiKey ? '***' : '' });
           return mergedSettings;
         } catch (e) {
           console.error('AI設定のマージに失敗:', e);
@@ -5090,7 +5107,8 @@ const GASDataManager = {
           const aiResult = await authFetch('getAISettings');
           if (aiResult.success && aiResult.settings) {
             _gasAISettings = aiResult.settings;
-            console.log('AI設定をGASから読み込み:', aiResult.settings);
+            // v53-sec: APIキーをマスクしてログ出力（DevToolsへの露出防止）
+            console.log('AI設定をGASから読み込み:', { ...aiResult.settings, apiKey: aiResult.settings.apiKey ? '***masked***' : '' });
             try { localStorage.setItem('gakusapo_ai_settings', JSON.stringify(aiResult.settings)); } catch (e) {}
           }
           return aiResult.settings || null;
@@ -5107,14 +5125,15 @@ const GASDataManager = {
   
   // AI設定を取得（キャッシュから）
   getAISettings: () => {
-    console.log('GASDataManager.getAISettings() キャッシュ確認:', _gasAISettings);
+    // v53-sec: APIキーをマスクしてログ出力
     if (_gasAISettings) {
+      console.log('GASDataManager.getAISettings() キャッシュあり');
       return _gasAISettings;
     }
     // フォールバック: ローカルストレージから
     try {
       const saved = localStorage.getItem('gakusapo_ai_settings');
-      console.log('AI設定 ローカルストレージから取得:', saved);
+      console.log('AI設定 ローカルストレージから取得:', saved ? '有り' : '無し');
       return saved ? JSON.parse(saved) : null;
     } catch (e) {
       return null;
@@ -5520,10 +5539,14 @@ const LoginManager = {
     return false;
   },
   
-  // ログアウト
-  logout: () => {
+  // ログアウト（v53-sec: Supabase Auth signOut追加）
+  logout: async () => {
     try {
-      // v34: ログアウト処理（Google Sign-Outも実行）
+      // Supabase Authセッションを破棄（localStorageのトークンも削除される）
+      if (window._supabase?.auth) {
+        await window._supabase.auth.signOut();
+      }
+      // Google Sign-Out
       if (window.google?.accounts?.id) {
         window.google.accounts.id.disableAutoSelect();
       }
@@ -8956,7 +8979,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
               - 上層部URLには必ず &size= を含める（事前問診側fix#5のガード条件）。
               - データ取込は handleImportPreInput() を呼び出し、確認後にcurrentDataにマージ。
           */}
-          {data.inquiryNo && (
+          {data.inquiryNo && data.id && (
             <div className="mt-6 pt-6 border-t border-gray-200">
               <h4 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -9049,6 +9072,16 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                     事前データ取込
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+          {/* v53-fix: 未保存時は事前問診URLを発行できないことを案内 */}
+          {data.inquiryNo && !data.id && (
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl text-center">
+                <p className="text-sm text-gray-500">
+                  事前問診URLは、顧客データを<span className="font-bold text-gray-700">保存後</span>に発行できます
+                </p>
               </div>
             </div>
           )}
@@ -16627,7 +16660,7 @@ const App = () => {
   useEffect(() => {
     if (isGasMode && masterDataLoaded) {
       const updatedSettings = AISettingsManager.getSettings();
-      console.log('AI設定を更新:', updatedSettings);
+      console.log('AI設定を更新:', updatedSettings ? { ...updatedSettings, apiKey: updatedSettings.apiKey ? '***' : '' } : null);
       setAiSettings(updatedSettings);
     }
   }, [isGasMode, masterDataLoaded]);
@@ -16687,6 +16720,29 @@ const App = () => {
   // 定期的なセッションチェック（ログイン中のみ、セッション切れを検出）
   useEffect(() => {
     if (!isLoggedIn) return;
+
+    // v53-sec: マウント直後にSupabaseセッションの有効性を検証
+    // sessionStorage復元ではSupabase側の期限切れを検知できないため、
+    // getSession()で実際のセッション状態を確認する
+    const validateSupabaseSession = async () => {
+      try {
+        if (window._supabase?.auth) {
+          const { data: { session }, error } = await window._supabase.auth.getSession();
+          if (!session || error) {
+            console.warn('[セッション検証] Supabaseセッション無効。再ログインが必要です。');
+            window.AUTH.isLoggedIn = false;
+            window.AUTH.idToken = null;
+            window.AUTH.user = null;
+            try { sessionStorage.removeItem('bb_auth_token'); sessionStorage.removeItem('bb_auth_user'); } catch(e) {}
+            setGoogleAuthed(false);
+            setIsLoggedIn(false);
+          }
+        }
+      } catch (e) {
+        console.error('[セッション検証] エラー:', e);
+      }
+    };
+    validateSupabaseSession();
 
     const checkAuth = () => {
       const stillLoggedIn = LoginManager.checkSession();
@@ -16780,9 +16836,9 @@ const App = () => {
     }
   };
   
-  // ログアウト
-  const handleLogout = () => {
-    LoginManager.logout();
+  // ログアウト（v53-sec: async化）
+  const handleLogout = async () => {
+    await LoginManager.logout();
     setIsLoggedIn(false);
   };
   
