@@ -17,6 +17,37 @@
   <!-- v50: diagnosis_data全データ保存修正, HandoverPanelプロパティ名統一, Public版ハンドラーネスト変換, saveLayerMediaUsage安全化 -->
   <!-- v51: generatePreInputToken追加, 事前問診URL ?tk=&size=&role= 対応, リダイレクト全パラメータ転送, 課題マッピング -->
   <!-- v52: avgRadar上層部未回答スコア半減バグ修正, saveCustomerPreInputステータス巻き戻し防止, バージョン文字列修正 -->
+  <!-- v52.1: companies操作エラーチェック追加(update/select), セキュアモードバー削除, PDF出力タブ非表示+サイズ自動調整 -->
+  <!-- v53: fullBackup falsy値修正(||→??), normalizeGASCustomer mindsetScores復元, getCustomerPreInput DB status返却, _preInputStatus永続化, HTMLコメント漏れ修正 -->
+  <!--
+    ============================================================
+    【v53 バグチェック結果】2026-03-18 実施
+    
+    ■ v53修正一覧
+    - BUG-2a: isDecisionMaker || → ?? （falseに戻せないバグ修正）
+    - BUG-2b: todayChallenge/pastChallenges/targetNotes || → undefined チェック（空文字クリア不可修正）
+    - BUG-2c: ファネル値 || → ?? （値0がfunnelDataにフォールバックするバグ修正）
+    - BUG-1: normalizeGASCustomer に staffMindsetScores/execMindsetScores 明示復元追加
+    - BUG-3: getCustomerPreInput に DBカラムの status を返却追加
+    - BUG-4: _preInputStatus を diagnosis_data(fullBackup)に永続化 + normalizeGASCustomer で復元
+    - handleImportPreInput: DB status を優先する判定ロジックに変更
+    - normalizeGASCustomer: isDecisionMaker 復元追加（?? でfalseを保護）
+    - HTMLコメント漏れ修正: 設計思想メモブロックの開始タグ欠落（v52から存在していたバグ）
+    
+    ■ 修正の原則
+    - || は falsy 全体（0, '', false, null, undefined）をスキップするため、
+      「値が存在しない(null/undefined)」場合のみフォールバックしたい箇所は ?? を使う
+    - テキストフィールド（空文字が有効値）は undefined チェックで区別
+    
+    ■ HTMLコメント漏れ原因分析
+    v52でバグチェック結果ブロックと設計思想メモブロックを分離した際、
+    設計思想メモ側のHTML開始コメントタグを入れ忘れ。v53でも修正時に
+    データフロー関数のみをgrepし、HTML構文の整合性チェックを行わなかったため見逃し。
+    再発防止: コメント編集後は必ず開始/終了タグのペア検証を機械的に実施。
+    注意: HTMLコメント内に終了タグ文字列を書くとそこでコメントが閉じるため、
+    コメント内テキストでHTMLタグ記法を使わないこと。
+    ============================================================
+  -->
   <!--
     ============================================================
     【v52 バグチェック結果】2026-03-17 実施
@@ -45,6 +76,7 @@
     - LoginManager.saveConfigのGAS向けauthPost fire-and-forget → Supabase移行後は無害
     ============================================================
   -->
+  <!--
     ============================================================
     【設計思想メモ】
 
@@ -143,7 +175,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v52] Supabase接続完了');
+    console.log('[BB診断 v53] Supabase接続完了');
   </script>
   
   <script src="https://cdn.tailwindcss.com"></script>
@@ -2541,7 +2573,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v52' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v53' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -2620,16 +2652,19 @@ const SUPA_HANDLERS = {
 
     var companyId = c._companyId;
     if (companyId) {
-      await sb.from('companies').update(companyData).eq('id', companyId);
+      var upRes1 = await sb.from('companies').update(companyData).eq('id', companyId);
+      if (upRes1.error) throw new Error('企業更新失敗: ' + upRes1.error.message);
     } else {
       var existing = await sb.from('companies')
         .select('id')
         .eq('name', companyData.name)
         .eq('prefecture', companyData.prefecture)
         .maybeSingle();
+      if (existing.error) throw new Error('企業検索失敗: ' + existing.error.message);
       if (existing.data) {
         companyId = existing.data.id;
-        await sb.from('companies').update(companyData).eq('id', companyId);
+        var upRes2 = await sb.from('companies').update(companyData).eq('id', companyId);
+        if (upRes2.error) throw new Error('企業更新失敗: ' + upRes2.error.message);
       } else {
         var newCo = await sb.from('companies').insert(companyData).select('id').single();
         if (newCo.error) throw new Error('企業登録失敗: ' + newCo.error.message);
@@ -2639,13 +2674,14 @@ const SUPA_HANDLERS = {
 
     // 2. bb_diagnoses を upsert
     // v50: funnelData オブジェクトからの抽出（個別プロパティが未設定の場合のフォールバック）
+    // v53-fix: || → ?? で 0 を正しく保存
     var fd = c.funnelData || {};
-    var funnelAwareness = c.funnelAwareness || fd.targetAwareness || fd.awareness || 0;
-    var funnelInterest = c.funnelInterest || fd.interest || 0;
-    var funnelApplications = c.funnelApplications || fd.applications || 0;
-    var funnelScreening = c.funnelScreening || fd.screening || 0;
-    var funnelOffers = c.funnelOffers || fd.offers || 0;
-    var funnelAcceptance = c.funnelAcceptance || fd.acceptance || 0;
+    var funnelAwareness = c.funnelAwareness ?? fd.targetAwareness ?? fd.awareness ?? 0;
+    var funnelInterest = c.funnelInterest ?? fd.interest ?? 0;
+    var funnelApplications = c.funnelApplications ?? fd.applications ?? 0;
+    var funnelScreening = c.funnelScreening ?? fd.screening ?? 0;
+    var funnelOffers = c.funnelOffers ?? fd.offers ?? 0;
+    var funnelAcceptance = c.funnelAcceptance ?? fd.acceptance ?? 0;
 
     // v50: diagnosis_data に全データバックアップを構築
     // normalizeGASCustomer が fullData から復元する全フィールドを網羅する
@@ -2671,16 +2707,18 @@ const SUPA_HANDLERS = {
       yieldSettings: c.yieldSettings || existingDiagData.yieldSettings || {},
       industryAverages: c.industryAverages || existingDiagData.industryAverages || {},
       adjustedAverages: c.adjustedAverages || existingDiagData.adjustedAverages || {},
-      // メモ・課題・目標
-      todayChallenge: c.todayChallenge || existingDiagData.todayChallenge || '',
-      pastChallenges: c.pastChallenges || existingDiagData.pastChallenges || '',
+      // メモ・課題・目標（v53-fix: 空文字クリアを正しく保存するため undefined チェック）
+      todayChallenge: (c.todayChallenge !== undefined ? c.todayChallenge : existingDiagData.todayChallenge) || '',
+      pastChallenges: (c.pastChallenges !== undefined ? c.pastChallenges : existingDiagData.pastChallenges) || '',
       improvementGoals: c.improvementGoals || existingDiagData.improvementGoals || {},
-      targetNotes: c.targetNotes || existingDiagData.targetNotes || '',
+      targetNotes: (c.targetNotes !== undefined ? c.targetNotes : existingDiagData.targetNotes) || '',
       // 問診マスタースナップショット
       savedQuestionMaster: c.savedQuestionMaster || existingDiagData.savedQuestionMaster || null,
       questionMasterId: c.questionMasterId || existingDiagData.questionMasterId || null,
-      // 決裁者モードフラグ
-      isDecisionMaker: c.isDecisionMaker || existingDiagData.isDecisionMaker || false,
+      // 決裁者モードフラグ（v53-fix: || → ?? でfalseを正しく保存）
+      isDecisionMaker: c.isDecisionMaker ?? existingDiagData.isDecisionMaker ?? false,
+      // v53-fix: 事前問診ステータス永続化（リロードでバッジが消えるのを防止）
+      _preInputStatus: c._preInputStatus || existingDiagData._preInputStatus || '',
     });
 
     var diagData = {
@@ -3460,7 +3498,8 @@ const SUPA_HANDLERS = {
       .maybeSingle();
     if (res.error) throw new Error(res.error.message);
     if (!res.data) return { success: true, data: null };
-    return { success: true, data: res.data.input_data || {} };
+    // v53-fix: DBカラムのstatusも返す（input_data内のstatusと二重化だが、DB側が正確）
+    return { success: true, data: res.data.input_data || {}, status: res.data.status || '' };
   },
 
   // ── 事前入力データ保存（GAS互換パラメータ: data.id + data.preInputData）──
@@ -4778,6 +4817,9 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
   const studentScores = (hasContent(c.studentScores) ? c.studentScores : null) || fullData.studentScores || {};
   const mindsetScores = (hasContent(c.mindsetScores) ? c.mindsetScores : null) || fullData.mindsetScores || {};
   const depthScores = (hasContent(c.depthScores) ? c.depthScores : null) || fullData.depthScores || {};
+  // v53-fix: staffMindsetScores/execMindsetScores を明示復元（buildEffectiveDataが参照）
+  const staffMindsetScores = (hasContent(c.staffMindsetScores) ? c.staffMindsetScores : null) || fullData.staffMindsetScores || {};
+  const execMindsetScores = (hasContent(c.execMindsetScores) ? c.execMindsetScores : null) || fullData.execMindsetScores || {};
   
   // 4. ファネル・手法等
   const funnelData = (hasContent(c.funnelData) ? c.funnelData : null) || fullData.funnelData || {
@@ -4831,6 +4873,9 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
     studentScores,
     mindsetScores,
     depthScores,
+    // v53-fix: マインドセット個別スコア復元
+    staffMindsetScores,
+    execMindsetScores,
     // ファネル・手法等
     funnelData,
     channelLabels,
@@ -4839,11 +4884,11 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
     yieldSettings,
     industryAverages,
     adjustedAverages,
-    // その他
-    todayChallenge: c.todayChallenge || fullData.todayChallenge || '',
-    pastChallenges: c.pastChallenges || fullData.pastChallenges || '',
+    // その他（v53-fix: 空文字クリアを保護するため undefined チェック）
+    todayChallenge: (c.todayChallenge !== undefined ? c.todayChallenge : fullData.todayChallenge) || '',
+    pastChallenges: (c.pastChallenges !== undefined ? c.pastChallenges : fullData.pastChallenges) || '',
     improvementGoals: (hasContent(c.improvementGoals) ? c.improvementGoals : null) || fullData.improvementGoals || {},
-    targetNotes: c.targetNotes || fullData.targetNotes || '',
+    targetNotes: (c.targetNotes !== undefined ? c.targetNotes : fullData.targetNotes) || '',
     // 診断時の問診マスタースナップショット
     // 優先順: インラインsavedQuestionMaster → questionMasterIdからキャッシュ解決 → fullData → null
     savedQuestionMaster: (() => {
@@ -4857,7 +4902,11 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
       return null;
     })(),
     // マスターID（再保存時にスナップショットを再利用するため保持）
-    questionMasterId: c.questionMasterId || fullData.questionMasterId || null
+    questionMasterId: c.questionMasterId || fullData.questionMasterId || null,
+    // v53-fix: 決裁者フラグ復元
+    isDecisionMaker: c.isDecisionMaker ?? fullData.isDecisionMaker ?? false,
+    // v53-fix: 事前問診ステータス復元（diagnosis_data内に永続化されたもの）
+    _preInputStatus: c._preInputStatus || fullData._preInputStatus || '',
   };
 };
 
@@ -16965,9 +17014,13 @@ const App = () => {
       }
       
       const preInput = typeof result.data === 'string' ? JSON.parse(result.data) : result.data;
-      const status = preInput.status === '完了' ? '完了'
+      // v53-fix: DBカラムのstatus（result.status）を優先し、input_data内statusはフォールバック
+      const dbStatus = result.status || '';
+      const status = dbStatus === '完了' ? '完了'
+        : dbStatus === '上層部完了' ? '上層部完了'
+        : preInput.status === '完了' ? '完了'
         : preInput.executiveCompleted ? '上層部完了'
-        : preInput.status || result.status || '';
+        : dbStatus || preInput.status || '';
       
       // 職種キー→ラベル変換
       const JOB_TYPE_LABELS = {
