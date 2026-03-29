@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <!-- v53-sec: Content Security Policy（スクリプト・接続先を既知ドメインに制限）
        'unsafe-eval' はBabelのブラウザ内JSXコンパイルに必要。将来的にプリビルドに移行すれば削除可能 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com; img-src 'self' data: blob:; frame-src accounts.google.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src accounts.google.com;">
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
@@ -21,7 +21,7 @@
   <!-- v51: generatePreInputToken追加, 事前問診URL ?tk=&size=&role= 対応, リダイレクト全パラメータ転送, 課題マッピング -->
   <!-- v52: avgRadar上層部未回答スコア半減バグ修正, saveCustomerPreInputステータス巻き戻し防止, バージョン文字列修正 -->
   <!-- v52.1: companies操作エラーチェック追加(update/select), セキュアモードバー削除, PDF出力タブ非表示+サイズ自動調整 -->
-  <!-- v54: 媒体利用率 getLayerMediaUsage 配列→ネスト構造変換, saveLayerMediaUsage RPC置換（UNIQUE INDEX競合回避）, CSP style-src accounts.google.com追加 -->
+  <!-- v54: 媒体利用率 getLayerMediaUsage 配列→ネスト構造変換, saveLayerMediaUsage RPC置換（UNIQUE INDEX競合回避）, CSP style-src/connect-src修正, バージョン表示更新 -->
   <!-- v53: fullBackup falsy値修正(||→??), normalizeGASCustomer mindsetScores復元, getCustomerPreInput DB status返却, _preInputStatus永続化, HTMLコメント漏れ修正, セキュリティ強化(signOut/CSP/セッション検証/APIキーログマスク), 事前問診URL未保存ガード -->
   <!--
     ============================================================
@@ -186,7 +186,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v53] Supabase接続完了');
+    console.log('[BB診断 v54] Supabase接続完了');
   </script>
   
   <script src="https://cdn.tailwindcss.com"></script>
@@ -2591,7 +2591,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v53' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v54' };
   },
 
   // ── デバッグデータロード（互換用）──
