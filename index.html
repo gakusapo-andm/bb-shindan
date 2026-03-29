@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <!-- v53-sec: Content Security Policy（スクリプト・接続先を既知ドメインに制限）
        'unsafe-eval' はBabelのブラウザ内JSXコンパイルに必要。将来的にプリビルドに移行すれば削除可能 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com; img-src 'self' data: blob:; frame-src accounts.google.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com; img-src 'self' data: blob:; frame-src accounts.google.com;">
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
@@ -21,6 +21,7 @@
   <!-- v51: generatePreInputToken追加, 事前問診URL ?tk=&size=&role= 対応, リダイレクト全パラメータ転送, 課題マッピング -->
   <!-- v52: avgRadar上層部未回答スコア半減バグ修正, saveCustomerPreInputステータス巻き戻し防止, バージョン文字列修正 -->
   <!-- v52.1: companies操作エラーチェック追加(update/select), セキュアモードバー削除, PDF出力タブ非表示+サイズ自動調整 -->
+  <!-- v54: 媒体利用率 getLayerMediaUsage 配列→ネスト構造変換, saveLayerMediaUsage RPC置換（UNIQUE INDEX競合回避）, CSP style-src accounts.google.com追加 -->
   <!-- v53: fullBackup falsy値修正(||→??), normalizeGASCustomer mindsetScores復元, getCustomerPreInput DB status返却, _preInputStatus永続化, HTMLコメント漏れ修正, セキュリティ強化(signOut/CSP/セッション検証/APIキーログマスク), 事前問診URL未保存ガード -->
   <!--
     ============================================================
@@ -3269,45 +3270,46 @@ const SUPA_HANDLERS = {
   },
 
   // ── 媒体利用率マスター取得 ──
+  // v54: 配列→GAS互換ネスト構造に変換 { "A": { "openwork": 5, ... }, "B": { ... } }
   getLayerMediaUsage: async function(sb) {
     var res = await sb.from('media_usage_rates').select('*');
     if (res.error) throw new Error(res.error.message);
-    return { success: true, data: res.data || [] };
+    var nested = {};
+    (res.data || []).forEach(function(row) {
+      if (!nested[row.layer]) nested[row.layer] = {};
+      nested[row.layer][row.media_key] = Number(row.usage_rate) || 0;
+    });
+    return { success: true, data: nested };
   },
 
-  // ── 媒体利用率マスター保存（v50: エラー時リカバリ付き）──
+  // ── 媒体利用率マスター保存（v54: RPC replace_media_usage_rates でアトミック置換）──
   saveLayerMediaUsage: async function(sb, data) {
     var usageData = data.usageData;
     if (!usageData) return { success: false, error: 'データがありません' };
-    if (!Array.isArray(usageData) || usageData.length === 0) {
-      // 空データの場合のみ全削除（意図的なクリア）
+    // v54: UIからネスト構造 { "A": { "openwork": 5 } } が来る場合、配列に変換
+    var rows;
+    if (Array.isArray(usageData)) {
+      rows = usageData.map(function(r) {
+        return { layer: r.layer, media_key: r.media_key, usage_rate: Number(r.usage_rate) || 0 };
+      });
+    } else if (typeof usageData === 'object') {
+      rows = [];
+      Object.keys(usageData).forEach(function(layer) {
+        var media = usageData[layer];
+        if (media && typeof media === 'object') {
+          Object.keys(media).forEach(function(mediaKey) {
+            rows.push({ layer: layer, media_key: mediaKey, usage_rate: Number(media[mediaKey]) || 0 });
+          });
+        }
+      });
+    }
+    if (!rows || rows.length === 0) {
       await sb.from('media_usage_rates').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       return { success: true };
     }
-    var rows = usageData.map(function(r) {
-      var row = Object.assign({}, r);
-      delete row.id;
-      delete row.created_at;
-      delete row.updated_at;
-      return row;
-    });
-    // v50: 先にINSERTを試み、成功したら旧データを削除（データ消失防止）
-    // 一時的に重複するが、全件成功後に旧データを消すので安全
-    try {
-      // 現在のIDリストを取得
-      var oldRes = await sb.from('media_usage_rates').select('id');
-      var oldIds = (oldRes.data || []).map(function(r) { return r.id; });
-      // 新データINSERT
-      var insRes = await sb.from('media_usage_rates').insert(rows).select('id');
-      if (insRes.error) throw new Error('媒体利用率保存失敗: ' + insRes.error.message);
-      // 旧データ削除（INSERTが成功した後のみ）
-      if (oldIds.length > 0) {
-        await sb.from('media_usage_rates').delete().in('id', oldIds);
-      }
-    } catch(e) {
-      // INSERT失敗時: 旧データはそのまま残る
-      throw e;
-    }
+    // RPC でアトミック置換（DELETE + INSERT をトランザクション内で実行）
+    var res = await sb.rpc('replace_media_usage_rates', { p_data: rows });
+    if (res.error) throw new Error('媒体利用率保存失敗: ' + res.error.message);
     return { success: true };
   },
 
