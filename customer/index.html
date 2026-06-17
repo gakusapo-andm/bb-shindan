@@ -9,7 +9,8 @@
 <title>採用ブラックボックス診断® | 事前問診フォーム</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- v3.2(2026-06-17): Babelをバージョン固定。Babel8自動更新でJSXにimport注入→白画面化する不具合を修正 -->
+<script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
@@ -139,7 +140,7 @@ button:not(:disabled):active {
     window.SUPABASE_CONFIG.url,
     window.SUPABASE_CONFIG.anonKey
   );
-  console.log('[事前問診 v3.1] Supabase接続完了');
+  console.log('[事前問診 v3.2] Supabase接続完了');
 </script>
 </head>
 <body>
@@ -1749,7 +1750,7 @@ const App = () => {
           setError('問い合わせ番号が指定されていません。\nURLに ?id=XXXXX&tk=YYYYY の形式でアクセスしてください。');
           setLoading(false); return;
         }
-        console.log('[事前問診 v3.1] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
+        console.log('[事前問診 v3.2] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
         const pingRes = await gasGet('ping');
         if (!pingRes.success) throw new Error('サーバーに接続できません。');
         
@@ -1766,7 +1767,7 @@ const App = () => {
           else if (!isExec && ld.status === '完了') setCompleted(true);
           // v3.1 fix#5: exec URLにsize指定なし＆担当者も未入力の場合は警告
           if (isExec && !urlSize && !ld.companySize) {
-            console.warn('[事前問診 v3.1] 上層部アクセスだが企業規模が不明。フォールバック適用。');
+            console.warn('[事前問診 v3.2] 上層部アクセスだが企業規模が不明。フォールバック適用。');
           }
         } else if (isExec && !urlSize) {
           // v3.1 fix#5: 担当者の事前データも存在しない場合
