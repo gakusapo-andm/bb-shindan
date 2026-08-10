@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <!-- v53-sec: Content Security Policy（スクリプト・接続先を既知ドメインに制限）
        'unsafe-eval' はBabelのブラウザ内JSXコンパイルに必要。将来的にプリビルドに移行すれば削除可能 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src accounts.google.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src accounts.google.com; object-src 'none'; base-uri 'self';">
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
@@ -23,6 +23,96 @@
   <!-- v52.1: companies操作エラーチェック追加(update/select), セキュアモードバー削除, PDF出力タブ非表示+サイズ自動調整 -->
   <!-- v54: 媒体利用率 getLayerMediaUsage 配列→ネスト構造変換, saveLayerMediaUsage RPC置換（UNIQUE INDEX競合回避）, CSP style-src/connect-src修正, バージョン表示更新 -->
   <!-- v55: Babel CDNをバージョン固定（@babel/standalone@7.29.7）。Babel8自動更新でJSXにimport注入→白画面化する不具合を修正。ロジック無変更（2026-06-17） -->
+  <!-- v56: ファネル保存優先順位反転(funnel_*カラム陳腐化修正), 楽観ロック追加(updated_at比較), ログイン失敗時signOut(セッション残存防止), saveCustomerPreInputエラーチェック(重複行防止), saveAISettings一括upsert化, total_score ??化, /index.html直アクセスリダイレクト修正, assigneeId導出修正, 診断モーダルsetTimeoutクリーンアップ, gemini-3.5-flash移行(2.0-flash廃止対応)+AI設定model/maxTokens実配線+モデル名入力UI追加+thinkingConfig対応+応答パース堅牢化（2026-07-07） -->
+  <!-- v57: companiesレース対策 — select→update/insert を upsert_company RPC（UNIQUE制約 companies_name_prefecture_key + ON CONFLICT）に置換。要 06_v57_companies_patch.sql（重複統合・制約・RPC作成）。10並行upsertでレース耐性検証済み（2026-07-07） -->
+  <!-- v58: GAS互換デッドコード削除＋危険UI除去 — isGasMode恒真25分岐の畳み込み, deploymentModeフィールド廃止, handleSave/handleDelete/refreshCustomers/顧客読込のローカル保存デッド分岐削除, normalizeGASCustomer等の日本語キー(GAS列名)フォールバック全削除(30箇所), データ同期UI+確認モーダル+ハンドラー3関数+state4件を削除(localStorage残骸でSupabase本番を上書きできる危険UIだった), methodMasterスコープ外参照によるCSV機能ReferenceError修正(2箇所)。検証: ESLint no-undef ベースライン2件→0件(削除による新規未定義参照ゼロ・既存バグ2件解消), Babel構文全パス（2026-07-07） -->
+  <!-- v59: 監査キュー一括修正 — [A]deleteCustomer孤児対策(CRM商談リンク時は削除拒否+pre_inputs同時削除。恒久策は08_v59_preinputs_fk_patch.sqlのON DELETE CASCADE), [B]executeHandoverサイレント失敗修正(custRes.errorチェック+ループupdate→.in()一括原子化+実処理件数報告), [F/H]顧客切替・新規時のlastGeneratedButtonId/aiErrorリセット漏れ修正(前顧客のAIプロンプト文脈引きずり防止), [G]事前問診取込の空オブジェクト{}上書き防止(pickガード), [J]buildEffectiveDataのuseMemo化3箇所(打鍵毎のフルスコア再計算防止), [I]チャートrAFクリーンアップ4箇所, [E]getMembers列指定, [S4]CDN完全バージョン固定+SRI付与+cdnjs→unpkg統一(npm tarballからsha384算出)+supabase-js@2.110.0固定+CSPにobject-src'none'/base-uri'self'追加（2026-07-07） -->
+  <!-- v60: 現場報告バグ2件修正 — [1]歩留まりチャートで内定承諾0名入力が「内定×80%」推計値に化けて1名表示されるfalsyバグ修正(L7468相当、未入力時のみ推計補完に変更。表示のみのバグでDB内は0が正しく保存済みのためデータ修復不要。報告: 親和建設/東邦ガスセーフティライフ), [2]事前問診取込のyearData浅いマージにより同一年度の目標人数(targetHires/targetHiresByLayer)が丸ごと消失するバグ修正(年度オブジェクト・channelData内まで深マージ化)＋目標未設定表示に年度を明示(年度切替による見かけの消失の可視化)。単体テスト12ケース全パス（2026-07-07） -->
+  <!-- v61: 目標人数が結果画面で0になる現場報告の修正（2経路） — [X]handleSave成功時のsetCurrentData(toSave)が保存開始時点のスナップショットで全置換し、保存await中（数百ms〜数秒）のユーザー入力を巻き戻していたレース修正（関数型更新でid/updatedAt/aiResult/savedQuestionMaster/_dbUpdatedAtのみマージ。診断開始の自動保存でも同経路）, [Y]複数ターゲット層の顧客で単一入力がtargetHiresByLayerを残置し、層別欄接触時に旧手動配分(0等)の合計で目標が上書きされるバグ修正（単一入力時にByLayerを破棄し自動配分に一本化）。単体テスト7ケース（旧バグ再現含む）全パス（2026-07-07） -->
+  <!-- v62: 結果シートUI刷新（カルテ様式）＋ブラウザ印刷最適化 — デザイントークン導入(紙白/藍墨/診断ブルー1アクセント), シグネチャ「カルテ罫」(シート上端にランク色6px罫・rank-sheet-*クラスで連動), セクション見出しを●ドットから検査項目風縦バーへ(CSS置換・JSX無変更), ヘッダー刷新(ブランド+診断メタ罫組み), section-cardフラット化(印刷と画面の見た目統一), @page A4横+@media print一式(no-print/tab-bar/side-banner非表示・section-card改ページ回避・print-color-adjust), シート内に「印刷」ボタン追加(window.print)。既存html2canvas PDF出力(pdf-export-mode)とは共存(overflow競合を確認済み)。検証: 構文/no-undef 0/コメントペア全パス（2026-07-07） -->
+  <!-- v63: v62デザイン刷新を全面取り消し（カルテ罫/検査ラベル/ヘッダー刷新/印刷CSS/印刷ボタンを除去しv61の見た目へ復元）＋ ご指定スタイルのみ適用: section-cardを角丸12px・枠線なし・ドロップシャドウ(2層ソフトシャドウ)に変更（2026-08-10） -->
+  <!--
+    ============================================================
+    【v57 修正詳細】2026-07-07 実施
+
+    ■ companiesレース対策（06_v57_companies_patch.sql とセットでデプロイ）
+    旧実装: _companyIdなし時に name+prefecture で select→update/insert。
+    問題: (1)同時保存で重複行が生まれるレース条件
+          (2)重複行が生まれると以後どちらが更新されるか不定（同名企業混線）
+    対策: DB側に名前付きUNIQUE制約 companies_name_prefecture_key を追加し、
+          INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING id の
+          原子的upsert RPC（upsert_company, SECURITY INVOKER）に置換。
+          既存重複はパッチSTEP 3でFK参照を動的付け替えの上で統合。
+    検証: ローカルPG16で 重複統合(FK2テーブル付け替え)・NULL県正規化・
+          10並行upsert→1行・同一キー2回→同一ID＋更新反映 を全て確認。
+    デプロイ順序: ①06パッチ → ②本ファイル（逆順だとRPC未存在で保存失敗）
+    注意: _companyIdありの直接更新で既存(name,prefecture)と衝突する
+          改名を行うとUNIQUE制約エラーになる（従来は静かに重複を作って
+          いたケース。エラーとして表面化するのは正しい挙動）。
+
+    ■ 未着手（v58以降の候補）
+    - GAS互換デッドコード削除（isGasMode恒真、日本語キーフォールバック等）
+    - AI APIキーのEdge Functionプロキシ化
+    - プリビルド移行（Babel/Tailwind CDN脱却、unsafe-eval除去）
+    ============================================================
+  -->
+  <!--
+    ============================================================
+    【v56 修正詳細】2026-07-07 実施
+
+    ■ BUG-A: ファネル個別カラムの陳腐化（saveCustomer）
+    UIは funnelData（ネスト）のみ更新するが、getCustomers が注入する
+    フラットプロパティ(c.funnelAwareness等=DBの旧値)が保存時に優先され、
+    編集後も funnel_* カラムに旧値が書き戻され続けていた。
+    → 優先順位を fd.x ?? c.x ?? 0 に反転。
+    注意: diagnosis_data内のfunnelDataは正しかったためUI表示に異常はなく、
+    DBカラムのみ乖離していた。過去データはfunnelDataを正としてカラムを
+    再計算するSQL修正で復旧可能。
+
+    ■ BUG-B: 未登録アカウントのセッション残存（login）
+    signInWithIdToken成功→members照合で未登録判定しても signOut して
+    いなかったため、authenticatedセッションが残存。RLS次第でデータ
+    アクセス可能な状態だった。→ 未登録/照会エラー時に signOut 追加。
+    memberRes.error 未チェック（通信エラーが「未登録」と誤表示）も修正。
+
+    ■ BUG-C: 同時編集の後勝ち全置換（saveCustomer）
+    updated_at 比較の楽観ロックを追加。ロード時に _dbUpdatedAt を保持し、
+    保存前にDB値と比較、不一致なら保存拒否＋再読込を促す。
+    保存成功時は返却された updated_at で _dbUpdatedAt を更新（誤検知防止）。
+    ※前提: bb_diagnoses.updated_at のUPDATE時自動更新（moddatetime等の
+    トリガー）。未設定環境では両者が常に一致し従来動作で素通り（無害）。
+    推奨SQL:
+      create extension if not exists moddatetime;
+      create trigger set_updated_at before update on bb_diagnoses
+        for each row execute procedure moddatetime(updated_at);
+
+    ■ その他
+    - saveCustomerPreInput: existing.error未チェックでinsert分岐に落ち
+      重複行が生まれるバグ修正
+    - saveAISettings: ループ個別upsert（エラー無視・部分保存でも成功扱い）
+      → 一括upsert＋エラーチェック
+    - total_score: || → ??（正当な0点のフォールバック防止）
+    - 冒頭リダイレクト: /index.html 直アクセスで不正URL生成を修正
+    - normalizeGASCustomer assigneeId: padStart(13,'0')による誤抽出修正
+    - 診断実行モーダル: 内側setTimeoutのクリーンアップ追加
+
+    ■ AI: gemini-3.5-flash 移行（gemini-2.0-flash 2026-06-01廃止による本番障害対応）
+    - generateAIDiagnosisGemini: デフォルトモデルを gemini-3.5-flash に変更
+    - 管理画面AI設定の model/maxTokens を実配線（従来は保存されるだけの死値。
+      デフォルト 'claude-3-haiku-20240307' も未使用のまま残存していた）
+    - AI設定画面にモデル名入力欄を追加 → 次回のモデル廃止時はデプロイ不要で
+      管理画面から切替可能（DB-first運用）
+    - gemini-3.x向け: thinkingConfig { thinkingLevel: 'low' } を条件付き付与、
+      maxOutputTokens下限を4096に（thinking分のトークン消費考慮）。
+      gemini-2.x系を指定した場合はthinkingConfigを付けない（400エラー回避）
+    - 応答パース: 固定 candidates[0].content.parts[0].text をやめ、
+      thought part除外＋テキストpart結合＋空candidatesガードに変更
+    - モデル名バリデーション: gemini系関数にgpt系等の値が渡っても
+      デフォルトにフォールバック（設定不整合への防御）
+
+    ■ 未着手リストは v57 ブロック（上部）へ移動
+    ============================================================
+  -->
   <!-- v53: fullBackup falsy値修正(||→??), normalizeGASCustomer mindsetScores復元, getCustomerPreInput DB status返却, _preInputStatus永続化, HTMLコメント漏れ修正, セキュリティ強化(signOut/CSP/セッション検証/APIキーログマスク), 事前問診URL未保存ガード -->
   <!--
     ============================================================
@@ -128,7 +218,9 @@
     (function() {
       var params = new URLSearchParams(window.location.search);
       if (params.get('id') && !window.location.pathname.includes('/customer')) {
-        var newUrl = window.location.pathname.replace(/\/?$/, '/') + 'customer/?' + params.toString();
+        // v56-fix: /index.html 直アクセス時に "/index.html/customer/" という不正URLになるバグ修正
+        var basePath = window.location.pathname.replace(/index\.html$/, '');
+        var newUrl = basePath.replace(/\/?$/, '/') + 'customer/?' + params.toString();
         window.location.replace(newUrl);
         return;
       }
@@ -164,7 +256,6 @@
       memberName: '',
       studentId: '',
       gasUrl: window.SUPABASE_CONFIG.url, // ダミー（直接は使わない）
-      deploymentMode: 'gas', // 既存コードの条件分岐との互換性
       permissions: []
     };
     
@@ -182,20 +273,25 @@
   </script>
   <!-- ★★★ Supabase CDN ★★★ -->
   <script type="module">
-    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+    // v59-sec: @2（自動更新）→完全バージョン固定。+esmビルドはjsdelivr生成のためSRI不可、固定で自動更新リスクを排除
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/+esm';
     window._supabase = createClient(
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v55] Supabase接続完了');
+    console.log('[BB診断 v63] Supabase接続完了');
   </script>
   
+  <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
+       cdnjs配信はnpm distと同一保証がないためunpkg（npm tarballそのまま配信）に統一。
+       ハッシュはregistry.npmjs.orgの同一バージョンtarballから算出（sha384）。
+       Tailwind CDNは動的生成のためSRI不可＝プリビルド移行のもう一つの動機。 -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js" integrity="sha384-ezQ6HS3FLspd9te19o2McUV6FAK091+GG7KO54f/R8DKgCDi7fULhapNrd5LY+vG" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
   <!-- Google Sign-In (v34) -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700;900&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -267,10 +363,11 @@ body {
 
 /* セクションカード */
 .section-card {
+  /* v63: 角丸12px・枠線なし・ドロップシャドウ（ご指定スタイル） */
   background: #ffffff;
-  border: 1px solid #e8ecf0;
-  border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.03);
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05), 0 10px 28px rgba(15, 23, 42, 0.10);
   overflow: visible;
 }
 
@@ -1815,7 +1912,7 @@ const DEFAULT_QUESTION_MASTER = {
 const getQuestionMasterFromStorage = () => {
   try {
     // GASモードの場合はスプレッドシートのデータを優先
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasData = GASDataManager.getQuestionMaster();
       if (gasData) {
@@ -2421,7 +2518,7 @@ const DEFAULT_SIDE_BUTTONS = [
 // AI設定の保存・読み込み
 const AISettingsManager = {
   getSettings: () => {
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     
     // GASモードの場合はスプレッドシートの設定を優先
     if (isGasMode && typeof GASDataManager !== 'undefined') {
@@ -2436,8 +2533,8 @@ const AISettingsManager = {
             // API設定（GAS優先）
             apiType: gasSettings.apiType || localSettings.apiType || 'gemini',
             apiKey: gasSettings.apiKey || localSettings.apiKey || '',
-            model: gasSettings.model || localSettings.model || 'claude-3-haiku-20240307',
-            maxTokens: gasSettings.maxTokens || localSettings.maxTokens || 2000,
+            model: gasSettings.model || localSettings.model || 'gemini-3.5-flash', // v56: 旧claude-3-haikuデフォルトは未使用の死値だったため現行モデルに変更
+            maxTokens: gasSettings.maxTokens || localSettings.maxTokens || 4096,
             // プロンプト設定（GAS優先）
             selectedPreset: gasSettings.selectedPreset || localSettings.selectedPreset || 'standard',
             customSystemPrompt: gasSettings.customSystemPrompt || localSettings.customSystemPrompt || '',
@@ -2487,7 +2584,7 @@ const AISettingsManager = {
     };
   },
   saveSettings: (settings) => {
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
     
     try {
@@ -2500,8 +2597,8 @@ const AISettingsManager = {
           enabled: true,
           apiType: settings.apiType || 'gemini',
           apiKey: settings.apiKey || '',
-          model: settings.model || 'claude-3-haiku-20240307',
-          maxTokens: settings.maxTokens || 2000,
+          model: settings.model || 'gemini-3.5-flash',
+          maxTokens: settings.maxTokens || 4096,
           // プロンプト設定
           selectedPreset: settings.selectedPreset || 'standard',
           customSystemPrompt: settings.customSystemPrompt || '',
@@ -2592,7 +2689,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v55' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v63' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -2648,6 +2745,8 @@ const SUPA_HANDLERS = {
         updatedAt: row.updated_at || '',
         _supabaseId: row.id,
         _companyId: row.company_id,
+        // v56: 楽観ロック用（handleSaveでupdatedAtがクライアント時刻に上書きされるため別名で保持）
+        _dbUpdatedAt: row.updated_at || null,
       };
     });
     return { success: true, customers: customers };
@@ -2671,36 +2770,32 @@ const SUPA_HANDLERS = {
 
     var companyId = c._companyId;
     if (companyId) {
+      // 確定IDがある場合は直接更新（従来挙動維持）
       var upRes1 = await sb.from('companies').update(companyData).eq('id', companyId);
       if (upRes1.error) throw new Error('企業更新失敗: ' + upRes1.error.message);
     } else {
-      var existing = await sb.from('companies')
-        .select('id')
-        .eq('name', companyData.name)
-        .eq('prefecture', companyData.prefecture)
-        .maybeSingle();
-      if (existing.error) throw new Error('企業検索失敗: ' + existing.error.message);
-      if (existing.data) {
-        companyId = existing.data.id;
-        var upRes2 = await sb.from('companies').update(companyData).eq('id', companyId);
-        if (upRes2.error) throw new Error('企業更新失敗: ' + upRes2.error.message);
-      } else {
-        var newCo = await sb.from('companies').insert(companyData).select('id').single();
-        if (newCo.error) throw new Error('企業登録失敗: ' + newCo.error.message);
-        companyId = newCo.data.id;
-      }
+      // v57: 旧実装の select→update/insert はレース条件で重複行が生まれるため、
+      // UNIQUE制約(companies_name_prefecture_key) + ON CONFLICT による
+      // 原子的upsert RPCに置換（06_v57_companies_patch.sql とセット）
+      var coRes = await sb.rpc('upsert_company', { p_data: companyData });
+      if (coRes.error) throw new Error('企業登録失敗: ' + coRes.error.message);
+      if (!coRes.data) throw new Error('企業登録失敗: IDが返されませんでした');
+      companyId = coRes.data;
     }
 
     // 2. bb_diagnoses を upsert
     // v50: funnelData オブジェクトからの抽出（個別プロパティが未設定の場合のフォールバック）
     // v53-fix: || → ?? で 0 を正しく保存
+    // v56-fix: 優先順位を反転。UIが更新するのは funnelData のみで、
+    // フラットプロパティ(c.funnelAwareness等)は getCustomers がDBの旧値を注入したもの。
+    // 旧順序(c.x ?? fd.x)だと編集後の保存で常に旧値が funnel_* カラムへ書き戻されていた。
     var fd = c.funnelData || {};
-    var funnelAwareness = c.funnelAwareness ?? fd.targetAwareness ?? fd.awareness ?? 0;
-    var funnelInterest = c.funnelInterest ?? fd.interest ?? 0;
-    var funnelApplications = c.funnelApplications ?? fd.applications ?? 0;
-    var funnelScreening = c.funnelScreening ?? fd.screening ?? 0;
-    var funnelOffers = c.funnelOffers ?? fd.offers ?? 0;
-    var funnelAcceptance = c.funnelAcceptance ?? fd.acceptance ?? 0;
+    var funnelAwareness = fd.targetAwareness ?? fd.awareness ?? c.funnelAwareness ?? 0;
+    var funnelInterest = fd.interest ?? c.funnelInterest ?? 0;
+    var funnelApplications = fd.applications ?? c.funnelApplications ?? 0;
+    var funnelScreening = fd.screening ?? c.funnelScreening ?? 0;
+    var funnelOffers = fd.offers ?? c.funnelOffers ?? 0;
+    var funnelAcceptance = fd.acceptance ?? c.funnelAcceptance ?? 0;
 
     // v50: diagnosis_data に全データバックアップを構築
     // normalizeGASCustomer が fullData から復元する全フィールドを網羅する
@@ -2745,7 +2840,7 @@ const SUPA_HANDLERS = {
       inquiry_no: c.inquiryNo || c.id,
       diagnosis_date: c.diagnosisDate || null,
       target_layer: c.targetLayer || '',
-      total_score: c.finalScore || c.totalScore || 0,
+      total_score: c.finalScore ?? c.totalScore ?? 0, // v56-fix: 正当な0点がtotalScoreへフォールバックするのを防止
       rank: c.rank || '',
       diagnosis_type: c.diagnosisType || '',
       score_recognition: c.scoreRecognition || 0,
@@ -2774,19 +2869,53 @@ const SUPA_HANDLERS = {
       diagData.assignee_id = c.assigneeId;
     }
 
+    // v56: 楽観ロック（同時編集の後勝ち全置換による巻き戻り防止）
+    // 前提: bb_diagnoses.updated_at がUPDATE時に自動更新されること（moddatetimeトリガー等）。
+    // トリガー未設定の環境では両者が常に一致するため従来動作（保護なし）で素通りする。
+    if (c._dbUpdatedAt && (c.inquiryNo || c.id)) {
+      var lockRes = await sb.from('bb_diagnoses')
+        .select('updated_at')
+        .eq('inquiry_no', c.inquiryNo || c.id)
+        .maybeSingle();
+      if (!lockRes.error && lockRes.data && lockRes.data.updated_at) {
+        var dbTime = new Date(lockRes.data.updated_at).getTime();
+        var myTime = new Date(c._dbUpdatedAt).getTime();
+        if (!isNaN(dbTime) && !isNaN(myTime) && dbTime !== myTime) {
+          throw new Error('他の端末・タブでこの診断が更新されています。データを再読み込みしてから保存してください。');
+        }
+      }
+      // selectエラー（updated_at列なし等）は保護なしで続行＝従来動作
+    }
+
     var res = await sb.from('bb_diagnoses')
       .upsert(diagData, { onConflict: 'inquiry_no' })
-      .select('id')
+      .select('id, updated_at')
       .single();
     if (res.error) throw new Error('診断保存失敗: ' + res.error.message);
 
-    return { success: true, data: { id: c.inquiryNo || c.id } };
+    // v56: 保存後のupdated_atを返却（クライアント側の_dbUpdatedAt更新用。返さないと次回保存で誤検知する）
+    return { success: true, data: { id: c.inquiryNo || c.id, updatedAt: res.data ? res.data.updated_at : null } };
   },
 
   // ── 顧客データ削除 ──
   deleteCustomer: async function(sb, data) {
     var id = data.customerId;
     if (!id) return { success: false, error: 'IDがありません' };
+
+    // v59: CRM商談に連携済みの診断は削除拒否（crm_deals.bb_inquiry_noのリンク切れ防止）
+    // RLSでcrm_dealsを読めない環境ではチェックをスキップして続行（ベストエフォート）
+    try {
+      var dealRes = await sb.from('crm_deals').select('id').eq('bb_inquiry_no', id).limit(1);
+      if (!dealRes.error && dealRes.data && dealRes.data.length > 0) {
+        return { success: false, error: 'この診断はCRMの商談に連携されています。CRM側で商談を確認してから削除してください。' };
+      }
+    } catch (e) { /* 読取不可なら続行 */ }
+
+    // v59: 孤児pre_inputs防止 — inquiry_noは同一学生・同業種・同日の削除→再作成で
+    // 再採番されうるため、残存すると前の会社の事前問診が新診断に誤取込される
+    var preDel = await sb.from('pre_inputs').delete().eq('customer_id', id);
+    if (preDel.error) throw new Error('事前問診データ削除失敗: ' + preDel.error.message);
+
     var res = await sb.from('bb_diagnoses').delete().eq('inquiry_no', id);
     if (res.error) throw new Error(res.error.message);
     return { success: true };
@@ -3152,8 +3281,8 @@ const SUPA_HANDLERS = {
         enabled: raw.ai_enabled !== 'false',
         apiType: raw.ai_api_type || 'gemini',
         apiKey: raw.ai_api_key || '',
-        model: raw.ai_model || 'claude-3-haiku-20240307',
-        maxTokens: parseInt(raw.ai_max_tokens, 10) || 2000,
+        model: raw.ai_model || 'gemini-3.5-flash',
+        maxTokens: parseInt(raw.ai_max_tokens, 10) || 4096,
         selectedPreset: raw.ai_selected_preset || 'standard',
         customSystemPrompt: raw.ai_custom_system_prompt || '',
         userPromptTemplate: raw.ai_user_prompt_template || '',
@@ -3177,17 +3306,17 @@ const SUPA_HANDLERS = {
       userPromptTemplate: 'ai_user_prompt_template',
       sideButtons: 'ai_side_buttons',
     };
-    var entries = Object.entries(settings);
-    for (var i = 0; i < entries.length; i++) {
-      var propName = entries[i][0];
-      var val = entries[i][1];
+    // v56-fix: ループ個別upsert（エラー未チェック・部分保存でもsuccess返却）を
+    // 一括upsert＋エラーチェックに変更
+    var rows = Object.entries(settings).map(function(entry) {
+      var propName = entry[0];
+      var val = entry[1];
       var key = mapping[propName] || ('ai_' + propName);
       var strVal = (typeof val === 'object' && val !== null) ? JSON.stringify(val) : String(val != null ? val : '');
-      await sb.from('app_settings').upsert(
-        { key: key, value: strVal, app: 'bb' },
-        { onConflict: 'key' }
-      );
-    }
+      return { key: key, value: strVal, app: 'bb' };
+    });
+    var res = await sb.from('app_settings').upsert(rows, { onConflict: 'key' });
+    if (res.error) throw new Error('AI設定保存失敗: ' + res.error.message);
     return { success: true };
   },
 
@@ -3380,7 +3509,7 @@ const SUPA_HANDLERS = {
 
   // ── メンバー取得（GAS互換: { success, members: [{ email, name, role, studentId, active }] }）──
   getMembers: async function(sb) {
-    var res = await sb.from('members').select('*').order('created_at');
+    var res = await sb.from('members').select('id, email, name, role, student_id, is_active, note, created_at').order('created_at'); // v59: 列指定（CRM専用のtarget_*等を転送しない）
     if (res.error) throw new Error(res.error.message);
     var members = (res.data || []).map(function(m) {
       return {
@@ -3478,6 +3607,9 @@ const SUPA_HANDLERS = {
     var custRes = await sb.from('bb_diagnoses')
       .select('inquiry_no, companies(name), assignee_id')
       .in('inquiry_no', inquiryNos);
+    // v59-fix: error未チェックだと取得失敗時にrecords=[]となり
+    // 「0件の引き継ぎが完了しました」とサイレント成功していた
+    if (custRes.error) throw new Error('引き継ぎ対象の取得失敗: ' + custRes.error.message);
 
     var records = (custRes.data || []).map(function(row) {
       return {
@@ -3495,17 +3627,18 @@ const SUPA_HANDLERS = {
 
     if (records.length > 0) {
       var insRes = await sb.from('bb_handovers').insert(records);
-      if (insRes.error) throw new Error(insRes.error.message);
+      if (insRes.error) throw new Error('引き継ぎ履歴の保存失敗: ' + insRes.error.message);
 
-      // 各診断の担当者IDを更新
-      for (var i = 0; i < inquiryNos.length; i++) {
-        await sb.from('bb_diagnoses')
-          .update({ assignee_id: toStudentId })
-          .eq('inquiry_no', inquiryNos[i]);
-      }
+      // v59-fix: ループ内update（エラー未チェック・途中失敗で履歴だけ残る片肺状態）を
+      // .in() の一括updateに変更（1クエリで原子的）
+      var updRes = await sb.from('bb_diagnoses')
+        .update({ assignee_id: toStudentId })
+        .in('inquiry_no', records.map(function(r) { return r.inquiry_no; }));
+      if (updRes.error) throw new Error('担当者更新失敗: ' + updRes.error.message);
     }
 
-    return { success: true, message: inquiryNos.length + '件の引き継ぎが完了しました', batchId: batchId };
+    // v59-fix: 件数は実際に処理したrecords.lengthを報告（見つからなかったNoを含めない）
+    return { success: true, message: records.length + '件の引き継ぎが完了しました', batchId: batchId };
   },
 
   // ── 事前入力データ取得 ──
@@ -3532,6 +3665,8 @@ const SUPA_HANDLERS = {
       .select('id, status')
       .eq('customer_id', customerId)
       .maybeSingle();
+    // v56-fix: selectエラー時にinsert分岐へ落ちて重複行が生まれるのを防止
+    if (existing.error) throw new Error('事前入力確認失敗: ' + existing.error.message);
     
     if (existing.data) {
       // v52-fix2: 既存statusが'完了'/'上層部完了'の場合は巻き戻さない
@@ -3558,7 +3693,10 @@ const SUPA_HANDLERS = {
     var savedCount = 0;
     for (var i = 0; i < customers.length; i++) {
       try {
-        await SUPA_HANDLERS.saveCustomer(sb, { customer: customers[i] });
+        // v56: 一括同期は「ローカルを正として上書き」する操作のため楽観ロックを適用しない
+        var syncCust = Object.assign({}, customers[i]);
+        delete syncCust._dbUpdatedAt;
+        await SUPA_HANDLERS.saveCustomer(sb, { customer: syncCust });
         savedCount++;
       } catch(e) {
         console.warn('[fullSync] skip error for ' + (customers[i].id || i) + ': ' + e.message);
@@ -3587,7 +3725,17 @@ const SUPA_HANDLERS = {
         .eq('email', email)
         .eq('is_active', true)
         .maybeSingle();
-      if (!memberRes.data) return { success: false, error: '未登録のメールアドレスです: ' + email };
+      // v56-fix: 照会エラーを「未登録」と誤表示しない＋失敗時はセッションを破棄
+      if (memberRes.error) {
+        try { await sb.auth.signOut(); } catch(e2) {}
+        return { success: false, error: 'メンバー照会エラー: ' + memberRes.error.message };
+      }
+      // v56-fix: 未登録アカウントでもsignInWithIdToken成功時点でauthenticatedセッションが
+      // 生成済みのため、明示的にsignOutしないと未登録GoogleアカウントにRLS上のアクセス権が残る
+      if (!memberRes.data) {
+        try { await sb.auth.signOut(); } catch(e2) {}
+        return { success: false, error: '未登録のメールアドレスです: ' + email };
+      }
 
       var member = memberRes.data;
 
@@ -3798,7 +3946,6 @@ const GoogleLoginScreen = ({ onLoginSuccess }) => {
       window.GAS_CONFIG.memberName = data.user.name;
       window.GAS_CONFIG.studentId = data.user.studentId;
       window.GAS_CONFIG.permissions = data.user.permissions;
-      window.GAS_CONFIG.deploymentMode = 'gas'; // 互換性のため'gas'に設定
       
       // v47: Supabase Authセッションはauto-refreshされるのでタイマー不要だが互換性のため呼ぶ
       scheduleTokenRefresh();
@@ -4046,7 +4193,9 @@ const SpreadsheetManager = {
     const results = { success: 0, failed: 0, errors: [] };
     
     for (let i = 0; i < customers.length; i++) {
-      const customer = customers[i];
+      // v56: 一括アップロードは意図的な上書き操作のため楽観ロックを適用しない
+      const customer = { ...customers[i] };
+      delete customer._dbUpdatedAt;
       try {
         await SpreadsheetManager.saveCustomer(customer);
         results.success++;
@@ -4178,7 +4327,7 @@ const MasterDataSpreadsheetManager = {
   // 設定の取得（GAS_CONFIGを優先）
   getConfig: () => {
     // GASモードの場合は自動設定を使用
-    if (window.GAS_CONFIG?.deploymentMode === 'gas' && window.GAS_CONFIG?.gasUrl) {
+    if (window.GAS_CONFIG?.gasUrl) { // v58: deploymentMode恒真条件を畳み込み
       return {
         enabled: true,
         scriptUrl: window.GAS_CONFIG.gasUrl,
@@ -4282,12 +4431,28 @@ const MasterDataSpreadsheetManager = {
 };
 
 // AI API呼び出し関数（Gemini）
-const generateAIDiagnosisGemini = async (systemPrompt, userPrompt, apiKey) => {
-  // 最新のモデル名を使用
-  const MODEL_NAME = 'gemini-2.0-flash';
+const generateAIDiagnosisGemini = async (systemPrompt, userPrompt, apiKey, model, maxTokens) => {
+  // v56: gemini-2.0-flash 廃止（2026-06-01）による本番障害対応
+  // - デフォルトを gemini-3.5-flash に変更（廃止予定日の告知なし＝メンテ頻度最小）
+  // - 管理画面のAI設定 model/maxTokens を実配線（従来は保存されるだけで未使用だった）
+  // - gemini-3.x はthinkingがデフォルト有効のため thinkingLevel: low を明示し、
+  //   thinking分のトークン消費を考慮して maxOutputTokens の下限を 4096 に引き上げ
+  const MODEL_NAME = (model && /^gemini-/.test(model)) ? model : 'gemini-3.5-flash';
+  const isGemini3 = /^gemini-3/.test(MODEL_NAME);
+  const parsedMax = parseInt(maxTokens, 10);
+  const maxOut = isGemini3
+    ? Math.max(isNaN(parsedMax) ? 0 : parsedMax, 4096)
+    : (isNaN(parsedMax) || parsedMax <= 0 ? 2048 : parsedMax);
   const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
   
   try {
+    const generationConfig = {
+      temperature: 0.7,
+      maxOutputTokens: maxOut,
+    };
+    if (isGemini3) {
+      generationConfig.thinkingConfig = { thinkingLevel: 'low' };
+    }
     const response = await fetch(`${API_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4296,10 +4461,7 @@ const generateAIDiagnosisGemini = async (systemPrompt, userPrompt, apiKey) => {
           role: "user",
           parts: [{ text: systemPrompt + "\n\n" + userPrompt }]
         }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 2048,
-        }
+        generationConfig: generationConfig
       })
     });
 
@@ -4315,7 +4477,18 @@ const generateAIDiagnosisGemini = async (systemPrompt, userPrompt, apiKey) => {
     }
 
     const resData = await response.json();
-    return resData.candidates[0].content.parts[0].text;
+    // v56: gemini-3.x はthinking part（thought: true）が混入し得るため、
+    // 固定インデックス参照をやめてテキストpartのみを結合。空candidatesもガード
+    const parts = resData?.candidates?.[0]?.content?.parts || [];
+    const text = parts
+      .filter(p => typeof p.text === 'string' && !p.thought)
+      .map(p => p.text)
+      .join('');
+    if (!text) {
+      const blockReason = resData?.promptFeedback?.blockReason || resData?.candidates?.[0]?.finishReason || '不明';
+      throw new Error(`AI応答にテキストが含まれていません (理由: ${blockReason})`);
+    }
+    return text;
   } catch (error) {
     console.error("Gemini API エラー:", error);
     // 完全にエラーになった場合もフォールバック文言を返す
@@ -4347,8 +4520,10 @@ const generateFallbackResponse = () => {
 };
 
 // AI API呼び出し関数（OpenAI）
-const generateAIDiagnosisOpenAI = async (systemPrompt, userPrompt, apiKey) => {
+const generateAIDiagnosisOpenAI = async (systemPrompt, userPrompt, apiKey, model) => {
   const API_URL = 'https://api.openai.com/v1/chat/completions';
+  // v56: 管理画面のmodel設定を実配線。gemini系の値が渡ってきた場合はgpt-4にフォールバック
+  const MODEL_NAME = (model && /^gpt-/.test(model)) ? model : 'gpt-4';
   
   try {
     const response = await fetch(API_URL, {
@@ -4358,7 +4533,7 @@ const generateAIDiagnosisOpenAI = async (systemPrompt, userPrompt, apiKey) => {
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: "gpt-4",
+        model: MODEL_NAME,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt }
@@ -4815,19 +4990,16 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
   const hasContent = (obj) => obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).length > 0;
   
   // 1. 診断データJSON から全データ復元（最も信頼性の高いバックアップ）
-  const fullData = safeParse(c['診断データJSON']) || safeParse(c.diagnosisData) || {};
+  const fullData = safeParse(c.diagnosisData) || {}; // v58: GAS列名フォールバック('診断データJSON')削除
   
   // 2. 回答データ: GASパース済み → 列の生JSON → fullData → 空
   const staffAnswers = (hasContent(c.staffAnswers) ? c.staffAnswers : null)
-    || safeParse(c['担当者回答'])
     || (hasContent(fullData.staffAnswers) ? fullData.staffAnswers : null)
     || {};
   const executiveAnswers = (hasContent(c.executiveAnswers) ? c.executiveAnswers : null)
-    || safeParse(c['経営者回答'])
     || (hasContent(fullData.executiveAnswers) ? fullData.executiveAnswers : null)
     || {};
   const studentAnswers = (hasContent(c.studentAnswers) ? c.studentAnswers : null)
-    || safeParse(c['学生回答'])
     || (hasContent(fullData.studentAnswers) ? fullData.studentAnswers : null)
     || {};
   
@@ -4842,14 +5014,8 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
   const execMindsetScores = (hasContent(c.execMindsetScores) ? c.execMindsetScores : null) || fullData.execMindsetScores || {};
   
   // 4. ファネル・手法等
-  const funnelData = (hasContent(c.funnelData) ? c.funnelData : null) || fullData.funnelData || {
-    targetAwareness: c['認知数'] ?? 0,
-    interest: c['興味数'] ?? 0,
-    applications: c['応募数'] ?? 0,
-    screening: c['選考数'] ?? 0,
-    offers: c['内定数'] ?? 0,
-    acceptance: c['承諾数'] ?? 0
-  };
+  // v58: GAS列名（'認知数'等）からの最終フォールバックを削除（Supabaseでは到達不能）
+  const funnelData = (hasContent(c.funnelData) ? c.funnelData : null) || fullData.funnelData || {};
   const channelLabels = (hasContent(c.channelLabels) ? c.channelLabels : null) || fullData.channelLabels || null;
   const recruitmentMethods = (hasContent(c.recruitmentMethods) ? c.recruitmentMethods : null) || fullData.recruitmentMethods || {};
   const targetLayers = (hasContent(c.targetLayers) ? c.targetLayers : null) || fullData.targetLayers || {};
@@ -4860,29 +5026,33 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
   return {
     ...c,
     // 基本情報
-    id: c['問い合わせNo'] || c.inquiryNo || c.id,
-    inquiryNo: c['問い合わせNo'] || c.inquiryNo,
-    companyName: c['会社名'] || c.companyName,
-    diagnosisDate: c['診断日時'] || c.diagnosisDate,
-    industry: c['業種'] || c.industry,
-    region: c['地域'] || c.region,
-    contactName: c['担当者名'] || c.contactName,
-    email: c['メール'] || c.email,
-    phone: c['電話'] || c.phone,
-    companySize: c['従業員規模'] || c.employeeCount || c.companySize,
-    totalScore: c['総合スコア'] ?? c.totalScore,
-    rank: c['ランク'] || c.rank,
-    diagnosisType: c['症例タイプ'] || c.diagnosisType,
-    targetLayer: c['ターゲット層'] || c.targetLayer || '',
+    id: c.inquiryNo || c.id,
+    inquiryNo: c.inquiryNo,
+    companyName: c.companyName,
+    diagnosisDate: c.diagnosisDate,
+    industry: c.industry,
+    region: c.region,
+    contactName: c.contactName,
+    email: c.email,
+    phone: c.phone,
+    companySize: c.employeeCount || c.companySize,
+    totalScore: c.totalScore,
+    rank: c.rank,
+    diagnosisType: c.diagnosisType,
+    targetLayer: c.targetLayer || '',
     // 備考: UIは data.notes で読み書き、GAS保存は data.remarks で読み取るため両方に設定
-    notes: c['備考'] || c.remarks || c.notes || '',
-    remarks: c['備考'] || c.remarks || c.notes || '',
+    notes: c.remarks || c.notes || '',
+    remarks: c.remarks || c.notes || '',
     assigneeId: (() => {
-      const raw = c['担当者ID'] ?? c.assigneeId ?? '';
+      const raw = c.assigneeId ?? '';
       const padded = String(raw || '').padStart(4, '0');
-      return (padded && padded !== '0000') ? padded : String(c['問い合わせNo'] || '').padStart(13, '0').substring(0, 4) || '0000';
+      if (padded && padded !== '0000') return padded;
+      // v56-fix: 旧実装のpadStart(13,'0')は13桁未満のIDで先頭にゼロが埋まり
+      // 誤った担当者IDを抽出していた（かつ'00xx'はtruthyで'0000'にも到達しない）
+      const inq = String(c.inquiryNo || '');
+      return inq.length >= 4 ? inq.substring(0, 4) : '0000';
     })(),
-    aiResult: c['AI診断結果'] || c.aiResult || '',
+    aiResult: c.aiResult || '',
     // 回答データ（多段フォールバック復元済み）
     staffAnswers,
     executiveAnswers,
@@ -4933,7 +5103,7 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
 const GASDataManager = {
   // 歩留まりマスターを読み込み
   loadYieldMaster: async () => {
-      const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+      const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
       const _handleResult = (result) => {
         if (result.success && result.data) {
@@ -4997,7 +5167,7 @@ const GASDataManager = {
   
   // 歩留まりマスターを保存（スプレッドシートに）
   saveYieldMaster: async (masterData) => {
-      const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+      const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
       // ローカルストレージに保存
       try {
@@ -5145,7 +5315,7 @@ const GASDataManager = {
   
   // AI設定を保存（スプレッドシートに）
   saveAISettings: async (settings) => {
-      const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+      const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
       try {
         localStorage.setItem('gakusapo_ai_settings', JSON.stringify(settings));
@@ -5209,7 +5379,7 @@ const GASDataManager = {
   
   // 採用手法マスターを保存
   saveMethodMaster: async (methodsData) => {
-      const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+      const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
       try {
         localStorage.setItem('gakusapo_method_master', JSON.stringify(methodsData));
@@ -5273,7 +5443,7 @@ const GASDataManager = {
   
   // 媒体利用率マスターを保存
   saveMediaUsageMaster: async (mediaData) => {
-      const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+      const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
       try {
         localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(mediaData));
@@ -5296,7 +5466,7 @@ const GASDataManager = {
     // v42: deploymentMode チェックを削除（呼び出し元の App で isGasMode ガード済み）
     // ログインフロー: login成功→deploymentMode='gas'→App描画→useEffectからここが呼ばれる
     // セッション復元: useState初期化でdeploymentMode='gas'→App描画→useEffectからここが呼ばれる
-    console.log('[loadAllMasterData] 開始 deploymentMode=' + window.GAS_CONFIG?.deploymentMode);
+    console.log('[loadAllMasterData] 開始');
     
     // v42: Promise.allSettled で個別の失敗に強くする
     const results = await Promise.allSettled([
@@ -5329,7 +5499,6 @@ const GASDataManager = {
   // v42: デバッグ用：現在のデータ読み込み状態を返す（コンソールから window._debugDataStatus() で呼び出し可能）
   debugStatus: () => {
     return {
-      deploymentMode: window.GAS_CONFIG?.deploymentMode,
       gasUrl: window.GAS_CONFIG?.gasUrl ? '設定済み' : '未設定',
       authToken: window.AUTH?.idToken ? '設定済み(' + window.AUTH.idToken.substring(0, 20) + '...)' : '未設定',
       isLoggedIn: window.AUTH?.isLoggedIn,
@@ -5426,7 +5595,7 @@ let _gasLoginConfig = null;
 const LoginManager = {
   // ログイン設定を取得（GASモードの場合はスプレッドシートから）
   getConfig: () => {
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     
     // GASモードでキャッシュがある場合はキャッシュを返す
     if (isGasMode && _gasLoginConfig) {
@@ -5468,7 +5637,7 @@ const LoginManager = {
   
   // ログイン設定を保存（GASモードの場合はスプレッドシートにも保存）
   saveConfig: (config) => {
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     
     try {
       localStorage.setItem('gakusapo_login_config', JSON.stringify(config));
@@ -5510,7 +5679,7 @@ const LoginManager = {
       return true;
     }
     
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     const config = LoginManager.getConfig();
     
     // GASモードでキャッシュがまだない場合は、ログイン必要
@@ -5621,7 +5790,7 @@ const InquiryNoManager = {
   // 返値: { inquiryNo, sequentialNo } or null（失敗時）
   reserveFromServer: async (industry = '', diagnosisDate = '') => {
     try {
-      const gasStudentId = window.GAS_CONFIG?.deploymentMode === 'gas' ? window.GAS_CONFIG?.studentId : null;
+      const gasStudentId = window.GAS_CONFIG?.studentId || null; // v58: 恒真三項を畳み込み
       const studentId = (gasStudentId || StorageManager.getStudentId()).padStart(4, '0');
       const industryCode = InquiryNoManager.getIndustryCode(industry);
       
@@ -5650,7 +5819,7 @@ const InquiryNoManager = {
   
   // v34: ローカルフォールバック（GAS未接続時 or スタンドアロンモード用）
   generateNextInquiryNoLocal: (industry = '', diagnosisDate = '') => {
-    const gasStudentId = window.GAS_CONFIG?.deploymentMode === 'gas' ? window.GAS_CONFIG?.studentId : null;
+    const gasStudentId = window.GAS_CONFIG?.studentId || null; // v58: 恒真三項を畳み込み
     const studentId = (gasStudentId || StorageManager.getStudentId()).padStart(4, '0');
     const year = InquiryNoManager.getYearCode(diagnosisDate);
     const month = InquiryNoManager.getMonthCode(diagnosisDate);
@@ -5669,8 +5838,8 @@ const InquiryNoManager = {
   // 保存時に商談数をインクリメント（スタンドアロンモード用のみ。GASモードではサーバーで管理済み）
   confirmInquiryNo: (diagnosisDate = '') => {
     // GASモードではサーバー側で予約済みのためスキップ
-    if (window.GAS_CONFIG?.deploymentMode === 'gas') {
-      console.log('[InquiryNoManager] GASモード: confirmInquiryNoスキップ（サーバー管理）');
+    if (true) { // v58: 恒真（採番はreserve_inquiry_no RPCでサーバー管理。ローカルカウントは常にスキップ）
+      console.log('[InquiryNoManager] confirmInquiryNoスキップ（サーバー管理）');
       return 0;
     }
     const year = InquiryNoManager.getYearCode(diagnosisDate);
@@ -6901,6 +7070,7 @@ const TripleRadarChart = ({ staffData, execData, size = 280, labels, title, maxV
   
   // アニメーション開始
   useEffect(() => {
+    let rafId = null; // v59-fix: アンマウント後のrAF継続防止
     const timer = setTimeout(() => {
       let start = 0;
       const duration = 1000;
@@ -6912,12 +7082,12 @@ const TripleRadarChart = ({ staffData, execData, size = 280, labels, title, maxV
         const eased = 1 - Math.pow(1 - progress, 3);
         setAnimationProgress(eased);
         if (progress < 1) {
-          requestAnimationFrame(animate);
+          rafId = requestAnimationFrame(animate);
         }
       };
-      requestAnimationFrame(animate);
+      rafId = requestAnimationFrame(animate);
     }, 200);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); if (rafId) cancelAnimationFrame(rafId); };
   }, []);
   
   // 描画
@@ -7084,6 +7254,7 @@ const FunnelChart = ({ data }) => {
   
   useEffect(() => {
     if (!hasData) return;
+    let rafId = null; // v59-fix: アンマウント後のrAF継続防止
     const timer = setTimeout(() => {
       let start = 0;
       const duration = 800;
@@ -7094,12 +7265,12 @@ const FunnelChart = ({ data }) => {
         const eased = 1 - Math.pow(1 - progress, 3);
         setAnimationProgress(eased);
         if (progress < 1) {
-          requestAnimationFrame(animate);
+          rafId = requestAnimationFrame(animate);
         }
       };
-      requestAnimationFrame(animate);
+      rafId = requestAnimationFrame(animate);
     }, 100);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); if (rafId) cancelAnimationFrame(rafId); };
   }, [hasData]);
   
   // データがない場合はメッセージ表示
@@ -7147,6 +7318,7 @@ const DepthBars = ({ scores }) => {
   const [animationProgress, setAnimationProgress] = useState(0);
   
   useEffect(() => {
+    let rafId = null; // v59-fix: アンマウント後のrAF継続防止
     const timer = setTimeout(() => {
       let start = 0;
       const duration = 800;
@@ -7157,12 +7329,12 @@ const DepthBars = ({ scores }) => {
         const eased = 1 - Math.pow(1 - progress, 3);
         setAnimationProgress(eased);
         if (progress < 1) {
-          requestAnimationFrame(animate);
+          rafId = requestAnimationFrame(animate);
         }
       };
-      requestAnimationFrame(animate);
+      rafId = requestAnimationFrame(animate);
     }, 200);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); if (rafId) cancelAnimationFrame(rafId); };
   }, []);
   
   const layers = [
@@ -7248,6 +7420,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
   // アニメーション
   useEffect(() => {
     if (!hasData) return;
+    let rafId = null; // v59-fix: アンマウント後のrAF継続防止
     const timer = setTimeout(() => {
       let start = 0;
       const duration = 800;
@@ -7259,12 +7432,12 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
         const eased = 1 - Math.pow(1 - progress, 3);
         setAnimationProgress(eased);
         if (progress < 1) {
-          requestAnimationFrame(animate);
+          rafId = requestAnimationFrame(animate);
         }
       };
-      requestAnimationFrame(animate);
+      rafId = requestAnimationFrame(animate);
     }, 300);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); if (rafId) cancelAnimationFrame(rafId); };
   }, [funnelData, targetHires, hasData]);
   
   // データがない場合はメッセージを表示
@@ -7297,7 +7470,11 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
   const safeApplications = applications || 0;
   const safeScreening = screening || 0;
   const safeOffers = offers || 0;
-  const safeAcceptance = acceptance || Math.round((safeOffers) * 0.8);
+  // v60-fix: 「0名」入力がfalsy判定で推計値(内定×80%)に化けるバグ修正（報告: 親和建設/東邦ガスセーフティライフ）
+  // 未入力(undefined/null/'')のみ従来の推計補完、0は0として尊重
+  const safeAcceptance = (acceptance === undefined || acceptance === null || acceptance === '')
+    ? Math.round((safeOffers) * 0.8)
+    : (parseInt(acceptance, 10) || 0);
   
   // 目標目安を業界平均から逆算（採用目標人数がある場合は逆算、ない場合は従来の順算）
   let targetAwareness, targetInterest, targetApplications, targetScreening, targetOffers, targetAcceptance;
@@ -7929,7 +8106,8 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
   };
   
   // 【inventory 10-A #3】effectiveData構築（共通関数を使用）
-  const { effectiveData, finalScore, rank, diagType, typeDef } = buildEffectiveData(data);
+  // v59-perf: レンダー毎のフルスコア計算チェーン再実行を防止（メモ欄1打鍵ごとに走っていた）
+  const { effectiveData, finalScore, rank, diagType, typeDef } = useMemo(() => buildEffectiveData(data), [data]);
   
   // フェーズ別スコアを計算（担当者+上層部の平均 × PHASE_AXIS_WEIGHT）
   const avgScoresForAI = calcAvgScores(effectiveData.staffScores, effectiveData.executiveScores);
@@ -8011,13 +8189,14 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
   // 分析を実行
   useEffect(() => {
     let stepIndex = 0;
+    let finishTimer = null; // v56-fix: アンマウント後発火防止
     const interval = setInterval(() => {
       stepIndex++;
       setAnalysisStep(stepIndex);
       
       if (stepIndex >= analysisSteps.length) {
         clearInterval(interval);
-        setTimeout(() => {
+        finishTimer = setTimeout(() => {
           setIsAnalyzing(false);
           // AI診断レポートを表示せず、診断結果画面に遷移
           if (onComplete) {
@@ -8028,7 +8207,10 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
       }
     }, 800);
     
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (finishTimer) clearTimeout(finishTimer);
+    };
   }, []);
   
   return (
@@ -8265,7 +8447,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
     // 採用手法別質問（キーがカテゴリ名 or 旧手法キーの両方に対応）
     Object.entries(localMaster.recruitmentMethod || {}).forEach(([key, roles]) => {
       // 旧手法キーの場合はカテゴリ名に変換、カテゴリ名の場合はそのまま
-      const categoryName = (methodMaster || DEFAULT_RECRUITMENT_METHODS)[key]?.category || key;
+      const categoryName = (GASDataManager.getMethodMaster() || DEFAULT_RECRUITMENT_METHODS)[key]?.category || key; // v58-fix: スコープ外methodMaster参照(ReferenceError)を修正
       Object.entries(roles).forEach(([role, questions]) => {
         questions.forEach(q => {
           csv += `採用手法別,,,,,${categoryName},${{ staff: '担当者', executive: '上層部', student: '学生' }[role]},${q.id},${escapeCSV(q.question)},${escapeCSV(q.studentQuestion || '')},${escapeCSV(q.choiceA)},${escapeCSV(q.choiceB)},${escapeCSV(q.studentChoiceA || '')},${escapeCSV(q.studentChoiceB || '')},${q.correctAnswer},${q.points || 3},${axisTypeToJa(q.axisType)},${axisKeyToJa(q.axisKey)},${q.gapCheck ? 'TRUE' : 'FALSE'}\n`;
@@ -8444,7 +8626,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
           newMaster.depth[depthKey][roleKey].push(questionObj);
         } else if ((section === '採用手法別' || section === '採用手法') && methodKey) {
           // methodKeyがカテゴリ名か旧手法キーかを判別し、カテゴリ名に正規化
-          const mMaster = methodMaster || DEFAULT_RECRUITMENT_METHODS;
+          const mMaster = GASDataManager.getMethodMaster() || DEFAULT_RECRUITMENT_METHODS; // v58-fix: スコープ外methodMaster参照(ReferenceError)を修正
           const catName = mMaster[methodKey]?.category || methodKey; // 旧手法キーならカテゴリ名に変換、それ以外はそのまま
           if (!newMaster.recruitmentMethod[catName]) newMaster.recruitmentMethod[catName] = { staff: [], executive: [], student: [] };
           newMaster.recruitmentMethod[catName][roleKey].push(questionObj);
@@ -8832,7 +9014,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
     effectiveExecScores,
     effectiveStudentScores,
     effectiveDepthScores
-  } = buildEffectiveData(data);
+  } = useMemo(() => buildEffectiveData(data), [data]); // v59-perf: レンダー毎のフルスコア計算チェーン再実行を防止（メモ欄1打鍵ごとに走っていた）
   
   const handleScoreChange = (category, key, value) => {
     const categoryKey = `${category}Scores`;
@@ -9172,7 +9354,10 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                         ...data.funnelData?.yearData,
                         [selectedYear]: {
                           ...data.funnelData?.yearData?.[selectedYear],
-                          targetHires: e.target.value ? parseInt(e.target.value) : 0
+                          targetHires: e.target.value ? parseInt(e.target.value) : 0,
+                          // v61-fix: 合計の直接入力時は古い手動層別配分を破棄（残存すると
+                          // 層別欄を触った際に旧配分の合計で目標が上書きされるため）
+                          targetHiresByLayer: undefined
                         }
                       }
                     }
@@ -9301,7 +9486,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                   ) : (
                     <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg mb-2">
                       <span className="text-xs text-amber-700">
-                        ※ 目標人数が未設定です（上部で設定してください）
+                        ※ {data.funnelData?.selectedYear || '27卒'}の目標人数が未設定です（年度別に設定されます。上部で年度と目標人数を確認してください）
                       </span>
                     </div>
                   );
@@ -10276,7 +10461,8 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                             ...data.funnelData?.yearData,
                             [selectedYear]: {
                               ...data.funnelData?.yearData?.[selectedYear],
-                              targetHires: e.target.value ? parseInt(e.target.value) : 0
+                              targetHires: e.target.value ? parseInt(e.target.value) : 0,
+                              targetHiresByLayer: undefined // v61-fix: 単一入力時は旧手動配分を破棄
                             }
                           }
                         }
@@ -11398,7 +11584,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
     effectiveExecScores,
     effectiveStudentScores,
     effectiveDepthScores
-  } = buildEffectiveData(data);
+  } = useMemo(() => buildEffectiveData(data), [data]); // v59-perf: レンダー毎のフルスコア計算チェーン再実行を防止（メモ欄1打鍵ごとに走っていた）
   
   if (DEBUG_MODE) {
     debugLog('9. calculatedScores:', calculatedScores);
@@ -12177,7 +12363,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
               {sortedCustomers.map((c, idx) => {
                 // calcFinalScoreでスコアを計算し、0の場合は保存されたfinalScoreを使用
                 const calculatedScore = calcFinalScore(c);
-                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || c['総合スコア'] || 0);
+                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || 0);
                 const rank = determineRank(score);
                 return (
                   <tr 
@@ -12230,7 +12416,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
         <div className="space-y-2 max-h-[500px] overflow-y-auto">
           {sortedCustomers.map(c => {
             const calculatedScore = calcFinalScore(c);
-            const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || c['総合スコア'] || 0);
+            const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || 0);
             const rank = determineRank(score);
             return (
               <div 
@@ -12271,7 +12457,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
             {['S', 'A', 'B', 'C', 'D'].map(rank => {
               const count = filteredCustomers.filter(c => {
                 const calculatedScore = calcFinalScore(c);
-                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || c['総合スコア'] || 0);
+                const score = calculatedScore > 0 ? calculatedScore : (c.finalScore || c.totalScore || 0);
                 return determineRank(score) === rank;
               }).length;
               return (
@@ -12372,7 +12558,7 @@ const LoginScreen = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   
   // GASモードの場合はユーザー情報を取得
-  const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+  const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
   const userEmail = window.GAS_CONFIG?.userEmail || '';
   const userName = window.GAS_CONFIG?.userName || '';
   
@@ -12511,7 +12697,7 @@ const MemberManagementPanel = () => {
   // 確認ダイアログ
   const [confirmAction, setConfirmAction] = useState(null); // { type, email, name }
   
-  const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+  const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
   
   const loadMembers = async () => {
     if (!isGasMode) { setLoading(false); return; }
@@ -12825,7 +13011,7 @@ const HandoverPanel = () => {
   const [toStudentId, setToStudentId] = useState('');
   const [remarks, setRemarks] = useState('');
   
-  const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+  const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
   
   // データ読み込み
   useEffect(() => {
@@ -12864,16 +13050,16 @@ const HandoverPanel = () => {
   const filteredCustomers = useMemo(() => {
     return allCustomers.filter(c => {
       // v50: Supabase版プロパティ名に統一（GASカラム名フォールバック付き）
-      const rawId = c.assigneeId ?? c['担当者ID'] ?? '';
+      const rawId = c.assigneeId ?? '';
       const paddedId = String(rawId || '').padStart(4, '0');
-      const inquiryNo = c.inquiryNo || c['問い合わせNo'] || '';
+      const inquiryNo = c.inquiryNo || '';
       const assigneeId = (paddedId && paddedId !== '0000') ? paddedId : String(inquiryNo).padStart(13, '0').substring(0, 4);
       if (filterAssignee !== 'all' && assigneeId !== filterAssignee) return false;
       if (searchText) {
         const text = searchText.toLowerCase();
-        const name = (c.companyName || c['会社名'] || '').toLowerCase();
-        const no = (c.inquiryNo || c['問い合わせNo'] || '').toLowerCase();
-        const contact = (c.contactName || c['担当者名'] || '').toLowerCase();
+        const name = (c.companyName || '').toLowerCase();
+        const no = (c.inquiryNo || '').toLowerCase();
+        const contact = (c.contactName || '').toLowerCase();
         if (!name.includes(text) && !no.includes(text) && !contact.includes(text)) return false;
       }
       return true;
@@ -12885,7 +13071,7 @@ const HandoverPanel = () => {
     if (selectedCustomers.size === filteredCustomers.length) {
       setSelectedCustomers(new Set());
     } else {
-      setSelectedCustomers(new Set(filteredCustomers.map(c => c.inquiryNo || c['問い合わせNo'])));
+      setSelectedCustomers(new Set(filteredCustomers.map(c => c.inquiryNo)));
     }
   };
   
@@ -12901,9 +13087,9 @@ const HandoverPanel = () => {
   // 担当者IDの取得ヘルパー（統一ロジック）
   const getAssigneeId = (c) => {
     // v50: Supabase版プロパティ名優先
-    const raw = c.assigneeId ?? c['担当者ID'] ?? '';
+    const raw = c.assigneeId ?? '';
     const padded = String(raw || '').padStart(4, '0');
-    const inquiryNo = c.inquiryNo || c['問い合わせNo'] || '';
+    const inquiryNo = c.inquiryNo || '';
     return (padded && padded !== '0000') ? padded : String(inquiryNo).padStart(13, '0').substring(0, 4);
   };
   
@@ -12913,7 +13099,7 @@ const HandoverPanel = () => {
     if (!toStudentId) { setError('引き継ぎ先メンバーを選択してください'); return; }
     
     const toMember = memberMap[toStudentId];
-    const selectedList = allCustomers.filter(c => selectedCustomers.has(c.inquiryNo || c['問い合わせNo']));
+    const selectedList = allCustomers.filter(c => selectedCustomers.has(c.inquiryNo));
     const fromIds = [...new Set(selectedList.map(c => getAssigneeId(c)))];
     const fromNames = fromIds.map(id => memberMap[id]?.name || id).join(', ');
     
@@ -13068,7 +13254,7 @@ const HandoverPanel = () => {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredCustomers.map((c, i) => {
-                  const no = c.inquiryNo || c['問い合わせNo'] || '';
+                  const no = c.inquiryNo || '';
                   const aid = getAssigneeId(c);
                   const selected = selectedCustomers.has(no);
                   return (
@@ -13085,14 +13271,14 @@ const HandoverPanel = () => {
                           className="rounded border-gray-300 text-orange-500 focus:ring-orange-400"
                         />
                       </td>
-                      <td className="px-3 py-2 font-medium text-gray-800">{c.companyName || c['会社名'] || '-'}</td>
+                      <td className="px-3 py-2 font-medium text-gray-800">{c.companyName || '-'}</td>
                       <td className="px-3 py-2 font-mono text-xs text-gray-500">{no}</td>
                       <td className="px-3 py-2">
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs">
                           {aid} {memberMap[aid]?.name ? `(${memberMap[aid].name})` : ''}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{(c.diagnosisDate || c['診断日時'] || '').split(' ')[0]}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{(c.diagnosisDate || '').split(' ')[0]}</td>
                     </tr>
                   );
                 })}
@@ -13232,10 +13418,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   const [connectionTestResult, setConnectionTestResult] = useState(null);
   
   // 同期処理用state
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, name: '' });
-  const [syncResult, setSyncResult] = useState(null);
-  const [showSyncConfirm, setShowSyncConfirm] = useState(null); // 'upload' | 'download' | 'fullSync' | null
+  // v58: 同期UI削除に伴い isSyncing/syncProgress/syncResult/showSyncConfirm state を削除
   
   // ログイン設定
   const [loginConfig, setLoginConfig] = useState(() => LoginManager.getConfig());
@@ -13246,7 +13429,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   // 質問マスター設定
   const [questionMaster, setQuestionMaster] = useState(() => {
     // GASモードの場合はキャッシュから読み込み（loadAllMasterDataで更新される）
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasData = GASDataManager.getQuestionMaster();
       if (gasData) {
@@ -13288,7 +13471,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   // 採用手法マスター設定
   const [methodMaster, setMethodMaster] = useState(() => {
     // GASモードの場合はキャッシュから読み込み
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasData = GASDataManager.getMethodMaster();
       if (gasData) {
@@ -13326,7 +13509,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   // 学生層別媒体利用率マスター
   const [layerMediaUsage, setLayerMediaUsage] = useState(() => {
     // GASモードの場合はキャッシュから読み込み
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasData = GASDataManager.getMediaUsageMaster();
       if (gasData) {
@@ -13357,7 +13540,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   
   // GASモードの場合、マスターデータ読み込み後に各マスターを更新
   useEffect(() => {
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     if (!isGasMode || typeof GASDataManager === 'undefined') return;
     
     // v44: setTimeout(1000)を廃止し、イベント駆動に変更
@@ -13444,7 +13627,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
     
     try {
       const generateFunc = localSettings.apiType === 'openai' ? generateAIDiagnosisOpenAI : generateAIDiagnosisGemini;
-      const result = await generateFunc(systemPrompt, userPrompt, localSettings.apiKey);
+      const result = await generateFunc(systemPrompt, userPrompt, localSettings.apiKey, localSettings.model, localSettings.maxTokens); // v56: model/maxTokens実配線
       const parsed = parseAIResponse(result);
       
       setTestResult({
@@ -13463,7 +13646,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   };
   
   const handleSave = () => {
-    const isGasMode = window.GAS_CONFIG?.deploymentMode === 'gas';
+    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
     
     onSave(localSettings);
@@ -13619,84 +13802,10 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   };
   
   // ローカル→スプレッドシートへアップロード
-  const handleSyncUpload = async () => {
-    setShowSyncConfirm(null);
-    setIsSyncing(true);
-    setSyncResult(null);
-    setSyncProgress({ current: 0, total: 0, name: '' });
-    
-    try {
-      const customers = StorageManager.getCustomers();
-      if (customers.length === 0) {
-        setSyncResult({ success: false, message: 'アップロードするデータがありません' });
-        return;
-      }
-      
-      const result = await SpreadsheetManager.syncAllToSpreadsheet(
-        customers,
-        (current, total, name) => {
-          setSyncProgress({ current, total, name });
-        }
-      );
-      
-      setSpreadsheetConfig(SpreadsheetManager.getConfig());
-      setSyncResult({
-        success: true,
-        message: `アップロード完了！ 成功: ${result.success}件, 失敗: ${result.failed}件`,
-        details: result.errors.length > 0 ? result.errors : null
-      });
-    } catch (e) {
-      setSyncResult({ success: false, message: `エラー: ${e.message}` });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
   
   // スプレッドシート→ローカルへダウンロード（マージ）
-  const handleSyncDownload = async (mode = 'merge') => {
-    setShowSyncConfirm(null);
-    setIsSyncing(true);
-    setSyncResult(null);
-    
-    try {
-      const result = await SpreadsheetManager.loadFromSpreadsheet(mode);
-      
-      setSpreadsheetConfig(SpreadsheetManager.getConfig());
-      setSyncResult({
-        success: true,
-        message: mode === 'overwrite' 
-          ? `ダウンロード完了（上書き）！ ${result.resultCount}件のデータに更新しました`
-          : `ダウンロード完了（マージ）！ ローカル: ${result.localCount}件 + スプレッドシート: ${result.spreadsheetCount}件 → 結果: ${result.resultCount}件`,
-        reload: true
-      });
-    } catch (e) {
-      setSyncResult({ success: false, message: `エラー: ${e.message}` });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
   
   // 完全同期（ローカルのデータでスプレッドシートを完全に置き換え）
-  const handleFullSync = async () => {
-    setShowSyncConfirm(null);
-    setIsSyncing(true);
-    setSyncResult(null);
-    
-    try {
-      const customers = StorageManager.getCustomers();
-      const result = await SpreadsheetManager.fullSyncToSpreadsheet(customers);
-      
-      setSpreadsheetConfig(SpreadsheetManager.getConfig());
-      setSyncResult({
-        success: true,
-        message: `完全同期完了！ ${customers.length}件のデータでスプレッドシートを更新しました`
-      });
-    } catch (e) {
-      setSyncResult({ success: false, message: `エラー: ${e.message}` });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
   
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 no-print overflow-y-auto py-8">
@@ -13907,6 +14016,25 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                   {localSettings.apiType === 'gemini'
                     ? '※ Google AI Studio (https://aistudio.google.com) でAPIキーを取得できます'
                     : '※ OpenAI Platform (https://platform.openai.com) でAPIキーを取得できます'
+                  }
+                </p>
+              </div>
+              
+              {/* v56: モデル名入力欄を追加。従来は設定が保存されるだけで未使用だった。
+                   モデル廃止時にコードデプロイなしでここから切替可能（DB-first運用） */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">モデル名</label>
+                <input
+                  type="text"
+                  value={localSettings.model || ''}
+                  onChange={(e) => setLocalSettings(prev => ({ ...prev, model: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
+                  placeholder={localSettings.apiType === 'gemini' ? 'gemini-3.5-flash' : 'gpt-4'}
+                />
+                <p className="mt-2 text-xs text-gray-500">
+                  {localSettings.apiType === 'gemini'
+                    ? '※ 空欄の場合は gemini-3.5-flash を使用します。gemini- 以外の値は無視されます'
+                    : '※ 空欄の場合は gpt-4 を使用します。gpt- 以外の値は無視されます'
                   }
                 </p>
               </div>
@@ -15159,245 +15287,9 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
               )}
               
               {/* データ同期セクション */}
-              {spreadsheetConfig.enabled && spreadsheetConfig.scriptUrl && (
-                <div className="border border-blue-200 rounded-xl overflow-hidden">
-                  <div className="bg-blue-50 px-4 py-3 border-b border-blue-200">
-                    <div className="text-sm font-medium text-blue-800 flex items-center gap-1">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      データ同期
-                    </div>
-                    <div className="text-xs text-blue-600 mt-1">ローカルとスプレッドシートのデータを同期します</div>
-                  </div>
-                  <div className="p-4 space-y-4">
-                    {/* 同期進行状況 */}
-                    {isSyncing && (
-                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                        <div className="flex items-center gap-3 mb-2">
-                          <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          <span className="text-sm font-medium text-blue-800">同期中...</span>
-                        </div>
-                        {syncProgress.total > 0 && (
-                          <div>
-                            <div className="text-xs text-blue-600 mb-1">
-                              {syncProgress.current} / {syncProgress.total} 件処理中
-                              {syncProgress.name && ` - ${syncProgress.name}`}
-                            </div>
-                            <div className="w-full h-2 bg-blue-200 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-blue-500 transition-all duration-300"
-                                style={{ width: `${(syncProgress.current / syncProgress.total) * 100}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* 同期結果 */}
-                    {syncResult && (
-                      <div className={`p-4 rounded-xl border ${
-                        syncResult.success 
-                          ? 'bg-green-50 border-green-200' 
-                          : 'bg-red-50 border-red-200'
-                      }`}>
-                        <div className={`text-sm font-medium flex items-center gap-1 ${
-                          syncResult.success ? 'text-green-800' : 'text-red-800'
-                        }`}>
-                          {syncResult.success ? (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          ) : (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          )}
-                          {syncResult.message}
-                        </div>
-                        {syncResult.details && (
-                          <div className="mt-2 text-xs text-red-600">
-                            <div className="font-medium">失敗した項目:</div>
-                            {syncResult.details.map((d, i) => (
-                              <div key={i}>・{d.name}: {d.error}</div>
-                            ))}
-                          </div>
-                        )}
-                        {syncResult.reload && (
-                          <button
-                            onClick={() => window.location.reload()}
-                            className="mt-3 px-4 py-2 bg-green-500 hover:bg-green-600 text-white text-sm rounded-lg transition"
-                          >
-                            ページを更新して反映
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* 同期ボタン */}
-                    {!isSyncing && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {/* アップロード */}
-                        <button
-                          onClick={() => setShowSyncConfirm('upload')}
-                          className="p-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl transition text-left"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                            </svg>
-                            <span className="font-medium">アップロード</span>
-                          </div>
-                          <div className="text-xs text-blue-100">ローカル → スプレッドシート</div>
-                        </button>
-                        
-                        {/* ダウンロード（マージ） */}
-                        <button
-                          onClick={() => setShowSyncConfirm('download')}
-                          className="p-4 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl transition text-left"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                            <span className="font-medium">ダウンロード（マージ）</span>
-                          </div>
-                          <div className="text-xs text-green-100">スプレッドシート → ローカル（既存データと統合）</div>
-                        </button>
-                        
-                        {/* ダウンロード（上書き） */}
-                        <button
-                          onClick={() => setShowSyncConfirm('downloadOverwrite')}
-                          className="p-4 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-xl transition text-left"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                            </svg>
-                            <span className="font-medium">ダウンロード（上書き）</span>
-                          </div>
-                          <div className="text-xs text-orange-100">スプレッドシートのデータで完全に置き換え</div>
-                        </button>
-                        
-                        {/* 完全同期 */}
-                        <button
-                          onClick={() => setShowSyncConfirm('fullSync')}
-                          className="p-4 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white rounded-xl transition text-left"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                            <span className="font-medium">完全同期（上書きアップロード）</span>
-                          </div>
-                          <div className="text-xs text-purple-100">ローカルのデータでスプレッドシートを完全に置き換え</div>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              
-              {/* 同期確認モーダル */}
-              {showSyncConfirm && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
-                  <div className="bg-white rounded-2xl p-6 max-w-md mx-4 shadow-2xl">
-                    <div className="flex items-center gap-2 text-lg font-bold text-gray-800 mb-3">
-                      {showSyncConfirm === 'upload' && (
-                        <>
-                          <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                          </svg>
-                          <span>アップロード確認</span>
-                        </>
-                      )}
-                      {showSyncConfirm === 'download' && (
-                        <>
-                          <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                          <span>ダウンロード確認（マージ）</span>
-                        </>
-                      )}
-                      {showSyncConfirm === 'downloadOverwrite' && (
-                        <>
-                          <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                          </svg>
-                          <span>ダウンロード確認（上書き）</span>
-                        </>
-                      )}
-                      {showSyncConfirm === 'fullSync' && (
-                        <>
-                          <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                          <span>完全同期確認</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="text-sm text-gray-600 mb-4">
-                      {showSyncConfirm === 'upload' && (
-                        <>
-                          ローカルの全データ（{StorageManager.getCustomers().length}件）をスプレッドシートにアップロードします。
-                          <br /><br />
-                          スプレッドシートに同じIDのデータがある場合は上書きされます。
-                        </>
-                      )}
-                      {showSyncConfirm === 'download' && (
-                        <>
-                          スプレッドシートのデータをローカルにダウンロードします。
-                          <br /><br />
-                          既存のローカルデータと統合され、同じIDのデータは新しい方が優先されます。
-                        </>
-                      )}
-                      {showSyncConfirm === 'downloadOverwrite' && (
-                        <>
-                          <span className="text-red-600 font-medium">注意：</span>
-                          ローカルのデータはすべて削除され、スプレッドシートのデータで完全に置き換えられます。
-                          <br /><br />
-                          この操作は取り消せません。
-                        </>
-                      )}
-                      {showSyncConfirm === 'fullSync' && (
-                        <>
-                          <span className="text-red-600 font-medium">注意：</span>
-                          スプレッドシートのデータはすべて削除され、ローカルのデータ（{StorageManager.getCustomers().length}件）で完全に置き換えられます。
-                          <br /><br />
-                          この操作は取り消せません。
-                        </>
-                      )}
-                    </div>
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() => setShowSyncConfirm(null)}
-                        className="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition"
-                      >
-                        キャンセル
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (showSyncConfirm === 'upload') handleSyncUpload();
-                          else if (showSyncConfirm === 'download') handleSyncDownload('merge');
-                          else if (showSyncConfirm === 'downloadOverwrite') handleSyncDownload('overwrite');
-                          else if (showSyncConfirm === 'fullSync') handleFullSync();
-                        }}
-                        className={`flex-1 px-4 py-2 text-white rounded-lg transition ${
-                          showSyncConfirm === 'downloadOverwrite' || showSyncConfirm === 'fullSync'
-                            ? 'bg-red-500 hover:bg-red-600'
-                            : 'bg-blue-500 hover:bg-blue-600'
-                        }`}
-                      >
-                        実行する
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* v58: データ同期セクション＋確認モーダルを削除。localStorage(GAS時代の残骸)の顧客データで
+                   Supabase本番を上書きできてしまう危険なUIだった（isGasMode恒真でenabled=trueとなり常時表示）。
+                   Supabase移行後はDB自体が唯一の正であり同期概念が不要。 */}
               
               {/* セットアップ手順 */}
               <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -16439,7 +16331,6 @@ const App = () => {
         window.GAS_CONFIG.memberName = user.name;
         window.GAS_CONFIG.studentId = user.studentId;
         window.GAS_CONFIG.permissions = user.permissions;
-        window.GAS_CONFIG.deploymentMode = 'gas';
         // トークンリフレッシュタイマーを開始
         scheduleTokenRefresh();
         return true;
@@ -16570,7 +16461,7 @@ const App = () => {
     diagnosisDate: todayStr,
     inquiryNo: InquiryNoManager.generateNextInquiryNo('', todayStr),
     assigneeId: (() => {
-      const gasId = window.GAS_CONFIG?.deploymentMode === 'gas' ? window.GAS_CONFIG?.studentId : null;
+      const gasId = window.GAS_CONFIG?.studentId || null; // v58: 恒真三項を畳み込み
       return String(gasId || StorageManager.getStudentId() || '0001').padStart(4, '0');
     })(),
     staffScores: {},
@@ -16623,7 +16514,7 @@ const App = () => {
     // 初回ログイン前は idToken が未設定のため authFetch が失敗する
     // googleAuthed=true になってから読み込みを開始する
     if (isGasMode && googleAuthed && !masterDataLoaded) {
-      console.log('[App] マスターデータ読み込み開始 deploymentMode=' + window.GAS_CONFIG?.deploymentMode);
+      console.log('[App] マスターデータ読み込み開始');
       GASDataManager.loadAllMasterData().then(() => {
         // マスターデータ読み込み完了後、各マスターを更新
         const yieldMaster = GASDataManager.getYieldMaster();
@@ -16706,11 +16597,8 @@ const App = () => {
           setCustomers([]);
           setCustomerLoadError('顧客データの読み込みに失敗: ' + (err.message || err));
         });
-    } else {
-      // スタンドアロンモード: ローカルストレージから読み込み
-      setCustomers(StorageManager.getCustomers());
-      setStudentId(StorageManager.getStudentId());
     }
+    // v58: 到達不能だったスタンドアロンモード分岐（ローカルストレージ読込）を削除
   }, [isLoggedIn, isGasMode, customerLoadRetry]);
   
   // セッションチェック（ページ表示時）- GASモードでもパスワード認証を使用
@@ -16763,8 +16651,8 @@ const App = () => {
   useEffect(() => {
     if (isLoggedIn && !currentData.id) {
       const currentStudentId = String(
-        (window.GAS_CONFIG?.deploymentMode === 'gas' ? window.GAS_CONFIG?.studentId : null) 
-        || StorageManager.getStudentId() || '0001'
+        window.GAS_CONFIG?.studentId 
+        || StorageManager.getStudentId() || '0001' // v58: 恒真三項を畳み込み
       ).padStart(4, '0');
       
       // v34: 予約済み通番がある場合は業種コード部分だけ差し替え（新たな採番は不要）
@@ -16860,26 +16748,21 @@ const App = () => {
   
   // 顧客一覧をリフレッシュするヘルパー関数
   const refreshCustomers = async () => {
-    console.log('[refreshCustomers] 開始, isGasMode:', isGasMode);
-    if (isGasMode) {
-      try {
-        const fetchResult = await GASDataManager.fetchAllCustomers();
-        const gasCustomers = fetchResult ? (fetchResult.customers || fetchResult) : null;
-        const qmCache = fetchResult?.questionMasterCache || {};
-        const customerCount = Array.isArray(gasCustomers) ? gasCustomers.length : 0;
-        console.log('[refreshCustomers] 取得結果:', customerCount + '件');
-        if (gasCustomers && customerCount > 0) {
-          const normalizedCustomers = gasCustomers.map(c => normalizeGASCustomer(c, qmCache));
-          setCustomers(normalizedCustomers);
-          return normalizedCustomers;
-        }
-      } catch (err) {
-        console.error('[refreshCustomers] エラー:', err);
+    // v58: 到達不能だったローカル読込分岐を削除
+    console.log('[refreshCustomers] 開始');
+    try {
+      const fetchResult = await GASDataManager.fetchAllCustomers();
+      const gasCustomers = fetchResult ? (fetchResult.customers || fetchResult) : null;
+      const qmCache = fetchResult?.questionMasterCache || {};
+      const customerCount = Array.isArray(gasCustomers) ? gasCustomers.length : 0;
+      console.log('[refreshCustomers] 取得結果:', customerCount + '件');
+      if (gasCustomers && customerCount > 0) {
+        const normalizedCustomers = gasCustomers.map(c => normalizeGASCustomer(c, qmCache));
+        setCustomers(normalizedCustomers);
+        return normalizedCustomers;
       }
-    } else {
-      const localCustomers = StorageManager.getCustomers();
-      setCustomers(localCustomers);
-      return localCustomers;
+    } catch (err) {
+      console.error('[refreshCustomers] エラー:', err);
     }
     return [];
   };
@@ -16934,52 +16817,39 @@ const App = () => {
       };
       // 担当者IDはフロントエンドから送信しない（引き継ぎで変更された値をサーバー側で保持するため）
       delete toSave.assigneeId;
-      delete toSave['担当者ID'];
       
-      if (isGasMode) {
-        try {
-          await GASDataManager.saveCustomer(toSave);
-          setCurrentData(toSave);
-          await refreshCustomers();
-          if (!silent) {
-            setSaveComplete(true);
-            toast('スプレッドシートに保存しました', 'success');
-            setTimeout(() => setSaveComplete(false), 1500);
-          }
-          return true;
-        } catch (e) {
-          console.error('スプレッドシート保存エラー:', e);
-          if (!silent) {
-            toast('保存に失敗しました: ' + e.message, 'error', 4000);
-          }
-          return false;
+      // v58: isGasMode恒真のため到達不能だったローカル保存分岐（StorageManager経由）を削除
+      try {
+        const saveRes = await GASDataManager.saveCustomer(toSave);
+        // v56: 保存後のDB updated_atを保持（楽観ロックの誤検知防止）
+        if (saveRes && saveRes.updatedAt) {
+          toSave._dbUpdatedAt = saveRes.updatedAt;
         }
-      } else {
-        StorageManager.saveCustomer(toSave);
-        setCustomers(StorageManager.getCustomers());
-        setCurrentData(toSave);
-        
-        const ssConfig = SpreadsheetManager.getConfig();
-        if (ssConfig.enabled && ssConfig.scriptUrl) {
-          try {
-            await SpreadsheetManager.saveCustomer(toSave);
-            if (!silent) {
-              setSaveComplete(true);
-              toast('保存しました（スプレッドシートにも同期）', 'success');
-              setTimeout(() => setSaveComplete(false), 1500);
-            }
-          } catch (e) {
-            console.error('スプレッドシート保存エラー:', e);
-            if (!silent) { toast('ローカル保存済み（スプレッドシート同期失敗）', 'warning', 4000); }
-          }
-        } else {
-          if (!silent) {
-            setSaveComplete(true);
-            toast('保存しました', 'success');
-            setTimeout(() => setSaveComplete(false), 1500);
-          }
+        // v61-fix: 旧実装の setCurrentData(toSave) は「保存開始時点のスナップショット」で
+        // 全置換するため、保存await中（数百ms〜数秒）にユーザーが入力した値
+        // （目標人数等）が保存完了時に巻き戻されて消えていた。
+        // 関数型更新で、保存により確定したメタ情報のみを最新stateへマージする。
+        setCurrentData(prev => ({
+          ...prev,
+          id: toSave.id,
+          updatedAt: toSave.updatedAt,
+          aiResult: prev.aiResult || toSave.aiResult,
+          savedQuestionMaster: prev.savedQuestionMaster || toSave.savedQuestionMaster,
+          _dbUpdatedAt: toSave._dbUpdatedAt ?? prev._dbUpdatedAt
+        }));
+        await refreshCustomers();
+        if (!silent) {
+          setSaveComplete(true);
+          toast('保存しました', 'success');
+          setTimeout(() => setSaveComplete(false), 1500);
         }
         return true;
+      } catch (e) {
+        console.error('保存エラー:', e);
+        if (!silent) {
+          toast('保存に失敗しました: ' + e.message, 'error', 4000);
+        }
+        return false;
       }
     } finally {
       setIsSaving(false);
@@ -17031,6 +16901,11 @@ const App = () => {
     } else {
       setAiAdvice(null);
     }
+    // v59-fix: 顧客切替時のstateリセット漏れ修正
+    // lastGeneratedButtonId残留 → 前顧客のボタンプロンプト文脈で再診断される誤り
+    // aiError残留 → 前顧客のエラーバナーが表示され続ける
+    setLastGeneratedButtonId(null);
+    setAiError(null);
   };
   
   // ========================================
@@ -17148,15 +17023,26 @@ const App = () => {
           });
         }
         
-        // ファネル: yearData構造を深くマージ
+        // v60-fix: 旧実装は年度キー単位の浅いマージで、事前問診に同一年度のデータが
+        // あると既存の年度オブジェクトが丸ごと置換され、BB側で入力済みの
+        // targetHires/targetHiresByLayer（目標人数）が消失していた。
+        // 年度オブジェクト内・channelData内まで深くマージして既存値を保持する。
+        const mergedYearData = { ...(prev.funnelData?.yearData || {}) };
+        Object.entries(preInput.funnelData?.yearData || {}).forEach(([yr, yd]) => {
+          const prevYd = mergedYearData[yr] || {};
+          mergedYearData[yr] = {
+            ...prevYd,
+            ...yd,
+            ...(prevYd.channelData || yd.channelData
+              ? { channelData: { ...(prevYd.channelData || {}), ...(yd.channelData || {}) } }
+              : {})
+          };
+        });
         const mergedFunnel = preInput.funnelData 
           ? {
               ...prev.funnelData,
               ...preInput.funnelData,
-              yearData: {
-                ...prev.funnelData?.yearData,
-                ...preInput.funnelData?.yearData
-              }
+              yearData: mergedYearData
             }
           : prev.funnelData;
         
@@ -17172,15 +17058,19 @@ const App = () => {
           }
         }
         
+        // v59-fix: 空オブジェクト{}はtruthyのため、事前問診側が0問回答でも
+        // 既存回答が{}で上書き消去されていた。中身のあるオブジェクトのみ採用
+        const pick = (obj, fallback) =>
+          (obj && typeof obj === 'object' && Object.keys(obj).length > 0) ? obj : fallback;
         return {
           ...prev,
           // ターゲット学生
-          targetLayers: preInput.targetLayers || prev.targetLayers,
+          targetLayers: pick(preInput.targetLayers, prev.targetLayers),
           // 採用手法（優先順位込み）
           recruitmentMethods: mergedMethods,
           // 問診回答
-          staffAnswers: preInput.staffAnswers || prev.staffAnswers,
-          executiveAnswers: preInput.executiveAnswers || prev.executiveAnswers,
+          staffAnswers: pick(preInput.staffAnswers, prev.staffAnswers),
+          executiveAnswers: pick(preInput.executiveAnswers, prev.executiveAnswers),
           // ファネル（BB診断形式で深くマージ）
           funnelData: mergedFunnel,
           // v51 fix: 課題フィールドのマッピング（事前問診→BB診断のフィールド名変換）
@@ -17218,8 +17108,11 @@ const App = () => {
             })()
           };
           delete saveData.assigneeId;
-          delete saveData['担当者ID'];
-          await GASDataManager.saveCustomer(saveData);
+          const importSaveRes = await GASDataManager.saveCustomer(saveData);
+          // v56: 保存後のupdated_atをcurrentDataに反映（次回手動保存での楽観ロック誤検知防止）
+          if (importSaveRes && importSaveRes.updatedAt) {
+            setCurrentData(prev => ({ ...prev, _dbUpdatedAt: importSaveRes.updatedAt }));
+          }
           await refreshCustomers();
           toast('事前問診データを取り込み・保存しました', 'success');
         } catch (saveErr) {
@@ -17235,30 +17128,14 @@ const App = () => {
   };
   
   const handleDelete = async (id) => {
-    // GASモードの場合はスプレッドシートから削除
-    if (isGasMode) {
-      try {
-        await GASDataManager.deleteCustomer(id);
-        // 削除後に顧客一覧を再取得
-        await refreshCustomers();
-      } catch (e) {
-        console.error('スプレッドシート削除エラー:', e);
-        alert('削除に失敗しました: ' + e.message);
-      }
-    } else {
-      // スタンドアロンモード: ローカルから削除
-      StorageManager.deleteCustomer(id);
-      setCustomers(StorageManager.getCustomers());
-      
-      // スプレッドシートからも削除（有効な場合）
-      const ssConfig = SpreadsheetManager.getConfig();
-      if (ssConfig.enabled && ssConfig.scriptUrl) {
-        try {
-          await SpreadsheetManager.deleteCustomer(id);
-        } catch (e) {
-          console.error('スプレッドシート削除エラー:', e);
-        }
-      }
+    // v58: 到達不能だったローカル削除分岐（StorageManager経由）を削除
+    try {
+      await GASDataManager.deleteCustomer(id);
+      // 削除後に顧客一覧を再取得
+      await refreshCustomers();
+    } catch (e) {
+      console.error('削除エラー:', e);
+      alert('削除に失敗しました: ' + e.message);
     }
     
     if (currentData.id === id) {
@@ -17326,6 +17203,7 @@ const App = () => {
     // 新規診断時はAIアドバイスをクリア
     setAiAdvice(null);
     setAiError(null);
+    setLastGeneratedButtonId(null); // v59-fix: リセット漏れ修正
     toast('新規診断を開始しました', 'info');
     } finally {
       setIsCreatingNew(false);
@@ -17493,7 +17371,7 @@ const App = () => {
         ? generateAIDiagnosisOpenAI 
         : generateAIDiagnosisGemini;
       
-      const rawResult = await generateFunc(systemPrompt, userPrompt, aiSettings.apiKey);
+      const rawResult = await generateFunc(systemPrompt, userPrompt, aiSettings.apiKey, aiSettings.model, aiSettings.maxTokens); // v56: model/maxTokens実配線
       const parsedResult = parseAIResponse(rawResult);
       
       if (parsedResult) {
@@ -17570,7 +17448,7 @@ const App = () => {
         ? generateAIDiagnosisOpenAI 
         : generateAIDiagnosisGemini;
       
-      const rawResult = await generateFunc(systemPrompt, userPrompt, aiSettings.apiKey);
+      const rawResult = await generateFunc(systemPrompt, userPrompt, aiSettings.apiKey, aiSettings.model, aiSettings.maxTokens); // v56: model/maxTokens実配線
       const parsedResult = parseAIResponse(rawResult);
       
       if (parsedResult) {
