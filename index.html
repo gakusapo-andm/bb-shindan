@@ -3071,6 +3071,10 @@ const SUPA_HANDLERS = {
 
     rows.forEach(function(row) {
       var qObj = {
+        // v64(2026-08-11): 中途対応。recruit_type をラウンドトリップさせる。
+        // 未設定行は 'new_grad'（DBのDEFAULTと一致）。?? ではなく || で可
+        // （空文字は不正値なので new_grad に寄せる方が安全）
+        recruitType: row.recruit_type || 'new_grad',
         id: row.question_id || '',
         question: row.question_text || '',
         choiceA: row.choice_a || '',
@@ -3151,6 +3155,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q, idx) {
                 flatRows.push({
+                  recruit_type: q.recruitType || 'new_grad',
                   section: 'base', company_size: size, role: role,
                   industry: null, target_layer: null, depth_phase: q.depthKey || null, method_category: null,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3170,6 +3175,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q) {
                 flatRows.push({
+                  recruit_type: q.recruitType || 'new_grad',
                   section: 'recruitmentMethod', company_size: null, role: role,
                   industry: null, target_layer: null, depth_phase: q.depthKey || null, method_category: cat,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3191,6 +3197,7 @@ const SUPA_HANDLERS = {
                 var role = roleEntry[0]; var questions = roleEntry[1];
                 (questions || []).forEach(function(q) {
                   flatRows.push({
+                    recruit_type: q.recruitType || 'new_grad',
                     section: 'industry', company_size: size, role: role,
                     industry: ind, target_layer: null, depth_phase: q.depthKey || null, method_category: null,
                     question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3211,6 +3218,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q) {
                 flatRows.push({
+                  recruit_type: q.recruitType || 'new_grad',
                   section: 'targetLayer', company_size: null, role: role,
                   industry: null, target_layer: layer, depth_phase: q.depthKey || null, method_category: null,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3230,6 +3238,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q) {
                 flatRows.push({
+                  recruit_type: q.recruitType || 'new_grad',
                   section: 'depth', company_size: null, role: role,
                   industry: null, target_layer: null, depth_phase: phase, method_category: null,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3337,6 +3346,8 @@ const SUPA_HANDLERS = {
         try { targetLayers = JSON.parse(targetLayers); } catch(e) { targetLayers = []; }
       }
       nested[key] = {
+        // v64(2026-08-11): 中途対応。区分をラウンドトリップさせる
+        recruitType: row.recruit_type || 'new_grad',
         name: row.name || '',
         category: row.category || '',
         targetLayers: Array.isArray(targetLayers) ? targetLayers : [],
@@ -3371,6 +3382,7 @@ const SUPA_HANDLERS = {
         if (!m || typeof m !== 'object') return;
         flatRows.push({
           key: key,
+          recruit_type: m.recruitType || 'new_grad',
           name: m.name || '',
           category: m.category || '',
           target_layers: JSON.stringify(m.targetLayers || []),
