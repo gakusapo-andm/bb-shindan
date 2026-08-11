@@ -376,15 +376,17 @@ const gasGet = async (action, params = {}) => {
       ping: async () => ({ success: true, message: 'pong (Supabase)' }),
       
       getCustomerPreInput: async () => {
+        // v3.3(2026-08-11): テーブル直readを廃止しRPC化。
+        // 症状: pre_inputs_select_anon が USING(true) のため、anon keyだけで
+        //       全社の事前問診回答(229件)が読める状態だった。
+        // 根因: anonにテーブル直アクセスを開くと、条件はフロント指定＝改変可能。
+        // 予防: get_pre_input RPC(SECURITY DEFINER)経由に統一し、
+        //       customer_id 1件分の input_data のみ返す。anonポリシーは削除。
         const id = params.id;
         if (!id) return { success: false, error: 'IDがありません' };
-        const { data, error } = await sb.from('pre_inputs')
-          .select('*')
-          .eq('customer_id', id)
-          .maybeSingle();
+        const { data, error } = await sb.rpc('get_pre_input', { p_customer_id: id });
         if (error) throw error;
-        if (!data) return { success: true, data: null };
-        return { success: true, data: data.input_data || {} };
+        return { success: true, data: data || null };
       },
       
       getQuestionMasterPublic: async () => {
@@ -498,10 +500,11 @@ const gasPost = async (action, body = {}) => {
         if (!customerId) return { success: false, error: 'IDがありません' };
         
         // read: 既存データを読む（ロール別マージ用）
-        const existing = await sb.from('pre_inputs')
-          .select('id, input_data')
-          .eq('customer_id', customerId)
-          .maybeSingle();
+        // v3.3(2026-08-11): テーブル直read廃止 → get_pre_input RPC。
+        // 以降の existing.data?.input_data の形を保つためラップする。
+        const existingRes = await sb.rpc('get_pre_input', { p_customer_id: customerId });
+        if (existingRes.error) throw existingRes.error;
+        const existing = { data: existingRes.data ? { input_data: existingRes.data } : null };
         
         // merge: ロール別マージ（fix#7）
         let merged = inputData;
