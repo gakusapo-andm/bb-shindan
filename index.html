@@ -88,6 +88,20 @@
        ③「興味」のバー色を「認知」と同色に（#A5B4FC→#7DD3FC、背景#e0e7ff→#e0f2fe）
        ④凡例を2行に分割: 「分子：実績値　分母：目標目安」＋改行＋「（目標N人から逆算）」
        計算ロジック無変更・表示のみ -->
+  <!-- v72: 歩留まり実績のバッジ常時表示（2026-08-12）
+       調査結果: タイトル横ラベルの出る/出ないはバグではなくチャネル別表示の仕様分岐
+       （紫=採用手法active＋年度channelData入力済みの時のチャネル別表示 / なし=全体合計表示 /
+         青=チャネルカテゴリが歩留まり設定カテゴリと異なる時のみ平均値出所を注記）。
+       改善: 全体合計表示時にグレーバッジ「全チャネル合計」を追加し、常にどちらかのバッジが付く形に
+       （「バッジなし＝合計」が画面から読み取れない問題の解消。案1採用）。表示のみ・計算無変更 -->
+  <!-- v73: 結果画面UI変更2点（ユーザー提供PDF指示 / 2026-08-12）
+       ①暫定注記（アンバー）の集約 — 採用タイプボックス内・採用意識の癖ボックス下・アドバイスタブ内の3箇所を削除し、
+         タブ共通ヘッダー（会社名ブロックの左隣）に1箇所で表示。枠の圧迫を解消し全タブで常時視認可能に
+       ②歩留まり実績の内容を上下中央配置（flex-col justify-center。従来は上詰め）
+       表示のみ・計算無変更 -->
+  <!-- v74: section-cardをv63以前の枠線様式へ復元（2026-08-12）
+       border: none＋2層ドロップシャドウ → border 1px solid #e5e7eb・box-shadow none（角丸12pxは維持）。
+       PDF出力の結合カード（左カラム上下連結）は下カードのborder-topを消し二重線を防止。CSSのみ・JSX無変更 -->
   <!--
     ============================================================
     【v57 修正詳細】2026-07-07 実施
@@ -336,7 +350,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v71] Supabase接続完了');
+    console.log('[BB診断 v74] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -420,11 +434,11 @@ body {
 
 /* セクションカード */
 .section-card {
-  /* v63: 角丸12px・枠線なし・ドロップシャドウ（ご指定スタイル） */
+  /* v74: v63のドロップシャドウ様式を取り消し、枠線様式（v61以前）へ復元 */
   background: #ffffff;
-  border: none;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05), 0 10px 28px rgba(15, 23, 42, 0.10);
+  box-shadow: none;
   overflow: visible;
 }
 
@@ -978,6 +992,7 @@ input[type="range"]::-moz-range-thumb {
 .pdf-export-mode .col-span-5.flex.flex-col .section-card:last-child {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
+  border-top: none; /* v74: 枠線復活に伴い、上カードのborder-bottomとの二重線を防止 */
   box-shadow: none;
 }
 
@@ -2786,7 +2801,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v71' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v74' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -11791,12 +11806,23 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
           <h1 className="text-2xl font-bold text-gray-800 mb-1">採用ブラックボックス診断</h1>
           <p className="text-sm text-gray-500">Gakusapo</p>
         </div>
-        <div className="text-right">
-          <div className="text-lg font-bold text-gray-800">{data.companyName || '企業名未設定'}</div>
-          <div className="text-xs text-gray-500">
-            分析年月日：{data.diagnosisDate ? new Date(data.diagnosisDate).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '年').replace(/年(\d+)$/, '月$1日') : '---'}
+        <div className="flex items-start gap-3">
+          {/* v73: 暫定注記をヘッダーに集約（各ボックス内の2箇所＋アドバイスタブの計3箇所から移設。
+               枠の圧迫を解消し、タブ共通ヘッダーなので結果・アドバイス両タブで常に見える） */}
+          {isProvisional && (
+            <div className="pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1.5" style={{ maxWidth: '300px' }}>
+              <div className="text-[10px] text-amber-800 leading-relaxed">
+                ※ 上層部問診が未入力のため、採用担当者の回答のみに基づく暫定値です。<br/>上層部問診の入力で確定診断となります。
+              </div>
+            </div>
+          )}
+          <div className="text-right">
+            <div className="text-lg font-bold text-gray-800">{data.companyName || '企業名未設定'}</div>
+            <div className="text-xs text-gray-500">
+              分析年月日：{data.diagnosisDate ? new Date(data.diagnosisDate).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '年').replace(/年(\d+)$/, '月$1日') : '---'}
+            </div>
+            <div className="text-xs text-gray-500">問い合わせ番号：{data.inquiryNo || '-------------'}</div>
           </div>
-          <div className="text-xs text-gray-500">問い合わせ番号：{data.inquiryNo || '-------------'}</div>
         </div>
       </div>
       
@@ -11830,13 +11856,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                     </span>
                   </div>
                   <div className="text-xs text-gray-600 leading-relaxed">{rankDef.description}</div>
-                  {isProvisional && (
-                    <div className="mt-2 pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1.5">
-                      <div className="text-[10px] text-amber-800 leading-relaxed">
-                        ※ 上層部問診が未入力のため、採用担当者の回答のみに基づく暫定値です。<br/>上層部問診の入力で確定診断となります。
-                      </div>
-                    </div>
-                  )}
+                  {/* v73: 暫定注記はヘッダーへ移設 */}
                 </div>
                 )}
                 
@@ -11959,9 +11979,15 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                       <div className="section-label flex items-center gap-2 flex-wrap">
                         <span className="section-label-dot">●</span>
                         <span className="section-label-text">歩留まり実績</span>
-                        {channelLabel && (
+                        {channelLabel ? (
                           <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">
                             {channelLabel}
+                          </span>
+                        ) : (
+                          /* v72: 全体合計表示時もバッジを常時表示（「バッジなし＝合計」が読み取れない問題の解消。
+                             紫=チャネル別 / グレー=全チャネル合計、と常にどちらかが付く */
+                          <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">
+                            全チャネル合計
                           </span>
                         )}
                         {channelCategory && channelCategory !== (data.yieldSettings?.methodCategory || 'ナビサイト') && (
@@ -11970,7 +11996,8 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                           </span>
                         )}
                       </div>
-                      <div className="flex-1 min-h-0">
+                      {/* v73: 内容が上に詰まっていたため上下中央配置に変更 */}
+                      <div className="flex-1 min-h-0 flex flex-col justify-center">
                         <YieldPerformanceChart 
                           funnelData={channelFunnelData} 
                           savedIndustryAverages={channelIndustryAverages} 
@@ -12035,13 +12062,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                     maxValue={10}
                   />
                 </div>
-                {isProvisional && (
-                  <div className="mt-1 pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1">
-                    <div className="text-[10px] text-amber-800 leading-relaxed">
-                      ※ 採用担当者の回答のみに基づく暫定値です。上層部問診の入力で確定します。
-                    </div>
-                  </div>
-                )}
+                {/* v73: 暫定注記はヘッダーへ移設 */}
                 </>
                 )}
               </div>
@@ -12098,13 +12119,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                       </span>
                     </div>
                     <div className="text-xs text-gray-500 leading-relaxed">{rankDef.description}</div>
-                    {isProvisional && (
-                      <div className="mt-2 pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1.5">
-                        <div className="text-[10px] text-amber-800 leading-relaxed">
-                          ※ 上層部問診が未入力のため、採用担当者の回答のみに基づく暫定値です。上層部問診の入力で確定診断となります。
-                        </div>
-                      </div>
-                    )}
+                    {/* v73: 暫定注記はヘッダーへ移設（タブ共通ヘッダーに常時表示） */}
                   </div>
                   )}
                   
