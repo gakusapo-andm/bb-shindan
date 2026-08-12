@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <!-- v53-sec: Content Security Policy（スクリプト・接続先を既知ドメインに制限）
        'unsafe-eval' はBabelのブラウザ内JSXコンパイルに必要。将来的にプリビルドに移行すれば削除可能 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://accounts.google.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src accounts.google.com; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://accounts.google.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src accounts.google.com; object-src 'none'; base-uri 'self';">
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
@@ -31,6 +31,46 @@
   <!-- v61: 目標人数が結果画面で0になる現場報告の修正（2経路） — [X]handleSave成功時のsetCurrentData(toSave)が保存開始時点のスナップショットで全置換し、保存await中（数百ms〜数秒）のユーザー入力を巻き戻していたレース修正（関数型更新でid/updatedAt/aiResult/savedQuestionMaster/_dbUpdatedAtのみマージ。診断開始の自動保存でも同経路）, [Y]複数ターゲット層の顧客で単一入力がtargetHiresByLayerを残置し、層別欄接触時に旧手動配分(0等)の合計で目標が上書きされるバグ修正（単一入力時にByLayerを破棄し自動配分に一本化）。単体テスト7ケース（旧バグ再現含む）全パス（2026-07-07） -->
   <!-- v62: 結果シートUI刷新（カルテ様式）＋ブラウザ印刷最適化 — デザイントークン導入(紙白/藍墨/診断ブルー1アクセント), シグネチャ「カルテ罫」(シート上端にランク色6px罫・rank-sheet-*クラスで連動), セクション見出しを●ドットから検査項目風縦バーへ(CSS置換・JSX無変更), ヘッダー刷新(ブランド+診断メタ罫組み), section-cardフラット化(印刷と画面の見た目統一), @page A4横+@media print一式(no-print/tab-bar/side-banner非表示・section-card改ページ回避・print-color-adjust), シート内に「印刷」ボタン追加(window.print)。既存html2canvas PDF出力(pdf-export-mode)とは共存(overflow競合を確認済み)。検証: 構文/no-undef 0/コメントペア全パス（2026-07-07） -->
   <!-- v63: v62デザイン刷新を全面取り消し（カルテ罫/検査ラベル/ヘッダー刷新/印刷CSS/印刷ボタンを除去しv61の見た目へ復元）＋ ご指定スタイルのみ適用: section-cardを角丸12px・枠線なし・ドロップシャドウ(2層ソフトシャドウ)に変更（2026-08-10） -->
+  <!-- v64: 中途採用対応の下地 — questions/recruitment_methods の読み書きで recruit_type をラウンドトリップ（DB側: bb_diagnoses/questions/recruitment_methods に recruit_type カラム追加済み。yield_rates/media_usage_rates は未適用＝パッチ09b対象）（2026-08-11） -->
+  <!-- v65: [①] 結果画面の公開条件を「担当者問診のみ」に緩和（採用タイプ/採用意識の癖/アドバイスタブ）。上層部未回答時はアンバー注記フッターで「暫定値・上層部問診で確定」を明示（案2採用）。ランク文字(S〜D)の結果シート表示を廃止（ランク固執で商談が入らない顧客対策。determineRank/RANK_DEFINITIONSは内部指標・顧客一覧統計として存続）。
+       [④] PDF出力を真のA4横(297×210mm)固定に変更 — 旧「幅297mm・高さ可変カスタムページ」はA4印刷時の拡縮で崩れの原因だった。等比縮小のみでA4中央に余白配置（歪みゼロ）。pdf-export-mode時にシート幅1200pxを!importantで固定しウィンドウ幅/ズーム非依存の決定的キャプチャに。
+       [⑤] 連携AIをGemini一本化 — API種類セレクタ削除、generateAIDiagnosisOpenAI物理削除（未使用デッドコード）、apiType設定の読み書き・分岐3箇所を除去、CSPからapi.openai.com除去、設定画面の文言更新。要DB掃除: 10_v65_ai_settings_cleanup.sql（ai_api_type行削除・ai_model死値更新・ai_max_tokens 4096化）（2026-08-11） -->
+  <!-- v66: 連携AIマルチプロバイダ対応（Gemini/OpenAI/Anthropic） — v65のGemini一本化から方針転換（他社モデル活用の要望）。
+       [基盤] AI_PROVIDERS定義・resolveAIProvider（設定→実効キー/モデル解決）・generateAIDiagnosis（唯一のディスパッチャ。呼び出し4箇所を集約）。
+       [キー分離] APIキー・モデルをプロバイダ別に独立保存（ai_provider / ai_api_key_{gemini,openai,anthropic} / ai_model_{gemini,openai,anthropic}）。
+         v64の「キー欄1つを共有し切替時に上書き」の罠を構造的に排除。旧キー(ai_api_key/ai_model)はGemini用として読込フォールバック＋保存時同期（v65以前へのロールバック安全）。
+       [モデル一覧ライブ取得] fetchAvailableModels — 各社modelsエンドポイント（Gemini:/v1beta/models, OpenAI:/v1/models, Anthropic:/v1/models）から
+         押下時点の最新一覧を取得し選択UI表示（新しい順・非テキスト系除外・公開日表示）。ハードコード選択肢の陳腐化を構造的に排除。取得失敗時は手入力フォールバック。
+       [API仕様差の吸収] OpenAI: max_completion_tokens優先→未対応旧モデルはmax_tokensで1回再試行・temperature不送信（推論系モデル対応）。
+         Anthropic: anthropic-dangerous-direct-browser-access ヘッダー（ブラウザ直接呼び出しのCORSオプトイン）・contentブロックをtype='text'で型フィルタ結合。
+       [CSP] connect-src に api.openai.com / api.anthropic.com を追加。
+       [DB] スキーマ変更なし（app_settingsはkey-value。新キーは初回保存時にupsert生成。SQLパッチ不要）（2026-08-11） -->
+  <!-- v67: AI実行経路をEdge Function（ai-generate）へ移行 — APIキーのクライアント露出を根絶（恒久対策）。
+       [経路] ブラウザ→(ログイントークン)→Edge Function(JWT検証+is_active_member確認)→(Secretsのキー)→各社API。
+       [削除] クライアント側の3社生成関数（generateAIDiagnosisGemini/OpenAI/Anthropic 計187行）を物理削除。
+         キーガード4箇所撤去（Secrets未登録時はEdge Functionが明確なエラーを返す）。
+       [保存停止] APIキーの永続化を全廃（DB・localStorageとも保存しない）。設定画面のキー欄は「モデル一覧取得」の一時利用のみに変更。
+         プロバイダカードのバッジは「キー設定済み」→「設定中モデル表示」に変更。
+       [互換] Edge Function側のリクエスト形式はv56クライアント実装を完全踏襲（systemPrompt+userPrompt連結・thinkingConfig・maxTokens丸め）。
+         429時のフォールバック文言切替も維持。モデル一覧取得（fetchAvailableModels）はadminの一時入力キーでクライアント実行を継続（CSPの3社ドメインは残置）。
+       [デプロイ順序] ①Edge Function作成+Secrets登録 → ②フロントv67 → ③11_v67でDBのキー行削除（逆順はAI停止）。
+       セット: ai-generate-index.ts（Edge Function本体）, 11_v67_remove_ai_keys.sql（2026-08-11） -->
+  <!-- v68: 歩留まり実績UIの刷新（ユーザー提供デザイン指示PDF準拠 / 2026-08-11）
+       ①グレーの目標目安バー（下段）を削除
+       ②達成率％をバー内左側に表示（旧: 右端の赤/緑バッジ）。バーの塗りは達成度0〜100%軸への直接描画に変更
+         （旧: rowMax=max(実績,目標)相対スケール。ヘッダー「各段ごとの達成度」との表現不一致を解消）
+       ③右側数値を「実績値/目標目安」の分数表記に統合（旧: 上段実績・下段目標の2段表示）。凡例も分子/分母表記へ
+       ④右カラム（業界平均値・コメント）を固定幅w-44→flex-1（左右同幅）に変更、文字サイズを10px→12px（見出し13px）へ拡大
+       計算ロジック（目標逆算・業界平均・実績歩留まり率）は無変更。表示のみの変更 -->
+  <!-- v69: レスポンシブ対応・試作第1弾 — 結果画面の縮小フィット表示（2026-08-11）
+       [方式] シート(1200px固定デザイン)は組み替えず、ScaledSheetContainerで画面幅に等比縮小
+         （scale=min(1, 親幅/1200)。transformは高さに効かないため実測高さ×scaleをボックスに明示。
+          タブ切替・AI生成の高さ変化はResizeObserverで追従。デスクトップでは従来と同一表示）
+       [PDF/印刷保護] 出力中はbody.pdf-exportingクラス＋CSS !importantで等倍へ強制復帰
+         （インラインstyle書き換えではなくCSS制圧: Reactの再レンダとのレース回避。
+          finallyで確実に解除しエラー経路でもモバイル表示に復帰）。@media printにも同ガード。
+       [対象決定] 対象=BB診断＋事前問診 / シート=縮小フィット / 進め方=1画面試作から（ユーザー3択回答）。
+       承認後: Phase1(共通CSS+ヘッダー+タブ+顧客一覧)→Phase2(問診入力フォーム+設定モーダル)→事前問診 -->
   <!--
     ============================================================
     【v57 修正詳細】2026-07-07 実施
@@ -279,7 +319,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v63] Supabase接続完了');
+    console.log('[BB診断 v69] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -931,10 +971,35 @@ input[type="range"]::-moz-range-thumb {
   display: none !important;
 }
 
+/* ============================================================
+   v69: 結果シートの縮小フィット表示（スマホ/タブレット試作）
+   - シートは1200px固定デザインのまま、画面幅に合わせて等比縮小
+   - PDF出力中(body.pdf-exporting)は!importantで等倍へ強制復帰
+     （Reactのインラインstyle再適用とレースしないようCSSで制圧）
+   ============================================================ */
+body.pdf-exporting #sheet-scale-wrapper {
+  transform: none !important;
+  width: 1200px !important;
+  margin: 0 !important;
+}
+body.pdf-exporting #sheet-scale-box {
+  height: auto !important;
+  overflow: visible !important;
+}
+@media print {
+  #sheet-scale-wrapper { transform: none !important; width: 1200px !important; margin: 0 !important; }
+  #sheet-scale-box { height: auto !important; overflow: visible !important; }
+}
+
 /* PDF出力時: 不要な余白を除去してコンテンツを詰める */
 .pdf-export-mode.diagnosis-sheet {
   min-height: 0 !important;
   padding-bottom: 12px !important;
+  /* v65: キャプチャの決定性確保。ウィンドウ幅・ズーム状態に関わらず
+     常に設計幅1200px（A4横比率）でレイアウトさせてから撮影する */
+  width: 1200px !important;
+  max-width: none !important;
+  transform: none !important;
 }
 
 /* ============================================
@@ -2524,16 +2589,24 @@ const AISettingsManager = {
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasSettings = GASDataManager.getAISettings();
       console.log('GASDataManager.getAISettings():', gasSettings ? { ...gasSettings, apiKey: gasSettings.apiKey ? '***' : '' } : null);
-      if (gasSettings && (gasSettings.apiKey || gasSettings.selectedPreset || gasSettings.sideButtons)) {
+      if (gasSettings && (gasSettings.apiKey || gasSettings.apiKeyGemini || gasSettings.apiKeyOpenai || gasSettings.apiKeyAnthropic || gasSettings.selectedPreset || gasSettings.sideButtons)) {
         // ローカル設定とマージ（GASの設定を優先）
         try {
           const localData = localStorage.getItem('gakusapo_bb_ai_settings');
           const localSettings = localData ? JSON.parse(localData) : {};
           const mergedSettings = {
             // API設定（GAS優先）
-            apiType: gasSettings.apiType || localSettings.apiType || 'gemini',
+            // v66: マルチプロバイダ（Gemini/OpenAI/Anthropic）。キー・モデルはプロバイダ別に独立保存。
+            provider: gasSettings.provider || localSettings.provider || 'gemini',
+            apiKeyGemini: gasSettings.apiKeyGemini ?? localSettings.apiKeyGemini ?? gasSettings.apiKey ?? localSettings.apiKey ?? '',
+            apiKeyOpenai: gasSettings.apiKeyOpenai || localSettings.apiKeyOpenai || '',
+            apiKeyAnthropic: gasSettings.apiKeyAnthropic || localSettings.apiKeyAnthropic || '',
+            modelGemini: gasSettings.modelGemini ?? localSettings.modelGemini ?? gasSettings.model ?? localSettings.model ?? 'gemini-3.5-flash',
+            modelOpenai: gasSettings.modelOpenai || localSettings.modelOpenai || '',
+            modelAnthropic: gasSettings.modelAnthropic || localSettings.modelAnthropic || '',
+            // レガシー互換（ロールバック時にDB値が壊れないよう読みは維持）
             apiKey: gasSettings.apiKey || localSettings.apiKey || '',
-            model: gasSettings.model || localSettings.model || 'gemini-3.5-flash', // v56: 旧claude-3-haikuデフォルトは未使用の死値だったため現行モデルに変更
+            model: gasSettings.model || localSettings.model || 'gemini-3.5-flash',
             maxTokens: gasSettings.maxTokens || localSettings.maxTokens || 4096,
             // プロンプト設定（GAS優先）
             selectedPreset: gasSettings.selectedPreset || localSettings.selectedPreset || 'standard',
@@ -2574,7 +2647,13 @@ const AISettingsManager = {
     }
     // デフォルト設定
     return {
-      apiType: 'gemini',
+      provider: 'gemini',
+      apiKeyGemini: '',
+      apiKeyOpenai: '',
+      apiKeyAnthropic: '',
+      modelGemini: 'gemini-3.5-flash',
+      modelOpenai: '',
+      modelAnthropic: '',
       apiKey: '',
       selectedPreset: 'standard',
       customSystemPrompt: '',
@@ -2588,16 +2667,23 @@ const AISettingsManager = {
     const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
     
     try {
-      localStorage.setItem('gakusapo_bb_ai_settings', JSON.stringify(settings));
+      // v67: APIキーは永続化しない（Edge Function移行によりブラウザ保存の必要が消滅。
+      //  設定画面のキー欄は「モデル一覧取得」の一時利用のみ）
+      const { apiKey, apiKeyGemini, apiKeyOpenai, apiKeyAnthropic, ...persistable } = settings;
+      localStorage.setItem('gakusapo_bb_ai_settings', JSON.stringify(persistable));
       
       // GASモードかつ管理者の場合はスプレッドシートにも保存
       if (isGasMode && isAdmin && typeof GASDataManager !== 'undefined') {
         GASDataManager.saveAISettings({
           // API設定
           enabled: true,
-          apiType: settings.apiType || 'gemini',
-          apiKey: settings.apiKey || '',
-          model: settings.model || 'gemini-3.5-flash',
+          // v66: マルチプロバイダ / v67: APIキーはDBに保存しない（Edge Function Secretsへ移行）
+          provider: settings.provider || 'gemini',
+          modelGemini: settings.modelGemini || '',
+          modelOpenai: settings.modelOpenai || '',
+          modelAnthropic: settings.modelAnthropic || '',
+          // レガシーモデルキーもGemini値で同期更新（旧版ロールバック時の表示整合用）
+          model: settings.modelGemini ?? settings.model ?? 'gemini-3.5-flash',
           maxTokens: settings.maxTokens || 4096,
           // プロンプト設定
           selectedPreset: settings.selectedPreset || 'standard',
@@ -2689,7 +2775,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v63' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v69' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -3271,7 +3357,7 @@ const SUPA_HANDLERS = {
     return { success: true };
   },
 
-  // ── AI設定取得（GAS互換: { success, settings: { enabled, apiType, ... } }）──
+  // ── AI設定取得（GAS互換: { success, settings: { enabled, apiKey, ... } }）── v65: apiType廃止
   getAISettings: async function(sb) {
     var res = await sb.from('app_settings').select('*').like('key', 'ai_%');
     if (res.error) throw new Error(res.error.message);
@@ -3288,7 +3374,15 @@ const SUPA_HANDLERS = {
       success: true,
       settings: {
         enabled: raw.ai_enabled !== 'false',
-        apiType: raw.ai_api_type || 'gemini',
+        // v66: マルチプロバイダ。旧キー(ai_api_key/ai_model)はGemini用として読込フォールバック
+        provider: raw.ai_provider || 'gemini',
+        apiKeyGemini: raw.ai_api_key_gemini ?? raw.ai_api_key ?? '',
+        apiKeyOpenai: raw.ai_api_key_openai || '',
+        apiKeyAnthropic: raw.ai_api_key_anthropic || '',
+        modelGemini: raw.ai_model_gemini ?? raw.ai_model ?? 'gemini-3.5-flash',
+        modelOpenai: raw.ai_model_openai || '',
+        modelAnthropic: raw.ai_model_anthropic || '',
+        // レガシー互換（v65以前のコードパス・ロールバック用に読みは残す）
         apiKey: raw.ai_api_key || '',
         model: raw.ai_model || 'gemini-3.5-flash',
         maxTokens: parseInt(raw.ai_max_tokens, 10) || 4096,
@@ -3306,7 +3400,14 @@ const SUPA_HANDLERS = {
     if (!settings) return { success: false, error: 'データがありません' };
     var mapping = {
       enabled: 'ai_enabled',
-      apiType: 'ai_api_type',
+      // v66: マルチプロバイダ
+      provider: 'ai_provider',
+      apiKeyGemini: 'ai_api_key_gemini',
+      apiKeyOpenai: 'ai_api_key_openai',
+      apiKeyAnthropic: 'ai_api_key_anthropic',
+      modelGemini: 'ai_model_gemini',
+      modelOpenai: 'ai_model_openai',
+      modelAnthropic: 'ai_model_anthropic',
       apiKey: 'ai_api_key',
       model: 'ai_model',
       maxTokens: 'ai_max_tokens',
@@ -4443,75 +4544,171 @@ const MasterDataSpreadsheetManager = {
 };
 
 // AI API呼び出し関数（Gemini）
-const generateAIDiagnosisGemini = async (systemPrompt, userPrompt, apiKey, model, maxTokens) => {
-  // v56: gemini-2.0-flash 廃止（2026-06-01）による本番障害対応
-  // - デフォルトを gemini-3.5-flash に変更（廃止予定日の告知なし＝メンテ頻度最小）
-  // - 管理画面のAI設定 model/maxTokens を実配線（従来は保存されるだけで未使用だった）
-  // - gemini-3.x はthinkingがデフォルト有効のため thinkingLevel: low を明示し、
-  //   thinking分のトークン消費を考慮して maxOutputTokens の下限を 4096 に引き上げ
-  const MODEL_NAME = (model && /^gemini-/.test(model)) ? model : 'gemini-3.5-flash';
-  const isGemini3 = /^gemini-3/.test(MODEL_NAME);
-  const parsedMax = parseInt(maxTokens, 10);
-  const maxOut = isGemini3
-    ? Math.max(isNaN(parsedMax) ? 0 : parsedMax, 4096)
-    : (isNaN(parsedMax) || parsedMax <= 0 ? 2048 : parsedMax);
-  const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
-  
-  try {
-    const generationConfig = {
-      temperature: 0.7,
-      maxOutputTokens: maxOut,
-    };
-    if (isGemini3) {
-      generationConfig.thinkingConfig = { thinkingLevel: 'low' };
-    }
-    const response = await fetch(`${API_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [{ text: systemPrompt + "\n\n" + userPrompt }]
-        }],
-        generationConfig: generationConfig
-      })
-    });
-
-    // エラーチェック（429: Too Many Requests - レート制限）
-    if (response.status === 429) {
-      console.warn("APIレート制限に達しました。バックアップ文言を使用します。");
-      return generateFallbackResponse();
-    }
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
-    }
-
-    const resData = await response.json();
-    // v56: gemini-3.x はthinking part（thought: true）が混入し得るため、
-    // 固定インデックス参照をやめてテキストpartのみを結合。空candidatesもガード
-    const parts = resData?.candidates?.[0]?.content?.parts || [];
-    const text = parts
-      .filter(p => typeof p.text === 'string' && !p.thought)
-      .map(p => p.text)
-      .join('');
-    if (!text) {
-      const blockReason = resData?.promptFeedback?.blockReason || resData?.candidates?.[0]?.finishReason || '不明';
-      throw new Error(`AI応答にテキストが含まれていません (理由: ${blockReason})`);
-    }
-    return text;
-  } catch (error) {
-    console.error("Gemini API エラー:", error);
-    // 完全にエラーになった場合もフォールバック文言を返す
-    if (error.message?.includes('429') || error.message?.includes('quota')) {
-      return generateFallbackResponse();
-    }
-    throw error;
+// ============================================================
+// v66: 連携AIマルチプロバイダ対応（Gemini / OpenAI / Anthropic）
+// 設計原則:
+//  - プロバイダ分岐は generateAIDiagnosis ディスパッチャ1箇所に集約（呼び出し側に撒かない）
+//  - APIキー・モデルはプロバイダごとに独立保存（v64の「キー欄共有で切替時上書き」の罠を排除）
+//  - モデル選択肢は各社の models エンドポイントからライブ取得（ハードコード陳腐化の構造的排除）
+//  - 各社のAPI仕様差（OpenAI: max_completion_tokens移行 / Anthropic: ブラウザ直アクセスヘッダー）
+//    は各generate関数内で吸収する（カテゴリ5の教訓: 仕様差分は条件分岐で吸収）
+// ============================================================
+const AI_PROVIDERS = {
+  gemini: {
+    name: 'Google Gemini',
+    keyHint: '※ Google AI Studio (https://aistudio.google.com) でAPIキーを取得できます',
+    modelPlaceholder: 'gemini-3.5-flash'
+  },
+  openai: {
+    name: 'OpenAI',
+    keyHint: '※ OpenAI Platform (https://platform.openai.com/api-keys) でAPIキーを取得できます',
+    modelPlaceholder: '「モデル一覧を取得」から選択してください'
+  },
+  anthropic: {
+    name: 'Anthropic Claude',
+    keyHint: '※ Anthropic Console (https://console.anthropic.com/settings/keys) でAPIキーを取得できます',
+    modelPlaceholder: '「モデル一覧を取得」から選択してください'
   }
 };
 
-// フォールバック用のレスポンス生成関数
+// 設定オブジェクトから「現在のプロバイダの実効キー・モデル」を解決する。
+// 旧設定（apiKey / model = Gemini用）は Gemini のフォールバックとして読む（後方互換）。
+const resolveAIProvider = (settings) => {
+  const st = settings || {};
+  const provider = AI_PROVIDERS[st.provider] ? st.provider : 'gemini';
+  let apiKey = '', model = '';
+  if (provider === 'openai') {
+    apiKey = st.apiKeyOpenai || '';
+    model = st.modelOpenai || '';
+  } else if (provider === 'anthropic') {
+    apiKey = st.apiKeyAnthropic || '';
+    model = st.modelAnthropic || '';
+  } else {
+    // ?? を使用: 「''にクリアした」状態と「一度も保存していない」状態を区別する（カテゴリ1）
+    apiKey = st.apiKeyGemini ?? st.apiKey ?? '';
+    model = st.modelGemini ?? st.model ?? '';
+  }
+  return { provider, apiKey, model };
+};
+
+// 全AI生成の唯一の入口。呼び出し側はプロバイダを意識しない。
+// v67: 実行経路をEdge Function（ai-generate）に移行。APIキーはブラウザに一切降りてこない。
+//   ブラウザ →(ログイントークン)→ Edge Function →(Secretsのキー)→ 各社API
+// クライアント側の各社呼び出し関数（v66のgenerateAIDiagnosisGemini/OpenAI/Anthropic）は
+// キー露出の温床となるため物理削除した（デッドコードは無害ではない原則）。
+const generateAIDiagnosis = async (settings, systemPrompt, userPrompt) => {
+  const { provider, model } = resolveAIProvider(settings);
+  if (provider !== 'gemini' && !model) {
+    throw new Error(AI_PROVIDERS[provider].name + ' のモデルが未選択です。設定→API設定で「モデル一覧を取得」して選択してください。');
+  }
+  const sb = window._supabase;
+  const sessionRes = await sb.auth.getSession();
+  const token = sessionRes?.data?.session?.access_token;
+  if (!token) {
+    throw new Error('ログインセッションが確認できません。再ログインしてください。');
+  }
+  const response = await fetch(`${window.SUPABASE_CONFIG.url}/functions/v1/ai-generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': window.SUPABASE_CONFIG.anonKey
+    },
+    body: JSON.stringify({
+      provider: provider,
+      model: model,
+      maxTokens: (settings && settings.maxTokens) || 4096,
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    // 429（利用上限）は従来同様フォールバック文言に切り替える
+    if (response.status === 429) {
+      console.warn('AI利用上限に達しました。バックアップ文言を使用します。');
+      return generateFallbackResponse();
+    }
+    throw new Error(data.error || `AI生成に失敗しました (${response.status})`);
+  }
+  if (!data.text || !data.text.trim()) {
+    throw new Error('AIから空の応答が返されました。');
+  }
+  return data.text;
+};
+
+// ── モデル一覧のライブ取得（管理画面「モデル一覧を取得」用） ──
+// 返り値は共通形式: [{ id, label, meta }]（新しい順）。失敗時はthrow（UIで手入力にフォールバック）。
+const fetchAvailableModels = async (provider, apiKey) => {
+  if (!apiKey) throw new Error('先にAPIキーを入力してください');
+  if (provider === 'gemini') {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(apiKey)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`モデル一覧の取得に失敗 (${res.status}): ${err?.error?.message || res.statusText}`);
+    }
+    const data = await res.json();
+    return (data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => ({
+        id: (m.name || '').replace(/^models\//, ''),
+        label: m.displayName || (m.name || '').replace(/^models\//, ''),
+        meta: m.description ? m.description.slice(0, 80) : ''
+      }))
+      .sort((a, b) => b.id.localeCompare(a.id));
+  }
+  if (provider === 'openai') {
+    const res = await fetch('https://api.openai.com/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`モデル一覧の取得に失敗 (${res.status}): ${err?.error?.message || res.statusText}`);
+    }
+    const data = await res.json();
+    // テキスト生成に使えないモデル種別（音声/画像/埋め込み/モデレーション等）を除外
+    const EXCLUDE = /whisper|tts|dall-e|embedding|moderation|audio|transcribe|realtime|image/i;
+    return (data.data || [])
+      .filter(m => m.id && !EXCLUDE.test(m.id))
+      .sort((a, b) => (b.created || 0) - (a.created || 0))
+      .map(m => ({
+        id: m.id,
+        label: m.id,
+        meta: m.created ? new Date(m.created * 1000).toISOString().slice(0, 10) + ' 公開' : ''
+      }));
+  }
+  if (provider === 'anthropic') {
+    const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        // ブラウザからの直接呼び出しに必要（CORS許可の明示オプトイン）
+        'anthropic-dangerous-direct-browser-access': 'true'
+      }
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`モデル一覧の取得に失敗 (${res.status}): ${err?.error?.message || res.statusText}`);
+    }
+    const data = await res.json();
+    return (data.data || [])
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+      .map(m => ({
+        id: m.id,
+        label: m.display_name || m.id,
+        meta: m.created_at ? String(m.created_at).slice(0, 10) + ' 公開' : ''
+      }));
+  }
+  throw new Error('未対応のプロバイダ: ' + provider);
+};
+
+// v67: generateAIDiagnosisOpenAI をEdge Functionへ移設（クライアント側は物理削除。キー露出経路の根絶）
+
+// v67: generateAIDiagnosisAnthropic をEdge Functionへ移設（同上）
+
+// v67: generateAIDiagnosisGemini をEdge Functionへ移設（同上。リクエスト形式はEdge Function側でv56実装を完全踏襲）
+// 429（利用上限）時のバックアップ文言（v67: Edge Function移行時に誤削除しかけたため独立配置。
+// ディスパッチャgenerateAIDiagnosisから参照される必須関数）
 const generateFallbackResponse = () => {
   return `[SECTION_1]
 ■ 処方箋：今すぐ捨てるべき活動
@@ -4531,51 +4728,6 @@ const generateFallbackResponse = () => {
 「とりあえず広く網を張る」という思考が無駄の根源です。「選ばれる企業になる」のではなく「選ぶ企業になる」へのマインドシフトが必要です。`;
 };
 
-// AI API呼び出し関数（OpenAI）
-const generateAIDiagnosisOpenAI = async (systemPrompt, userPrompt, apiKey, model) => {
-  const API_URL = 'https://api.openai.com/v1/chat/completions';
-  // v56: 管理画面のmodel設定を実配線。gemini系の値が渡ってきた場合はgpt-4にフォールバック
-  const MODEL_NAME = (model && /^gpt-/.test(model)) ? model : 'gpt-4';
-  
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: MODEL_NAME,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        temperature: 0.7
-      })
-    });
-
-    // エラーチェック（429: Too Many Requests - レート制限）
-    if (response.status === 429) {
-      console.warn("OpenAI APIレート制限に達しました。バックアップ文言を使用します。");
-      return generateFallbackResponse();
-    }
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
-    }
-
-    const resData = await response.json();
-    return resData.choices[0].message.content;
-  } catch (error) {
-    console.error("OpenAI API エラー:", error);
-    // 完全にエラーになった場合もフォールバック文言を返す
-    if (error.message?.includes('429') || error.message?.includes('quota') || error.message?.includes('rate')) {
-      return generateFallbackResponse();
-    }
-    throw error;
-  }
-};
 
 // AIレスポンスのパース関数
 const parseAIResponse = (aiAdvice) => {
@@ -7548,14 +7700,14 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
     { label: '承諾', actual: safeAcceptance, target: targetAcceptance }
   ];
   
-  // 最大値は各行ごとに実績vs目標で比較（グローバルスケール廃止）
+  // v68: バーは各行の達成度(実績/目標×100)を0〜100%軸へ直接描画（相対スケール自体を廃止）
   
   return (
     <div className="flex gap-3">
       {/* 左側：棒グラフ */}
       <div className="flex-1">
         {/* ヘッダー（X軸目盛りの代わりに説明） */}
-        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '50px' }}>
+        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '60px' }}>
           <div className="flex-1 flex justify-between text-[10px] text-gray-400">
             <span>0%</span>
             <span>各段ごとの達成度</span>
@@ -7566,129 +7718,81 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
         {/* 棒グラフ */}
         <div className="space-y-2">
           {barData.map((item, idx) => {
-            // 各行ごとにスケール決定（実績と目標の大きい方が100%）
-            const rowMax = Math.max(item.actual, item.target, 1);
-            const actualWidth = (item.actual / rowMax) * 100 * animationProgress;
-            const targetWidth = (item.target / rowMax) * 100 * animationProgress;
-            // 達成率（目標に対する実績の割合）
+            // v68: グレーの目標バー廃止に伴い、バーは「達成度(実績/目標)」を0〜100%軸へ直接描画
+            //（旧実装は rowMax=max(実績,目標) 相対スケール。ヘッダーの「0%〜各段ごとの達成度〜100%」と
+            //  バー表現を一致させる）
             const achievementRate = item.target > 0 ? Math.round((item.actual / item.target) * 100) : 0;
-            const isOverAchieved = achievementRate >= 100;
+            const fillWidth = Math.min(achievementRate, 100) * animationProgress;
+            const shownRate = Math.round(achievementRate * animationProgress);
             
             return (
-              <div key={item.label} className="flex items-start gap-2">
-                <div className="w-10 text-right text-xs text-gray-600 font-medium pt-1">{item.label}</div>
-                <div className="flex-1 space-y-0.5">
-                  {/* 実績値（上段）- カラーバー */}
-                  <div className="flex items-center gap-1">
-                    <div 
-                      style={{ 
-                        height: '18px', 
-                        position: 'relative', 
-                        backgroundColor: barBgColors[idx], 
-                        borderRadius: '4px', 
-                        overflow: 'hidden',
-                        flex: 1
-                      }}
-                    >
-                      <div 
-                        style={{ 
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          width: `${actualWidth}%`,
-                          height: '100%',
-                          backgroundColor: barColors[idx],
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
-                    <span 
-                      style={{ 
-                        fontSize: '10px', 
-                        fontWeight: 600,
-                        color: '#6b7280',
-                        minWidth: '30px',
-                        textAlign: 'right',
-                        flexShrink: 0
-                      }}
-                    >
-                      {Math.round(item.actual * animationProgress)}
-                    </span>
-                  </div>
-                  {/* 目標目安（下段）- グレーの棒グラフ */}
-                  <div className="flex items-center gap-1">
-                    <div 
-                      style={{ 
-                        height: '9px', 
-                        position: 'relative', 
-                        backgroundColor: '#f3f4f6', 
-                        borderRadius: '4px', 
-                        overflow: 'hidden',
-                        flex: 1
-                      }}
-                    >
-                      <div 
-                        style={{ 
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          width: `${targetWidth}%`,
-                          height: '100%',
-                          backgroundColor: '#9ca3af',
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
-                    <span 
-                      style={{ 
-                        fontSize: '9px',
-                        color: '#9ca3af',
-                        minWidth: '30px',
-                        textAlign: 'right',
-                        flexShrink: 0
-                      }}
-                    >
-                      {Math.round(item.target * animationProgress)}
-                    </span>
-                  </div>
-                </div>
-                {/* 達成率表示 */}
+              <div key={item.label} className="flex items-center gap-2">
+                <div className="w-10 text-right text-xs text-gray-600 font-medium">{item.label}</div>
+                {/* 達成度バー（％をバー内左側に表示 = 変更②） */}
                 <div 
                   style={{ 
-                    minWidth: '38px',
-                    textAlign: 'center',
-                    paddingTop: '2px',
+                    height: '22px', 
+                    position: 'relative', 
+                    backgroundColor: barBgColors[idx], 
+                    borderRadius: '4px', 
+                    overflow: 'hidden',
+                    flex: 1
+                  }}
+                >
+                  <div 
+                    style={{ 
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: `${fillWidth}%`,
+                      height: '100%',
+                      backgroundColor: barColors[idx],
+                      borderRadius: '4px'
+                    }}
+                  />
+                  <span 
+                    style={{ 
+                      position: 'absolute',
+                      left: '6px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      color: '#374151'
+                    }}
+                  >
+                    {shownRate}%
+                  </span>
+                </div>
+                {/* 分子/分母表示（実績値/目標目安 = 変更③） */}
+                <span 
+                  style={{ 
+                    fontSize: '10px', 
+                    fontWeight: 600,
+                    color: '#6b7280',
+                    minWidth: '52px',
+                    textAlign: 'right',
                     flexShrink: 0
                   }}
                 >
-                  <span 
-                    style={{ 
-                      fontSize: '10px', 
-                      fontWeight: 700,
-                      color: isOverAchieved ? '#16a34a' : '#dc2626',
-                      backgroundColor: isOverAchieved ? '#f0fdf4' : '#fef2f2',
-                      padding: '1px 4px',
-                      borderRadius: '3px'
-                    }}
-                  >
-                    {achievementRate}%
-                  </span>
-                </div>
+                  {Math.round(item.actual * animationProgress)}/{item.target}
+                </span>
               </div>
             );
           })}
         </div>
         
-        {/* 凡例 */}
+        {/* 凡例（v68: 分子/分母表記へ変更） */}
         <div className="text-center mt-3 text-[10px] text-gray-600 font-bold">
-          上段：実績値　　下段：目標目安{targetHires > 0 && `（目標${targetHires}人から逆算）`}
+          分子：実績値　　分母：目標目安{targetHires > 0 && `（目標${targetHires}人から逆算）`}
         </div>
       </div>
       
-      {/* 右側：歩留まり情報（仕切り付き） */}
-      <div className="w-44 pl-3 border-l border-gray-300 text-[10px]">
-        <div className="font-bold text-gray-800 mb-2">【歩留まり率業界平均値】</div>
-        <div className="space-y-1 text-gray-600">
+      {/* 右側：歩留まり情報（仕切り付き）
+           v68: 固定幅(w-44)→左右同幅(flex-1)へ変更し文字サイズ拡大（変更④: 見やすく） */}
+      <div className="flex-1 pl-4 border-l border-gray-300 text-xs">
+        <div className="font-bold text-gray-800 mb-2 text-[13px]">【歩留まり率業界平均値】</div>
+        <div className="space-y-1.5 text-gray-600">
           <div>認知→興味：{industryAverages.awarenessToInterest}%（実績 {actualRates.awarenessToInterest}%）</div>
           <div>興味→接触：{industryAverages.interestToApplication}%（実績 {actualRates.interestToApplication}%）</div>
           <div>接触→選考：{industryAverages.applicationToScreening}%（実績 {actualRates.applicationToScreening}%）</div>
@@ -7720,8 +7824,8 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
           return (
             <>
               <div className="border-t border-gray-200 my-2"></div>
-              <div className="font-bold text-gray-800 mb-1">コメント</div>
-              <div className="text-gray-600 leading-relaxed">
+              <div className="font-bold text-gray-800 mb-1 text-[13px]">コメント</div>
+              <div className="text-gray-600 leading-relaxed space-y-0.5">
                 {belowAverageItems.map((item, idx) => (
                   <div key={idx}>
                     {item.label}：業界平均より<span className="text-red-500 font-bold">▲{item.diff}%</span>
@@ -11555,6 +11659,72 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
 // 診断シート
 // ========================================
 
+// ============================================================
+// v69: 縮小フィットコンテナ（スマホ/タブレット対応の試作・結果画面）
+// シート(1200px固定)を親幅に合わせてtransform:scaleで等比縮小する。
+// - 高さはtransformでは詰まらないため、実測高さ×scaleをボックスに明示
+// - タブ切替やAI生成でシート高さが変わるためResizeObserverで追従
+// - PDF出力/印刷時はCSS(body.pdf-exporting / @media print)で等倍に強制
+//   （インラインstyleではなくCSSで制圧: Reactの再レンダとレースさせない）
+// ============================================================
+const SHEET_DESIGN_WIDTH = 1200;
+const ScaledSheetContainer = ({ children }) => {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [boxHeight, setBoxHeight] = useState(null);
+  
+  useEffect(() => {
+    const update = () => {
+      const outer = outerRef.current;
+      const inner = innerRef.current;
+      if (!outer || !inner) return;
+      const available = outer.clientWidth;
+      if (!available) return;
+      const s = Math.min(1, available / SHEET_DESIGN_WIDTH);
+      setScale(s);
+      setBoxHeight(s < 1 ? Math.ceil(inner.offsetHeight * s) : null);
+    };
+    update();
+    window.addEventListener('resize', update);
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(update);
+      if (innerRef.current) ro.observe(innerRef.current);
+      if (outerRef.current) ro.observe(outerRef.current);
+    }
+    return () => {
+      window.removeEventListener('resize', update);
+      if (ro) ro.disconnect();
+    };
+  }, []);
+  
+  return (
+    <div ref={outerRef} style={{ width: '100%' }}>
+      <div
+        id="sheet-scale-box"
+        style={{
+          height: boxHeight != null ? boxHeight + 'px' : 'auto',
+          overflow: scale < 1 ? 'hidden' : 'visible'
+        }}
+      >
+        <div
+          ref={innerRef}
+          id="sheet-scale-wrapper"
+          style={{
+            width: SHEET_DESIGN_WIDTH + 'px',
+            margin: scale < 1 ? '0' : '0 auto',
+            transform: scale < 1 ? `scale(${scale})` : 'none',
+            transformOrigin: 'top left'
+          }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, isGeneratingAI, aiError, adviceMode }, ref) => {
   // タブ状態管理
   const [activeTab, setActiveTab] = useState('result'); // 'result', 'advice', 'simulation'
@@ -11624,11 +11794,9 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
   };
   const hasStaffAnswers = hasComputedScores(calculatedScores.staffScores) || hasComputedScores(calculatedScores.staffMindsetScores);
   const hasExecAnswers = hasComputedScores(calculatedScores.executiveScores) || hasComputedScores(calculatedScores.execMindsetScores);
-  const missingInputTabs = [
-    ...(!hasStaffAnswers ? ['「採用担当者問診」'] : []),
-    ...(!hasExecAnswers ? ['「上層部問診」'] : [])
-  ];
-  const hasRequiredAnswers = hasStaffAnswers && hasExecAnswers;
+  // v65: 公開条件を「担当者問診のみで可」に変更（上層部待ちで商談が止まる問題への対応）。
+  // 上層部未回答時は暫定表示とし、isProvisional で注記（案2: 注記フッター型）を出す。
+  const isProvisional = hasStaffAnswers && !hasExecAnswers;
   
   // ギャップ係数を計算（gapCheck対象質問のみ）
   const gapResult = calcGapCoefficient(data);
@@ -11696,31 +11864,33 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
               <div className="section-card p-4" style={{ flex: '4', minHeight: 0, overflow: 'hidden' }}>
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">今の御社の採用タイプ</span></div>
                 
-                {!hasRequiredAnswers ? (
+                {!hasStaffAnswers ? (
                   <div className="mb-2">
                     <div className="bg-gray-100 rounded-lg px-3 py-2">
                       <div className="flex items-center gap-2">
                         <span className="text-gray-400 text-sm">⚠</span>
-                        <span className="text-xs text-gray-500">{missingInputTabs.join('・')}が未入力です</span>
+                        <span className="text-xs text-gray-500">「採用担当者問診」が未入力です</span>
                       </div>
-                      <div className="text-xs text-gray-400 mt-0.5 ml-6">「採用担当者問診」・「上層部問診」を入力すると<br/>ランクと採用課題が表示されます</div>
+                      <div className="text-xs text-gray-400 mt-0.5 ml-6">「採用担当者問診」を入力すると<br/>採用タイプと採用課題が表示されます</div>
                     </div>
                   </div>
                 ) : (
                 <div className="mb-2">
+                  {/* v65: ランク文字(S〜D)の表示を廃止（ランクに囚われて商談が入らない顧客対策）。
+                       タイプ名＋説明のみ表示。判定ロジック(determineRank)は内部指標として存続 */}
                   <div className="flex items-baseline gap-2 mb-1">
-                    <span className="text-xs text-gray-500">ランク</span>
-                    <span 
-                      className="text-3xl font-black font-outfit"
-                      style={{ color: rankDef.color }}
-                    >
-                      {rank}
-                    </span>
-                    <span className="text-sm font-bold" style={{ color: rankDef.color }}>
+                    <span className="text-base font-bold" style={{ color: rankDef.color }}>
                       {rankDef.name}
                     </span>
                   </div>
                   <div className="text-xs text-gray-600 leading-relaxed">{rankDef.description}</div>
+                  {isProvisional && (
+                    <div className="mt-2 pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1.5">
+                      <div className="text-[10px] text-amber-800 leading-relaxed">
+                        ※ 上層部問診が未入力のため、採用担当者の回答のみに基づく暫定値です。<br/>上層部問診の入力で確定診断となります。
+                      </div>
+                    </div>
+                  )}
                 </div>
                 )}
                 
@@ -11896,13 +12066,14 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
               {/* 採用基礎力（マインドセット）レーダー */}
               <div className="p-2 pt-4 pl-6 border-r border-gray-200 flex flex-col" style={{ overflow: 'visible' }}>
                 <div className="section-label"><span className="section-label-dot">●</span><span className="section-label-text">採用意識の癖</span></div>
-                {!hasExecAnswers ? (
+                {/* v65: 公開条件を担当者問診のみに緩和。上層部未回答時は担当者1系列のみ描画＋暫定注記 */}
+                {!hasStaffAnswers ? (
                   <div className="flex flex-col items-center justify-center flex-1 text-center py-4">
                     <svg className="w-10 h-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    <p className="text-sm font-medium text-gray-500 mb-1">「上層部問診」が未入力です</p>
-                    <p className="text-xs text-gray-400">「上層部問診」タブを入力すると<br />結果が表示されます</p>
+                    <p className="text-sm font-medium text-gray-500 mb-1">「採用担当者問診」が未入力です</p>
+                    <p className="text-xs text-gray-400">「採用担当者問診」タブを入力すると<br />結果が表示されます</p>
                   </div>
                 ) : (
                 <>
@@ -11918,6 +12089,13 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
                     maxValue={10}
                   />
                 </div>
+                {isProvisional && (
+                  <div className="mt-1 pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1">
+                    <div className="text-[10px] text-amber-800 leading-relaxed">
+                      ※ 採用担当者の回答のみに基づく暫定値です。上層部問診の入力で確定します。
+                    </div>
+                  </div>
+                )}
                 </>
                 )}
               </div>
@@ -11965,26 +12143,27 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
               {/* 左カラム */}
               <div className="col-span-5 flex flex-col gap-4">
                 <div className="section-card p-5 flex flex-col" style={{ minHeight: '650px' }}>
-                  {hasRequiredAnswers && (
+                  {/* v65: ランク文字(S〜D)廃止・担当者問診のみで表示・暫定注記（案2） */}
+                  {hasStaffAnswers && (
                   <div className="mb-4">
                     <div className="flex items-baseline gap-2 mb-2">
-                      <span className="text-sm text-gray-500">ランク</span>
-                      <span 
-                        className="text-4xl font-black"
-                        style={{ color: rankDef.color }}
-                      >
-                        {rank}
-                      </span>
                       <span className="text-lg font-bold" style={{ color: rankDef.color }}>
                         {rankDef.name}
                       </span>
                     </div>
                     <div className="text-xs text-gray-500 leading-relaxed">{rankDef.description}</div>
+                    {isProvisional && (
+                      <div className="mt-2 pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1.5">
+                        <div className="text-[10px] text-amber-800 leading-relaxed">
+                          ※ 上層部問診が未入力のため、採用担当者の回答のみに基づく暫定値です。上層部問診の入力で確定診断となります。
+                        </div>
+                      </div>
+                    )}
                   </div>
                   )}
                   
                   {/* 処方箋（常に表示） */}
-                  <div className={`${hasRequiredAnswers ? 'border-t border-gray-200 pt-4' : ''} flex-1 flex flex-col`}>
+                  <div className={`${hasStaffAnswers ? 'border-t border-gray-200 pt-4' : ''} flex-1 flex flex-col`}>
                     <div className="flex items-center gap-2 mb-3">
                       <span className="w-5 h-5 text-gray-600">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="w-5 h-5">
@@ -13423,6 +13602,24 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   const [activeSection, setActiveSection] = useState('layermedia');
   const [testResult, setTestResult] = useState(null);
   const [isTesting, setIsTesting] = useState(false);
+  // v66: モデル一覧ライブ取得（プロバイダごとにキャッシュ。永続化はしない＝常に押下時点の最新）
+  const [modelCatalog, setModelCatalog] = useState({});      // { gemini: [{id,label,meta}], ... }
+  const [modelFetchState, setModelFetchState] = useState({}); // { gemini: 'loading'|'error:...'|'done@HH:MM', ... }
+  
+  const handleFetchModels = async () => {
+    const provider = localSettings.provider || 'gemini';
+    const { apiKey } = resolveAIProvider(localSettings);
+    setModelFetchState(prev => ({ ...prev, [provider]: 'loading' }));
+    try {
+      const models = await fetchAvailableModels(provider, apiKey);
+      setModelCatalog(prev => ({ ...prev, [provider]: models }));
+      const t = new Date();
+      const hhmm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+      setModelFetchState(prev => ({ ...prev, [provider]: 'done@' + hhmm + '（' + models.length + '件）' }));
+    } catch (e) {
+      setModelFetchState(prev => ({ ...prev, [provider]: 'error:' + e.message }));
+    }
+  };
   
   // スプレッドシート設定
   const [spreadsheetConfig, setSpreadsheetConfig] = useState(() => SpreadsheetManager.getConfig());
@@ -13595,10 +13792,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   };
   
   const handleTestGeneration = async () => {
-    if (!localSettings.apiKey) {
-      setTestResult({ type: 'error', message: 'APIキーを入力してください' });
-      return;
-    }
+    // v67: 生成はEdge Function経由のためAPIキーのクライアント側チェックは不要
+    //（Secrets未登録の場合はEdge Functionが明確なエラーを返す＝それ自体がテスト）
     
     setIsTesting(true);
     setTestResult(null);
@@ -13638,8 +13833,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
     const userPrompt = buildUserPrompt(localSettings.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE, testData);
     
     try {
-      const generateFunc = localSettings.apiType === 'openai' ? generateAIDiagnosisOpenAI : generateAIDiagnosisGemini;
-      const result = await generateFunc(systemPrompt, userPrompt, localSettings.apiKey, localSettings.model, localSettings.maxTokens); // v56: model/maxTokens実配線
+      // v66: プロバイダ分岐はディスパッチャに集約
+      const result = await generateAIDiagnosis(localSettings, systemPrompt, userPrompt);
       const parsed = parseAIResponse(result);
       
       setTestResult({
@@ -13990,68 +14185,133 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
           {/* コンテンツエリア */}
           <div className="flex-1 overflow-y-auto p-6">
           {/* API設定 */}
-          {activeSection === 'api' && (
+          {activeSection === 'api' && (() => {
+            // v66: マルチプロバイダUI。キー・モデルはプロバイダごとに独立フィールド
+            //（v64の「1つのキー欄を共有して切替時に上書き」の罠を構造的に排除）
+            const provider = localSettings.provider || 'gemini';
+            const keyField = provider === 'openai' ? 'apiKeyOpenai' : provider === 'anthropic' ? 'apiKeyAnthropic' : 'apiKeyGemini';
+            const modelField = provider === 'openai' ? 'modelOpenai' : provider === 'anthropic' ? 'modelAnthropic' : 'modelGemini';
+            const catalog = modelCatalog[provider] || null;
+            const fetchState = modelFetchState[provider] || '';
+            const isFetching = fetchState === 'loading';
+            // v67: キーは永続化されないため「キー設定済み」バッジは廃止し、設定中モデルを表示
+            const savedModel = (pid) => {
+              if (pid === 'gemini') return (localSettings.modelGemini ?? localSettings.model) || 'gemini-3.5-flash';
+              return localSettings[pid === 'openai' ? 'modelOpenai' : 'modelAnthropic'] || '';
+            };
+            return (
             <div className="space-y-6">
+              <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl">
+                <div className="text-sm font-medium text-purple-800 mb-1">連携AIプロバイダ</div>
+                <div className="text-xs text-purple-700">
+                  プロバイダとモデルの選択は全メンバーのAI診断に即時反映されます（デプロイ不要）。
+                  AI生成はサーバー側（Edge Function）で実行され、<b>APIキーはSupabaseのSecretsに保管</b>されます。
+                  ブラウザやデータベースにキーは保存されないため、メンバーからキーが見えることはありません。
+                  キーの登録・変更は Supabaseダッシュボード → Edge Functions → Secrets で行ってください
+                  （GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY）。
+                </div>
+              </div>
+              
+              {/* プロバイダ選択 */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">API種類</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { id: 'gemini', name: 'Google Gemini 2.0', description: '無料枠あり・高速・推奨' },
-                    { id: 'openai', name: 'OpenAI GPT-4', description: '高品質・有料' }
-                  ].map(api => (
+                <label className="block text-sm font-medium text-gray-700 mb-2">プロバイダ</label>
+                <div className="grid grid-cols-3 gap-3">
+                  {Object.entries(AI_PROVIDERS).map(([pid, def]) => (
                     <button
-                      key={api.id}
-                      onClick={() => setLocalSettings(prev => ({ ...prev, apiType: api.id }))}
+                      key={pid}
+                      onClick={() => setLocalSettings(prev => ({ ...prev, provider: pid }))}
                       className={`p-4 rounded-xl border-2 text-left transition ${
-                        localSettings.apiType === api.id
+                        provider === pid
                           ? 'border-purple-500 bg-purple-50'
                           : 'border-gray-200 hover:border-gray-300'
                       }`}
                     >
-                      <div className="font-medium text-gray-800">{api.name}</div>
-                      <div className="text-xs text-gray-500 mt-1">{api.description}</div>
+                      <div className="font-medium text-gray-800 text-sm">{def.name}</div>
+                      <div className={`text-[10px] mt-1 truncate ${savedModel(pid) ? 'text-gray-500' : 'text-gray-400'}`}>
+                        {savedModel(pid) ? savedModel(pid) : 'モデル未選択'}
+                      </div>
                     </button>
                   ))}
                 </div>
               </div>
               
+              {/* APIキー（選択中プロバイダ専用フィールド） */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">APIキー</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{AI_PROVIDERS[provider].name} APIキー（モデル一覧取得用・保存されません）</label>
                 <input
                   type="password"
-                  value={localSettings.apiKey}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, apiKey: e.target.value }))}
+                  value={(localSettings[keyField] ?? (provider === 'gemini' ? localSettings.apiKey : '')) || ''}
+                  onChange={(e) => setLocalSettings(prev => ({ ...prev, [keyField]: e.target.value }))}
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
                   placeholder="APIキーを入力"
                 />
                 <p className="mt-2 text-xs text-gray-500">
-                  {localSettings.apiType === 'gemini'
-                    ? '※ Google AI Studio (https://aistudio.google.com) でAPIキーを取得できます'
-                    : '※ OpenAI Platform (https://platform.openai.com) でAPIキーを取得できます'
-                  }
+                  {AI_PROVIDERS[provider].keyHint}<br/>
+                  ※ この欄は下の「最新のモデル一覧を取得」にだけ使われ、どこにも保存されません。
+                  AI生成に使うキーは Supabase の Secrets 側で管理されます。
                 </p>
               </div>
               
-              {/* v56: モデル名入力欄を追加。従来は設定が保存されるだけで未使用だった。
-                   モデル廃止時にコードデプロイなしでここから切替可能（DB-first運用） */}
+              {/* モデル選択（ライブ取得＋手入力フォールバック） */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">モデル名</label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">モデル</label>
+                  <button
+                    onClick={handleFetchModels}
+                    disabled={isFetching || !resolveAIProvider(localSettings).apiKey}
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    {isFetching ? '取得中...' : '最新のモデル一覧を取得'}
+                  </button>
+                </div>
+                
+                {fetchState.startsWith('error:') && (
+                  <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                    {fetchState.slice(6)}（下の欄への手入力でも設定できます）
+                  </div>
+                )}
+                {fetchState.startsWith('done@') && (
+                  <div className="mb-2 text-[10px] text-gray-400">取得 {fetchState.slice(5)} — {AI_PROVIDERS[provider].name} のAPIから直接取得した最新一覧です</div>
+                )}
+                
+                {catalog && catalog.length > 0 && (
+                  <div className="mb-2 max-h-56 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
+                    {catalog.map(m => (
+                      <button
+                        key={m.id}
+                        onClick={() => setLocalSettings(prev => ({ ...prev, [modelField]: m.id }))}
+                        className={`w-full px-3 py-2 text-left transition flex items-baseline justify-between gap-2 ${
+                          (localSettings[modelField] || '') === m.id ? 'bg-purple-50' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className={`text-xs font-medium truncate ${(localSettings[modelField] || '') === m.id ? 'text-purple-700' : 'text-gray-800'}`}>
+                            {m.label}
+                          </div>
+                          {m.label !== m.id && <div className="text-[10px] text-gray-400 truncate">{m.id}</div>}
+                        </div>
+                        <div className="text-[10px] text-gray-400 whitespace-nowrap">{m.meta}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
                 <input
                   type="text"
-                  value={localSettings.model || ''}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, model: e.target.value }))}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
-                  placeholder={localSettings.apiType === 'gemini' ? 'gemini-3.5-flash' : 'gpt-4'}
+                  value={(localSettings[modelField] ?? (provider === 'gemini' ? localSettings.model : '')) || ''}
+                  onChange={(e) => setLocalSettings(prev => ({ ...prev, [modelField]: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition font-mono text-sm"
+                  placeholder={AI_PROVIDERS[provider].modelPlaceholder}
                 />
                 <p className="mt-2 text-xs text-gray-500">
-                  {localSettings.apiType === 'gemini'
-                    ? '※ 空欄の場合は gemini-3.5-flash を使用します。gemini- 以外の値は無視されます'
-                    : '※ 空欄の場合は gpt-4 を使用します。gpt- 以外の値は無視されます'
-                  }
+                  {provider === 'gemini'
+                    ? '※ 空欄の場合は gemini-3.5-flash を使用します'
+                    : '※ 一覧から選択するか、モデルIDを直接入力してください（必須）'}
                 </p>
               </div>
             </div>
-          )}
+            );
+          })()}
           
           {/* 質問項目設定 */}
           {activeSection === 'question' && (
@@ -16191,7 +16451,7 @@ function fullSyncCustomers(customers) {
               
               <button
                 onClick={handleTestGeneration}
-                disabled={isTesting || !localSettings.apiKey}
+                disabled={isTesting}
                 className="w-full px-6 py-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl font-medium transition disabled:cursor-not-allowed"
               >
                 {isTesting ? (
@@ -17343,10 +17603,7 @@ const App = () => {
   
   // 再診断実行（追加情報付き）
   const handleReDiagnosis = async () => {
-    if (!aiSettings.apiKey) {
-      alert('APIキーが設定されていません。ヘッダーの設定アイコンから設定を行ってください。');
-      return;
-    }
+    // v67: キーはEdge Function側Secretsにあるためクライアント側ガード不要
     
     // ベースとなるボタン設定を取得
     const buttons = aiSettings.sideButtons || DEFAULT_SIDE_BUTTONS;
@@ -17378,12 +17635,8 @@ const App = () => {
         userPrompt += `\n\n【追加の指示・情報】\n${reDiagnosisAdditionalInfo.trim()}`;
       }
       
-      // API呼び出し
-      const generateFunc = aiSettings.apiType === 'openai' 
-        ? generateAIDiagnosisOpenAI 
-        : generateAIDiagnosisGemini;
-      
-      const rawResult = await generateFunc(systemPrompt, userPrompt, aiSettings.apiKey, aiSettings.model, aiSettings.maxTokens); // v56: model/maxTokens実配線
+      // API呼び出し（v66: マルチプロバイダ対応。分岐はgenerateAIDiagnosisに集約）
+      const rawResult = await generateAIDiagnosis(aiSettings, systemPrompt, userPrompt);
       const parsedResult = parseAIResponse(rawResult);
       
       if (parsedResult) {
@@ -17424,10 +17677,7 @@ const App = () => {
   
   // AI診断アドバイス生成（サイドバナー対応）
   const handleGenerateAIWithButton = async (buttonId) => {
-    if (!aiSettings.apiKey) {
-      alert('APIキーが設定されていません。ヘッダーの設定アイコンから設定を行ってください。');
-      return;
-    }
+    // v67: キーはEdge Function側Secretsにあるためクライアント側ガード不要
     
     // ボタン設定を取得
     const buttons = aiSettings.sideButtons || DEFAULT_SIDE_BUTTONS;
@@ -17455,12 +17705,8 @@ const App = () => {
       // ボタン専用のプロンプトを使用
       const userPrompt = buildUserPrompt(buttonConfig.prompt, diagnosisDataForAI);
       
-      // API呼び出し
-      const generateFunc = aiSettings.apiType === 'openai' 
-        ? generateAIDiagnosisOpenAI 
-        : generateAIDiagnosisGemini;
-      
-      const rawResult = await generateFunc(systemPrompt, userPrompt, aiSettings.apiKey, aiSettings.model, aiSettings.maxTokens); // v56: model/maxTokens実配線
+      // API呼び出し（v66: マルチプロバイダ対応。分岐はgenerateAIDiagnosisに集約）
+      const rawResult = await generateAIDiagnosis(aiSettings, systemPrompt, userPrompt);
       const parsedResult = parseAIResponse(rawResult);
       
       if (parsedResult) {
@@ -17544,6 +17790,8 @@ const App = () => {
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       // PDF出力用のクラスを追加
+      // v69: 縮小フィットを等倍へ強制復帰（CSSの!importantで制圧。撮影は常に1200px等倍）
+      document.body.classList.add('pdf-exporting');
       sheetRef.current.classList.add('pdf-export-mode');
       await new Promise(resolve => setTimeout(resolve, 100));
       
@@ -17754,24 +18002,35 @@ const App = () => {
       
       // PDF出力用クラスを削除
       sheetRef.current.classList.remove('pdf-export-mode');
+      document.body.classList.remove('pdf-exporting');
       
-      // PDFを生成（コンテンツの縦横比を維持し、縦が全て収まるようにページサイズを動的に決定）
+      // v65: PDFページを真のA4横(297×210mm)に固定。
+      // 旧実装は「幅297mm固定・高さ可変」のカスタムページで、A4印刷時に拡縮が入り
+      // 崩れの原因になっていた。新実装は縦横比を一切変えず(等比縮小のみ)、
+      // A4ページ中央に余白付きで配置する。シートは1200×850px(≒A4横比率1.412)の
+      // 固定幅設計のため、通常は余白最小でほぼ全面に収まる。
       const { jsPDF } = window.jspdf;
       const imgWidth = capturedCanvas.width;
       const imgHeight = capturedCanvas.height;
       
-      // 幅をA4横幅(297mm)に固定し、高さをコンテンツ比率から算出
-      const pdfWidth = 297;
-      const pdfHeight = pdfWidth * (imgHeight / imgWidth);
+      const PAGE_W = 297, PAGE_H = 210, MARGIN = 5; // mm
+      const availW = PAGE_W - MARGIN * 2;
+      const availH = PAGE_H - MARGIN * 2;
+      // 等比フィット率（拡大はしない: 最大1倍相当。縮小のみ）
+      const fit = Math.min(availW / imgWidth, availH / imgHeight);
+      const drawW = imgWidth * fit;
+      const drawH = imgHeight * fit;
+      const offsetX = (PAGE_W - drawW) / 2;
+      const offsetY = (PAGE_H - drawH) / 2;
       
       const pdf = new jsPDF({
-        orientation: pdfWidth >= pdfHeight ? 'landscape' : 'portrait',
+        orientation: 'landscape',
         unit: 'mm',
-        format: [pdfWidth, pdfHeight]
+        format: 'a4'
       });
       
       const imgData = capturedCanvas.toDataURL('image/png', 1.0);
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.addImage(imgData, 'PNG', offsetX, offsetY, drawW, drawH);
       pdf.save(`採用BB診断_${currentData.companyName || '企業名未設定'}_${currentData.diagnosisDate}.pdf`);
       
     } catch (e) {
@@ -17791,6 +18050,8 @@ const App = () => {
     } finally {
       // ポリフィルを元に戻す
       CanvasRenderingContext2D.prototype.createPattern = originalCreatePattern;
+      // v69: 縮小フィットの等倍強制を確実に解除（エラー経路でもモバイル表示に復帰させる）
+      document.body.classList.remove('pdf-exporting');
       setIsExporting(false);
     }
   };
@@ -18168,17 +18429,20 @@ const App = () => {
               </button>
             </div>
             
-            <div className="overflow-x-auto pb-4 flex justify-center">
-              <DiagnosisSheet 
-                ref={sheetRef} 
-                data={currentData}
-                aiSettings={aiSettings}
-                aiAdvice={aiAdvice}
-                onGenerateAI={handleGenerateAI}
-                isGeneratingAI={isGeneratingAI}
-                aiError={aiError}
-                adviceMode={adviceMode}
-              />
+            {/* v69: 縮小フィット（スマホ/タブレット試作）。デスクトップ(幅1200px以上)では従来と同一表示 */}
+            <div className="pb-4">
+              <ScaledSheetContainer>
+                <DiagnosisSheet 
+                  ref={sheetRef} 
+                  data={currentData}
+                  aiSettings={aiSettings}
+                  aiAdvice={aiAdvice}
+                  onGenerateAI={handleGenerateAI}
+                  isGeneratingAI={isGeneratingAI}
+                  aiError={aiError}
+                  adviceMode={adviceMode}
+                />
+              </ScaledSheetContainer>
             </div>
           </div>
         )}
