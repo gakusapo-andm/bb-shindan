@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <!-- v53-sec: Content Security Policy（スクリプト・接続先を既知ドメインに制限）
        'unsafe-eval' はBabelのブラウザ内JSXコンパイルに必要。将来的にプリビルドに移行すれば削除可能 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://accounts.google.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src accounts.google.com; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.jsdelivr.net unpkg.com cdnjs.cloudflare.com accounts.google.com cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com cdn.tailwindcss.com accounts.google.com; font-src fonts.gstatic.com; connect-src 'self' https://vsikhvtlizshrlpyjlgm.supabase.co https://accounts.google.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src accounts.google.com; object-src 'none'; base-uri 'self';">
   <title>採用ブラックボックス診断 | Gakusapo</title>
   
   <!-- ============================================================ -->
@@ -71,6 +71,23 @@
           finallyで確実に解除しエラー経路でもモバイル表示に復帰）。@media printにも同ガード。
        [対象決定] 対象=BB診断＋事前問診 / シート=縮小フィット / 進め方=1画面試作から（ユーザー3択回答）。
        承認後: Phase1(共通CSS+ヘッダー+タブ+顧客一覧)→Phase2(問診入力フォーム+設定モーダル)→事前問診 -->
+  <!-- v70: モデル一覧取得もEdge Function経由へ移行 — adminのキー入力を完全廃止（2026-08-12）
+       [Edge Function] ai-generate に action パラメータ追加（'generate'既定 / 'list_models'）。
+         listModels移植（照会先・除外条件・並び順はv66クライアント実装と同一）。action未指定の旧フロントは従来動作（後方互換）。
+       [フロント] callAIGateway共通化（生成・一覧の2経路を集約）。fetchAvailableModelsをEdge Function呼び出しに差し替え
+         （クライアント側3社照会 計65行を物理削除）。設定画面のAPIキー欄を撤去。
+       [設定掃除] 設定オブジェクトからapiKey系フィールド全廃（マージ・デフォルト・DB読込・保存マッピング・デバッグログ）。
+         localStorage永続化除外のdestructuringは旧バージョン残存キーの掃除のため維持。
+       [CSP] connect-srcから generativelanguage.googleapis.com / api.openai.com / api.anthropic.com を削除
+         （ブラウザの外部通信先はSupabase・CDN・Googleログインのみに縮小）。
+       [デプロイ順序] ①Edge Function貼り直し再デプロイ → ②フロントv70（逆順は一覧取得のみ一時停止、生成は無影響）。
+       セット: ai-generate-index-v70.ts -->
+  <!-- v71: 歩留まり実績の微調整4点（2026-08-12）
+       ①ヘッダー文言「0%〜各段ごとの達成度〜100%」を削除（バー内％＋分数表記で自明のため）
+       ②バーを若干延長 — 左カラムflex-1→flex-[1.15]、分数列minWidth 52→46px
+       ③「興味」のバー色を「認知」と同色に（#A5B4FC→#7DD3FC、背景#e0e7ff→#e0f2fe）
+       ④凡例を2行に分割: 「分子：実績値　分母：目標目安」＋改行＋「（目標N人から逆算）」
+       計算ロジック無変更・表示のみ -->
   <!--
     ============================================================
     【v57 修正詳細】2026-07-07 実施
@@ -319,7 +336,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v69] Supabase接続完了');
+    console.log('[BB診断 v71] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -2588,8 +2605,8 @@ const AISettingsManager = {
     // GASモードの場合はスプレッドシートの設定を優先
     if (isGasMode && typeof GASDataManager !== 'undefined') {
       const gasSettings = GASDataManager.getAISettings();
-      console.log('GASDataManager.getAISettings():', gasSettings ? { ...gasSettings, apiKey: gasSettings.apiKey ? '***' : '' } : null);
-      if (gasSettings && (gasSettings.apiKey || gasSettings.apiKeyGemini || gasSettings.apiKeyOpenai || gasSettings.apiKeyAnthropic || gasSettings.selectedPreset || gasSettings.sideButtons)) {
+      console.log('GASDataManager.getAISettings():', gasSettings); // v70: キーは設定に存在しないためマスキング不要
+      if (gasSettings && (gasSettings.provider || gasSettings.selectedPreset || gasSettings.sideButtons)) {
         // ローカル設定とマージ（GASの設定を優先）
         try {
           const localData = localStorage.getItem('gakusapo_bb_ai_settings');
@@ -2598,14 +2615,12 @@ const AISettingsManager = {
             // API設定（GAS優先）
             // v66: マルチプロバイダ（Gemini/OpenAI/Anthropic）。キー・モデルはプロバイダ別に独立保存。
             provider: gasSettings.provider || localSettings.provider || 'gemini',
-            apiKeyGemini: gasSettings.apiKeyGemini ?? localSettings.apiKeyGemini ?? gasSettings.apiKey ?? localSettings.apiKey ?? '',
-            apiKeyOpenai: gasSettings.apiKeyOpenai || localSettings.apiKeyOpenai || '',
-            apiKeyAnthropic: gasSettings.apiKeyAnthropic || localSettings.apiKeyAnthropic || '',
+            // v70: apiKey系フィールドを全廃（キーはEdge Function Secretsのみ。クライアント設定に存在しない）
             modelGemini: gasSettings.modelGemini ?? localSettings.modelGemini ?? gasSettings.model ?? localSettings.model ?? 'gemini-3.5-flash',
             modelOpenai: gasSettings.modelOpenai || localSettings.modelOpenai || '',
             modelAnthropic: gasSettings.modelAnthropic || localSettings.modelAnthropic || '',
-            // レガシー互換（ロールバック時にDB値が壊れないよう読みは維持）
-            apiKey: gasSettings.apiKey || localSettings.apiKey || '',
+            // レガシー互換: model(旧Gemini用)は表示フォールバックに使うため読みを維持。
+            // v70: apiKeyのレガシー読みは削除（DBのキー行は11_v67で削除済み・用途消滅）
             model: gasSettings.model || localSettings.model || 'gemini-3.5-flash',
             maxTokens: gasSettings.maxTokens || localSettings.maxTokens || 4096,
             // プロンプト設定（GAS優先）
@@ -2619,7 +2634,7 @@ const AISettingsManager = {
             // ローカルのみの設定
             masterSpreadsheetUrl: localSettings.masterSpreadsheetUrl || ''
           };
-          console.log('マージ後のAI設定:', { ...mergedSettings, apiKey: mergedSettings.apiKey ? '***' : '' });
+          console.log('マージ後のAI設定:', mergedSettings); // v70: 同上
           return mergedSettings;
         } catch (e) {
           console.error('AI設定のマージに失敗:', e);
@@ -2648,13 +2663,9 @@ const AISettingsManager = {
     // デフォルト設定
     return {
       provider: 'gemini',
-      apiKeyGemini: '',
-      apiKeyOpenai: '',
-      apiKeyAnthropic: '',
       modelGemini: 'gemini-3.5-flash',
       modelOpenai: '',
       modelAnthropic: '',
-      apiKey: '',
       selectedPreset: 'standard',
       customSystemPrompt: '',
       userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
@@ -2667,8 +2678,8 @@ const AISettingsManager = {
     const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
     
     try {
-      // v67: APIキーは永続化しない（Edge Function移行によりブラウザ保存の必要が消滅。
-      //  設定画面のキー欄は「モデル一覧取得」の一時利用のみ）
+      // v67: APIキーは永続化しない / v70: キー欄自体を撤去（設定オブジェクトからも全廃）。
+      // destructuring除外は旧バージョンのlocalStorageから読み込んだ残存キーを確実に落とすため維持
       const { apiKey, apiKeyGemini, apiKeyOpenai, apiKeyAnthropic, ...persistable } = settings;
       localStorage.setItem('gakusapo_bb_ai_settings', JSON.stringify(persistable));
       
@@ -2775,7 +2786,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v69' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v71' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -3374,16 +3385,12 @@ const SUPA_HANDLERS = {
       success: true,
       settings: {
         enabled: raw.ai_enabled !== 'false',
-        // v66: マルチプロバイダ。旧キー(ai_api_key/ai_model)はGemini用として読込フォールバック
+        // v66: マルチプロバイダ / v70: apiKey系の読込を削除（DBのキー行は11_v67で削除済み）
         provider: raw.ai_provider || 'gemini',
-        apiKeyGemini: raw.ai_api_key_gemini ?? raw.ai_api_key ?? '',
-        apiKeyOpenai: raw.ai_api_key_openai || '',
-        apiKeyAnthropic: raw.ai_api_key_anthropic || '',
         modelGemini: raw.ai_model_gemini ?? raw.ai_model ?? 'gemini-3.5-flash',
         modelOpenai: raw.ai_model_openai || '',
         modelAnthropic: raw.ai_model_anthropic || '',
         // レガシー互換（v65以前のコードパス・ロールバック用に読みは残す）
-        apiKey: raw.ai_api_key || '',
         model: raw.ai_model || 'gemini-3.5-flash',
         maxTokens: parseInt(raw.ai_max_tokens, 10) || 4096,
         selectedPreset: raw.ai_selected_preset || 'standard',
@@ -3402,13 +3409,10 @@ const SUPA_HANDLERS = {
       enabled: 'ai_enabled',
       // v66: マルチプロバイダ
       provider: 'ai_provider',
-      apiKeyGemini: 'ai_api_key_gemini',
-      apiKeyOpenai: 'ai_api_key_openai',
-      apiKeyAnthropic: 'ai_api_key_anthropic',
+
       modelGemini: 'ai_model_gemini',
       modelOpenai: 'ai_model_openai',
       modelAnthropic: 'ai_model_anthropic',
-      apiKey: 'ai_api_key',
       model: 'ai_model',
       maxTokens: 'ai_max_tokens',
       selectedPreset: 'ai_selected_preset',
@@ -4554,41 +4558,36 @@ const MasterDataSpreadsheetManager = {
 //    は各generate関数内で吸収する（カテゴリ5の教訓: 仕様差分は条件分岐で吸収）
 // ============================================================
 const AI_PROVIDERS = {
+  // v70: keyHint廃止（設定画面のキー欄自体を撤去。キーの出番はSecrets登録の一度きり）
   gemini: {
     name: 'Google Gemini',
-    keyHint: '※ Google AI Studio (https://aistudio.google.com) でAPIキーを取得できます',
     modelPlaceholder: 'gemini-3.5-flash'
   },
   openai: {
     name: 'OpenAI',
-    keyHint: '※ OpenAI Platform (https://platform.openai.com/api-keys) でAPIキーを取得できます',
     modelPlaceholder: '「モデル一覧を取得」から選択してください'
   },
   anthropic: {
     name: 'Anthropic Claude',
-    keyHint: '※ Anthropic Console (https://console.anthropic.com/settings/keys) でAPIキーを取得できます',
     modelPlaceholder: '「モデル一覧を取得」から選択してください'
   }
 };
 
-// 設定オブジェクトから「現在のプロバイダの実効キー・モデル」を解決する。
-// 旧設定（apiKey / model = Gemini用）は Gemini のフォールバックとして読む（後方互換）。
+// 設定オブジェクトから「現在のプロバイダの実効モデル」を解決する。
+// v70: キー解決を削除（キーはEdge FunctionのSecretsのみ。クライアントは一切触らない）。
+// 旧設定（model = Gemini用）は Gemini のフォールバックとして読む（後方互換・??でクリア状態を尊重）。
 const resolveAIProvider = (settings) => {
   const st = settings || {};
   const provider = AI_PROVIDERS[st.provider] ? st.provider : 'gemini';
-  let apiKey = '', model = '';
+  let model = '';
   if (provider === 'openai') {
-    apiKey = st.apiKeyOpenai || '';
     model = st.modelOpenai || '';
   } else if (provider === 'anthropic') {
-    apiKey = st.apiKeyAnthropic || '';
     model = st.modelAnthropic || '';
   } else {
-    // ?? を使用: 「''にクリアした」状態と「一度も保存していない」状態を区別する（カテゴリ1）
-    apiKey = st.apiKeyGemini ?? st.apiKey ?? '';
     model = st.modelGemini ?? st.model ?? '';
   }
-  return { provider, apiKey, model };
+  return { provider, model };
 };
 
 // 全AI生成の唯一の入口。呼び出し側はプロバイダを意識しない。
@@ -4596,11 +4595,8 @@ const resolveAIProvider = (settings) => {
 //   ブラウザ →(ログイントークン)→ Edge Function →(Secretsのキー)→ 各社API
 // クライアント側の各社呼び出し関数（v66のgenerateAIDiagnosisGemini/OpenAI/Anthropic）は
 // キー露出の温床となるため物理削除した（デッドコードは無害ではない原則）。
-const generateAIDiagnosis = async (settings, systemPrompt, userPrompt) => {
-  const { provider, model } = resolveAIProvider(settings);
-  if (provider !== 'gemini' && !model) {
-    throw new Error(AI_PROVIDERS[provider].name + ' のモデルが未選択です。設定→API設定で「モデル一覧を取得」して選択してください。');
-  }
+// v70: Edge Function呼び出しの共通部を集約（生成・モデル一覧の両方が使う）
+const callAIGateway = async (payload) => {
   const sb = window._supabase;
   const sessionRes = await sb.auth.getSession();
   const token = sessionRes?.data?.session?.access_token;
@@ -4614,15 +4610,24 @@ const generateAIDiagnosis = async (settings, systemPrompt, userPrompt) => {
       'Authorization': `Bearer ${token}`,
       'apikey': window.SUPABASE_CONFIG.anonKey
     },
-    body: JSON.stringify({
-      provider: provider,
-      model: model,
-      maxTokens: (settings && settings.maxTokens) || 4096,
-      systemPrompt: systemPrompt,
-      userPrompt: userPrompt
-    })
+    body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
+  return { response, data };
+};
+
+const generateAIDiagnosis = async (settings, systemPrompt, userPrompt) => {
+  const { provider, model } = resolveAIProvider(settings);
+  if (provider !== 'gemini' && !model) {
+    throw new Error(AI_PROVIDERS[provider].name + ' のモデルが未選択です。設定→API設定で「モデル一覧を取得」して選択してください。');
+  }
+  const { response, data } = await callAIGateway({
+    provider: provider,
+    model: model,
+    maxTokens: (settings && settings.maxTokens) || 4096,
+    systemPrompt: systemPrompt,
+    userPrompt: userPrompt
+  });
   if (!response.ok) {
     // 429（利用上限）は従来同様フォールバック文言に切り替える
     if (response.status === 429) {
@@ -4637,69 +4642,16 @@ const generateAIDiagnosis = async (settings, systemPrompt, userPrompt) => {
   return data.text;
 };
 
-// ── モデル一覧のライブ取得（管理画面「モデル一覧を取得」用） ──
-// 返り値は共通形式: [{ id, label, meta }]（新しい順）。失敗時はthrow（UIで手入力にフォールバック）。
-const fetchAvailableModels = async (provider, apiKey) => {
-  if (!apiKey) throw new Error('先にAPIキーを入力してください');
-  if (provider === 'gemini') {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(apiKey)}`);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(`モデル一覧の取得に失敗 (${res.status}): ${err?.error?.message || res.statusText}`);
-    }
-    const data = await res.json();
-    return (data.models || [])
-      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
-      .map(m => ({
-        id: (m.name || '').replace(/^models\//, ''),
-        label: m.displayName || (m.name || '').replace(/^models\//, ''),
-        meta: m.description ? m.description.slice(0, 80) : ''
-      }))
-      .sort((a, b) => b.id.localeCompare(a.id));
+// ── モデル一覧のライブ取得（v70: Edge Function経由に移行） ──
+// キーはSecrets側にあるため、adminがキーを入力する必要がなくなった。
+// 各社modelsエンドポイントへの照会・除外条件・並び順はEdge Function側(listModels)に移植済み。
+// これによりブラウザから各社APIへの直接通信は完全にゼロ（CSPも3社ドメイン削除済み）。
+const fetchAvailableModels = async (provider) => {
+  const { response, data } = await callAIGateway({ action: 'list_models', provider: provider });
+  if (!response.ok) {
+    throw new Error(data.error || `モデル一覧の取得に失敗しました (${response.status})`);
   }
-  if (provider === 'openai') {
-    const res = await fetch('https://api.openai.com/v1/models', {
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(`モデル一覧の取得に失敗 (${res.status}): ${err?.error?.message || res.statusText}`);
-    }
-    const data = await res.json();
-    // テキスト生成に使えないモデル種別（音声/画像/埋め込み/モデレーション等）を除外
-    const EXCLUDE = /whisper|tts|dall-e|embedding|moderation|audio|transcribe|realtime|image/i;
-    return (data.data || [])
-      .filter(m => m.id && !EXCLUDE.test(m.id))
-      .sort((a, b) => (b.created || 0) - (a.created || 0))
-      .map(m => ({
-        id: m.id,
-        label: m.id,
-        meta: m.created ? new Date(m.created * 1000).toISOString().slice(0, 10) + ' 公開' : ''
-      }));
-  }
-  if (provider === 'anthropic') {
-    const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        // ブラウザからの直接呼び出しに必要（CORS許可の明示オプトイン）
-        'anthropic-dangerous-direct-browser-access': 'true'
-      }
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(`モデル一覧の取得に失敗 (${res.status}): ${err?.error?.message || res.statusText}`);
-    }
-    const data = await res.json();
-    return (data.data || [])
-      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
-      .map(m => ({
-        id: m.id,
-        label: m.display_name || m.id,
-        meta: m.created_at ? String(m.created_at).slice(0, 10) + ' 公開' : ''
-      }));
-  }
-  throw new Error('未対応のプロバイダ: ' + provider);
+  return data.models || [];
 };
 
 // v67: generateAIDiagnosisOpenAI をEdge Functionへ移設（クライアント側は物理削除。キー露出経路の根絶）
@@ -5445,7 +5397,7 @@ const GASDataManager = {
           if (aiResult.success && aiResult.settings) {
             _gasAISettings = aiResult.settings;
             // v53-sec: APIキーをマスクしてログ出力（DevToolsへの露出防止）
-            console.log('AI設定をGASから読み込み:', { ...aiResult.settings, apiKey: aiResult.settings.apiKey ? '***masked***' : '' });
+            console.log('AI設定をGASから読み込み:', aiResult.settings); // v70: キーは設定に存在しない
             try { localStorage.setItem('gakusapo_ai_settings', JSON.stringify(aiResult.settings)); } catch (e) {}
           }
           return aiResult.settings || null;
@@ -7673,7 +7625,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
   // グラデーションカラー（御社の採用力のバランスと同じ色）
   const barColors = [
     '#7DD3FC', // 認知 - 表層部
-    '#A5B4FC', // 興味 - 中層部
+    '#7DD3FC', // 興味 - v71: 認知と同色に変更（旧: #A5B4FC 中層部色）
     '#A5B4FC', // 接触 - 中層部
     '#A5B4FC', // 選考 - 中層部
     '#A5B4FC', // 内々定 - 中層部
@@ -7683,7 +7635,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
   // 背景カラー（御社の採用力のバランスと同じ色）
   const barBgColors = [
     '#e0f2fe', // 認知 - 表層部背景
-    '#e0e7ff', // 興味 - 中層部背景
+    '#e0f2fe', // 興味 - v71: 認知と同色に変更（旧: #e0e7ff 中層部背景）
     '#e0e7ff', // 接触 - 中層部背景
     '#e0e7ff', // 選考 - 中層部背景
     '#e0e7ff', // 内々定 - 中層部背景
@@ -7704,17 +7656,10 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
   
   return (
     <div className="flex gap-3">
-      {/* 左側：棒グラフ */}
-      <div className="flex-1">
-        {/* ヘッダー（X軸目盛りの代わりに説明） */}
-        <div className="flex items-center mb-2 ml-12" style={{ marginRight: '60px' }}>
-          <div className="flex-1 flex justify-between text-[10px] text-gray-400">
-            <span>0%</span>
-            <span>各段ごとの達成度</span>
-            <span>100%</span>
-          </div>
-        </div>
-        
+      {/* 左側：棒グラフ（v71: バーを若干延長 — 左カラムの取り分をflex-[1.15]に拡大） */}
+      <div className="flex-[1.15]">
+        {/* v71: ヘッダー文言（0%〜各段ごとの達成度〜100%）を削除。
+             バー内の％表示と分子/分母表記で意味が伝わるため冗長と判断 */}
         {/* 棒グラフ */}
         <div className="space-y-2">
           {barData.map((item, idx) => {
@@ -7770,7 +7715,7 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
                     fontSize: '10px', 
                     fontWeight: 600,
                     color: '#6b7280',
-                    minWidth: '52px',
+                    minWidth: '46px', /* v71: 52→46px（バー延長のため詰め） */
                     textAlign: 'right',
                     flexShrink: 0
                   }}
@@ -7782,9 +7727,10 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
           })}
         </div>
         
-        {/* 凡例（v68: 分子/分母表記へ変更） */}
-        <div className="text-center mt-3 text-[10px] text-gray-600 font-bold">
-          分子：実績値　　分母：目標目安{targetHires > 0 && `（目標${targetHires}人から逆算）`}
+        {/* 凡例（v68: 分子/分母表記 / v71: 2行に分割） */}
+        <div className="text-center mt-3 text-[10px] text-gray-600 font-bold leading-snug">
+          分子：実績値　　分母：目標目安
+          {targetHires > 0 && <><br />（目標{targetHires}人から逆算）</>}
         </div>
       </div>
       
@@ -13608,10 +13554,10 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   
   const handleFetchModels = async () => {
     const provider = localSettings.provider || 'gemini';
-    const { apiKey } = resolveAIProvider(localSettings);
     setModelFetchState(prev => ({ ...prev, [provider]: 'loading' }));
     try {
-      const models = await fetchAvailableModels(provider, apiKey);
+      // v70: キー不要（Edge FunctionがSecretsのキーで照会する）
+      const models = await fetchAvailableModels(provider);
       setModelCatalog(prev => ({ ...prev, [provider]: models }));
       const t = new Date();
       const hhmm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
@@ -14189,7 +14135,6 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
             // v66: マルチプロバイダUI。キー・モデルはプロバイダごとに独立フィールド
             //（v64の「1つのキー欄を共有して切替時に上書き」の罠を構造的に排除）
             const provider = localSettings.provider || 'gemini';
-            const keyField = provider === 'openai' ? 'apiKeyOpenai' : provider === 'anthropic' ? 'apiKeyAnthropic' : 'apiKeyGemini';
             const modelField = provider === 'openai' ? 'modelOpenai' : provider === 'anthropic' ? 'modelAnthropic' : 'modelGemini';
             const catalog = modelCatalog[provider] || null;
             const fetchState = modelFetchState[provider] || '';
@@ -14205,10 +14150,11 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                 <div className="text-sm font-medium text-purple-800 mb-1">連携AIプロバイダ</div>
                 <div className="text-xs text-purple-700">
                   プロバイダとモデルの選択は全メンバーのAI診断に即時反映されます（デプロイ不要）。
-                  AI生成はサーバー側（Edge Function）で実行され、<b>APIキーはSupabaseのSecretsに保管</b>されます。
-                  ブラウザやデータベースにキーは保存されないため、メンバーからキーが見えることはありません。
-                  キーの登録・変更は Supabaseダッシュボード → Edge Functions → Secrets で行ってください
+                  AI生成もモデル一覧の取得もサーバー側（Edge Function）で実行され、<b>APIキーはSupabaseのSecretsに保管</b>されます。
+                  この画面でキーを入力することはありません。キーの登録・変更は
+                  Supabaseダッシュボード → Edge Functions → Secrets で行ってください
                   （GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY）。
+                  「モデル一覧を取得」が成功する＝そのプロバイダのキーが有効、という動作確認も兼ねます。
                 </div>
               </div>
               
@@ -14235,22 +14181,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                 </div>
               </div>
               
-              {/* APIキー（選択中プロバイダ専用フィールド） */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">{AI_PROVIDERS[provider].name} APIキー（モデル一覧取得用・保存されません）</label>
-                <input
-                  type="password"
-                  value={(localSettings[keyField] ?? (provider === 'gemini' ? localSettings.apiKey : '')) || ''}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, [keyField]: e.target.value }))}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
-                  placeholder="APIキーを入力"
-                />
-                <p className="mt-2 text-xs text-gray-500">
-                  {AI_PROVIDERS[provider].keyHint}<br/>
-                  ※ この欄は下の「最新のモデル一覧を取得」にだけ使われ、どこにも保存されません。
-                  AI生成に使うキーは Supabase の Secrets 側で管理されます。
-                </p>
-              </div>
+              {/* v70: APIキー欄を撤去。モデル一覧取得もEdge Function経由になり、
+                   この画面でキーを扱う場面が完全に消えた（キーの出番はSecrets登録の一度きり） */}
               
               {/* モデル選択（ライブ取得＋手入力フォールバック） */}
               <div>
@@ -14258,7 +14190,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                   <label className="block text-sm font-medium text-gray-700">モデル</label>
                   <button
                     onClick={handleFetchModels}
-                    disabled={isFetching || !resolveAIProvider(localSettings).apiKey}
+                    disabled={isFetching}
                     className="px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
                   >
                     {isFetching ? '取得中...' : '最新のモデル一覧を取得'}
@@ -14267,7 +14199,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                 
                 {fetchState.startsWith('error:') && (
                   <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-                    {fetchState.slice(6)}（下の欄への手入力でも設定できます）
+                    {fetchState.slice(6)}（モデルIDが分かる場合は下の欄への手入力でも設定できます）
                   </div>
                 )}
                 {fetchState.startsWith('done@') && (
@@ -16826,7 +16758,7 @@ const App = () => {
   useEffect(() => {
     if (isGasMode && masterDataLoaded) {
       const updatedSettings = AISettingsManager.getSettings();
-      console.log('AI設定を更新:', updatedSettings ? { ...updatedSettings, apiKey: updatedSettings.apiKey ? '***' : '' } : null);
+      console.log('AI設定を更新:', updatedSettings); // v70: キーは設定に存在しない
       setAiSettings(updatedSettings);
     }
   }, [isGasMode, masterDataLoaded]);
