@@ -102,6 +102,12 @@
   <!-- v74: section-cardをv63以前の枠線様式へ復元（2026-08-12）
        border: none＋2層ドロップシャドウ → border 1px solid #e5e7eb・box-shadow none（角丸12pxは維持）。
        PDF出力の結合カード（左カラム上下連結）は下カードのborder-topを消し二重線を防止。CSSのみ・JSX無変更 -->
+  <!-- v75: UI微調整（ユーザー提供PDF指示 / 2026-08-12）
+       ①-a 歩留まりバー6本をボックス高さに均等分配（space-y-2固定間隔 → flex-col justify-evenly。
+            チャートルートh-full化・左カラム縦flex化。凡例は従来どおり最下部）
+       ①-b コメント各行を1行に収まる文字サイズへ（12px→10px。見出し・平均値リストは据え置き）
+       ② ヘッダー暫定注記を1行化（<br/>削除・maxWidth 300px撤廃・whiteSpace nowrap）
+       表示のみ・計算無変更 -->
   <!--
     ============================================================
     【v57 修正詳細】2026-07-07 実施
@@ -350,7 +356,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v74] Supabase接続完了');
+    console.log('[BB診断 v75] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -2801,7 +2807,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v74' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v75' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -7670,13 +7676,14 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
   // v68: バーは各行の達成度(実績/目標×100)を0〜100%軸へ直接描画（相対スケール自体を廃止）
   
   return (
-    <div className="flex gap-3">
-      {/* 左側：棒グラフ（v71: バーを若干延長 — 左カラムの取り分をflex-[1.15]に拡大） */}
-      <div className="flex-[1.15]">
+    <div className="flex gap-3 h-full">
+      {/* 左側：棒グラフ（v71: バーを若干延長 — 左カラムの取り分をflex-[1.15]に拡大）
+           v75: 縦flex化し、バー6本をボックス高さに均等分配（等間隔・PDF指示①） */}
+      <div className="flex-[1.15] flex flex-col">
         {/* v71: ヘッダー文言（0%〜各段ごとの達成度〜100%）を削除。
              バー内の％表示と分子/分母表記で意味が伝わるため冗長と判断 */}
-        {/* 棒グラフ */}
-        <div className="space-y-2">
+        {/* 棒グラフ（v75: space-y-2の固定間隔 → 余白を均等分配） */}
+        <div className="flex-1 flex flex-col justify-evenly">
           {barData.map((item, idx) => {
             // v68: グレーの目標バー廃止に伴い、バーは「達成度(実績/目標)」を0〜100%軸へ直接描画
             //（旧実装は rowMax=max(実績,目標) 相対スケール。ヘッダーの「0%〜各段ごとの達成度〜100%」と
@@ -7786,7 +7793,8 @@ const YieldPerformanceChart = ({ funnelData, savedIndustryAverages, adjustedAver
             <>
               <div className="border-t border-gray-200 my-2"></div>
               <div className="font-bold text-gray-800 mb-1 text-[13px]">コメント</div>
-              <div className="text-gray-600 leading-relaxed space-y-0.5">
+              {/* v75: 各行が2行に折り返さない文字サイズへ縮小（12px→10px。PDF指示） */}
+              <div className="text-gray-600 leading-relaxed space-y-0.5 text-[10px]">
                 {belowAverageItems.map((item, idx) => (
                   <div key={idx}>
                     {item.label}：業界平均より<span className="text-red-500 font-bold">▲{item.diff}%</span>
@@ -11810,9 +11818,10 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
           {/* v73: 暫定注記をヘッダーに集約（各ボックス内の2箇所＋アドバイスタブの計3箇所から移設。
                枠の圧迫を解消し、タブ共通ヘッダーなので結果・アドバイス両タブで常に見える） */}
           {isProvisional && (
-            <div className="pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1.5" style={{ maxWidth: '300px' }}>
-              <div className="text-[10px] text-amber-800 leading-relaxed">
-                ※ 上層部問診が未入力のため、採用担当者の回答のみに基づく暫定値です。<br/>上層部問診の入力で確定診断となります。
+            /* v75: 2行→1行表示に変更（幅制限撤廃・折返し禁止） */
+            <div className="pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r px-2 py-1.5 self-start">
+              <div className="text-[10px] text-amber-800" style={{ whiteSpace: 'nowrap' }}>
+                ※ 上層部問診が未入力のため、採用担当者の回答のみに基づく暫定値です。上層部問診の入力で確定診断となります。
               </div>
             </div>
           )}
