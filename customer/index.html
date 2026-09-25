@@ -7,60 +7,71 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>採用ブラックボックス診断® | 事前問診フォーム</title>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <!-- v3.2(2026-06-17): Babelをバージョン固定。Babel8自動更新でJSXにimport注入→白画面化する不具合を修正 -->
 <script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
+/* v3.4 (2026-09-25) UI をプロ仕様に（案2 手順を左に ＋ 問診は1問ずつ）
+   色は1色（アクセント）だけ。飾りのグラデーション・すりガラス・波紋・絵文字は使わない。
+   Tailwind の色クラスは下で決まりの色に上書きする（画面の各部品を書き換えずに揃えるため） */
+:root { --ink:#14181F; --sub:#56606C; --faint:#8792A0; --rule:#E3E6EA; --rule2:#EDEFF2; --line:#CDD3DA;
+        --ground:#F4F5F7; --surf:#FFFFFF; --surfSub:#F7F8FA; --acc:#2F6F66; --accHover:#255A53; --accSoft:#EEF5F3;
+        --urg:#B93E0B; --warn:#8A5A00; --ok:#2F6B4F; }
 * { font-family: 'Noto Sans JP', sans-serif; }
-body { background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 50%, #f5f0ff 100%); min-height: 100vh; }
-.glass-card { background: rgba(255,255,255,0.92); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.6); box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
-@keyframes fadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-.animate-in { animation: fadeIn 0.4s ease-out; }
-@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 70% { box-shadow: 0 0 0 10px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
-.timer-pulse { animation: pulse-ring 1.5s infinite; }
-input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
-
-/* ボタンフィードバック改善 */
-button:not(:disabled):active {
-  transform: scale(0.96);
-  filter: brightness(0.92);
-  transition: transform 0.08s ease, filter 0.08s ease;
-}
-.btn-ripple {
-  position: relative;
-  overflow: hidden;
-}
-.btn-ripple::after {
-  content: '';
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 0; height: 0;
-  background: rgba(255,255,255,0.3);
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  transition: width 0.4s ease, height 0.4s ease, opacity 0.4s ease;
-  opacity: 0;
-  pointer-events: none;
-}
-.btn-ripple:active::after {
-  width: 300px; height: 300px;
-  opacity: 1;
-  transition: 0s;
-}
-@keyframes toastSlideIn {
-  from { transform: translateY(100%); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-@keyframes toastSlideOut {
-  from { transform: translateY(0); opacity: 1; }
-  to { transform: translateY(100%); opacity: 0; }
-}
-.toast-enter { animation: toastSlideIn 0.3s ease; }
-.toast-exit { animation: toastSlideOut 0.3s ease forwards; }
+body { background: var(--ground); color: var(--ink); min-height: 100vh; margin: 0; }
+.mono { font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace !important; }
+.glass-card { background: var(--surf) !important; border: 1px solid var(--rule) !important; box-shadow: none !important; border-radius: 8px !important; }
+.rounded-2xl, .rounded-xl { border-radius: 8px !important; }
+.shadow-lg, .shadow-md, .shadow-sm, .shadow-xl, .hover\:shadow-sm:hover, .hover\:shadow-xl:hover { box-shadow: none !important; }
+.animate-in { animation: fadeIn 0.2s ease-out; }
+@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* 主ボタン（旧グラデーション）→ アクセント1色 */
+.bg-gradient-to-r { background-image: none !important; background-color: var(--acc) !important; color: #FFFFFF !important; }
+.bg-gradient-to-r:hover { background-color: var(--accHover) !important; }
+/* 選択中・強調の面 → アクセントの淡色。注意の面（黄・赤・緑）→ 灰色の面 */
+.bg-blue-50, .bg-indigo-50, .bg-purple-50, .bg-blue-100, .bg-indigo-100 { background-color: var(--accSoft) !important; }
+.bg-amber-50, .bg-orange-50, .bg-red-50, .bg-green-50, .bg-gray-50 { background-color: var(--surfSub) !important; }
+.bg-blue-500, .bg-blue-600, .bg-green-500 { background-color: var(--acc) !important; }
+.bg-gray-100, .bg-gray-200 { background-color: var(--rule2) !important; }
+.border-blue-400, .border-blue-500, .border-green-400 { border-color: var(--acc) !important; }
+.border-blue-200, .border-blue-300, .border-purple-200, .border-amber-200, .border-orange-200, .border-orange-300,
+.border-red-200, .border-red-300, .border-green-200, .border-gray-200, .border-gray-300 { border-color: var(--rule) !important; }
+.hover\:border-blue-300:hover { border-color: var(--line) !important; }
+.text-blue-500, .text-green-500, .text-green-600 { color: var(--acc) !important; }
+.text-blue-600, .text-blue-700, .text-blue-800, .text-indigo-700, .text-purple-700, .text-amber-700, .text-amber-800,
+.text-amber-900, .text-red-700, .text-red-800, .text-orange-700, .text-green-700, .text-green-800 { color: var(--ink) !important; }
+.text-red-500, .text-red-600 { color: var(--urg) !important; }
+.text-amber-400, .text-amber-500 { color: var(--warn) !important; }
+.text-gray-400, .text-gray-500 { color: var(--sub) !important; }
+.focus\:ring-2:focus { box-shadow: 0 0 0 2px var(--accSoft), 0 0 0 3px var(--acc) !important; outline: none; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--acc); }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.btn-ripple::after { display: none; }
+input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+.toast-enter { animation: fadeIn 0.2s ease; }
+.toast-exit { opacity: 0; transition: opacity 0.2s ease; }
+/* 画面の骨組み（案2）: 左に手順、右に入力。狭い画面は上の帯に畳む */
+.pi-shell { display: flex; min-height: 100vh; }
+.pi-side { width: 300px; flex-shrink: 0; background: var(--surf); border-right: 1px solid var(--rule); padding: 28px 20px;
+           display: flex; flex-direction: column; gap: 18px; position: sticky; top: 0; height: 100vh; box-sizing: border-box; }
+.pi-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pi-top { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 40px; background: var(--surf); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 5; }
+.pi-body { width: 100%; max-width: 860px; padding: 32px 40px 48px; box-sizing: border-box; }
+.pi-mobile-steps { display: none; }
+@media (max-width: 900px) {
+  .pi-side { display: none; }
+  .pi-top { padding: 0 16px; }
+  .pi-body { padding: 16px 16px 40px; }
+  .pi-mobile-steps { display: flex; gap: 4px; padding: 10px 16px; background: var(--surf); border-bottom: 1px solid var(--rule); }
+}
+.pi-btn { height: 44px; padding: 0 20px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; border: 1px solid var(--line); background: var(--surf); color: var(--ink); white-space: nowrap; }
+.pi-btn.primary { background: var(--acc); border-color: var(--acc); color: #FFFFFF; }
+.pi-btn.primary:hover { background: var(--accHover); }
+.pi-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>
 <script>
 // ============================================================
@@ -80,7 +91,8 @@ button:not(:disabled):active {
 // 【URL設計】
 // 担当者用: ?id={inquiry_no}&tk={token}&size={small|medium|large}
 // 上層部用: ?id={inquiry_no}&tk={token}&size={...}&role=exec
-// トークン: hash(id + 'gksp2026') → base36 8文字。BB診断のgeneratePreInputToken()と同一。
+// トークン: v3.3 から DB が発行する乱数（bb_diagnoses.access_token）。照合は DB の関数の中で行う。
+//   旧 token（hash(id + 固定文字列)）は移行期間だけ DB 側で受け付ける（app_settings.preinput_legacy_until）。
 // size: BB診断のgetCompanySizeCategory()と同一スケール (small≤100, medium=101-300, large=301+)
 //
 // 【担当者 vs 上層部の分離設計】
@@ -89,9 +101,11 @@ button:not(:disabled):active {
 // read-merge-write（fix#7）で互いのデータを壊さずに保存する。
 // 上層部がexecutiveAnswers/executiveCompletedだけ書き、担当者のデータはDB最新値を維持。
 //
-// 【認証モデル】
-// Supabase anon key + RLSポリシー（pre_inputs_anon_select/insert/update）。
-// URLトークンはアプリ層バリデーション。DBレベルの認証はなし（顧客はログイン不要）。
+// 【認証モデル】v3.3
+// 顧客はログインしない。読み書きは token 必須の関数だけを通す:
+//   preinput_get(id, tk) / preinput_save(id, tk, role, data, status)
+// token の照合も、担当者と上層部の取り合わせ（マージ）も DB 側で行う。
+// 画面側で token を作ったり、pre_inputs を直接読んだりしない。
 //
 // 【保存方式】
 // upsert ON CONFLICT customer_id — fix#4(問診完了即保存)とgoNextの同時実行で409を防ぐ。
@@ -103,6 +117,16 @@ button:not(:disabled):active {
 // v2.1: getQuestionMasterPublic/getRecruitmentMethodsPublic にフラット→ネスト変換追加（v50 SUPA_HANDLERS同等）
 // v3: URLトークン認証(?tk=), 企業規模URL指定(?size=), 担当者/上層部URL分離(?role=exec), 課題・挑戦ステップ追加
 // v3.1: バグ修正4件 + 運用改善5件 + hotfix(upsert, UNIQUE CONSTRAINT, 選考ステップ数, 課題マッピング)
+// v3.5 (2026-09-25): 出来事の記録（DBパッチ09）。開いた・開始・手順・問診の開始/終了・送信・保存失敗を
+//   preinput_log で記録する（時刻はDBの時計）。記録の失敗は回答の邪魔をしない（黙って捨てる）。
+//   パッチ09 未適用の環境では関数が無いので、何もしない。
+// v3.4 (2026-09-25): 外部ライブラリの版を固定（React 18.3.1 / supabase-js 2.110.0。BB診断本体と同じ）。
+//   版を固定しないと自動更新で白画面になる事故が起きうる（Babel で過去に発生）。
+// v3.4 (2026-09-25): UI をプロ仕様に。左に手順・右に入力（案2）、問診は1問ずつ（案3）。
+//   色はアクセント1色、グラデーション・すりガラス・絵文字をやめる。保存の成否を表示。
+// v3.5-live (2026-09-25): 稼働中の版（v3.2 表記・中身は 2026-08-11 の get_pre_input RPC 化まで）を土台に作り直し。
+//   本人確認をDB側へ（S1〜S3）: 読み込みは preinput_get、保存は preinput_save（どちらも token 必須）。
+//   担当者・上層部の取り合わせ（マージ）も preinput_save が行ロックを取ってDB側で行う（同時保存でも片方が消えない）。要 DBパッチ07。
 //   fix#1: リトライ時loading復元, fix#2: DB status同期, fix#3: 最終ステップ二重保存防止,
 //   fix#4: 問診完了即DB保存, fix#5: exec size未指定ガード, fix#6: ターゲット比率100%バリデーション,
 //   fix#7: 同時編集read-merge-write, fix#8: beforeunload警告, fix#9: phaseLabelsフォールバック明示
@@ -122,25 +146,15 @@ button:not(:disabled):active {
     role: params.get('role') || 'staff',    // staff|exec
     deploymentMode: 'standalone'
   };
-  // v3: URLトークン生成・検証（BB診断側と同じアルゴリズム）
-  window.generatePreInputToken = function(id) {
-    var s = id + 'gksp2026';
-    var h = 0;
-    for (var i = 0; i < s.length; i++) {
-      h = ((h << 5) - h) + s.charCodeAt(i);
-      h = h & h;
-    }
-    return Math.abs(h).toString(36).padStart(8, '0').slice(0, 8);
-  };
 })();
 </script>
 <script type="module">
-  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/+esm';
   window._supabase = createClient(
     window.SUPABASE_CONFIG.url,
     window.SUPABASE_CONFIG.anonKey
   );
-  console.log('[事前問診 v3.2] Supabase接続完了');
+  console.log('[事前問診 v3.5] Supabase接続完了');
 </script>
 </head>
 <body>
@@ -175,7 +189,7 @@ const ToastItem = ({ toast, onDone }) => {
   const [exiting, setExiting] = useState(false);
   useEffect(() => { const t = setTimeout(() => setExiting(true), toast.duration || 2800); return () => clearTimeout(t); }, []);
   useEffect(() => { if (exiting) { const t = setTimeout(onDone, 300); return () => clearTimeout(t); } }, [exiting]);
-  const colors = { success: '#059669', error: '#dc2626', info: '#2563eb', warning: '#d97706' };
+  const colors = { success: '#14181F', error: '#B93E0B', info: '#14181F', warning: '#8A5A00' };
   const icons = { success: '✓', error: '✕', info: 'ℹ', warning: '⚠' };
   return (
     <div className={exiting ? 'toast-exit' : 'toast-enter'} style={{ pointerEvents:'auto', padding:'12px 20px', borderRadius:'12px', boxShadow:'0 10px 40px rgba(0,0,0,0.2)', display:'flex', alignItems:'center', gap:'10px', fontSize:'14px', fontWeight:500, color:'#fff', background: colors[toast.type] || colors.info }}>
@@ -344,8 +358,6 @@ function buildSteps(role, hasUrlSize) {
   return steps.map((s, i) => ({ ...s, num: i + 1 }));
 }
 
-// デフォルト値（ProgressBar初期表示用。App内で上書きされる）
-const STEPS = buildSteps('staff', false);
 
 // ========================================
 // API通信（v2: Supabase直接クエリ）
@@ -382,10 +394,16 @@ const gasGet = async (action, params = {}) => {
         // 根因: anonにテーブル直アクセスを開くと、条件はフロント指定＝改変可能。
         // 予防: get_pre_input RPC(SECURITY DEFINER)経由に統一し、
         //       customer_id 1件分の input_data のみ返す。anonポリシーは削除。
+        // v3.5(2026-09-25): get_pre_input は token を確かめないため（問診番号だけで他社分が読める）、
+        //       token 必須の preinput_get に置き換え（DBパッチ07）。
         const id = params.id;
         if (!id) return { success: false, error: 'IDがありません' };
-        const { data, error } = await sb.rpc('get_pre_input', { p_customer_id: id });
-        if (error) throw error;
+        // v3.3: token 必須の関数で読む（照合はDB側）
+        const { data, error } = await sb.rpc('preinput_get', { p_id: id, p_token: window.GAS_CONFIG.token || '' });
+        if (error) {
+          if (String(error.message || '').includes('invalid_token')) return { success: false, error: 'invalid_token' };
+          throw error;
+        }
         return { success: true, data: data || null };
       },
       
@@ -499,44 +517,19 @@ const gasPost = async (action, body = {}) => {
         const inputData = body.preInputData || body.inputData || {};
         if (!customerId) return { success: false, error: 'IDがありません' };
         
-        // read: 既存データを読む（ロール別マージ用）
-        // v3.3(2026-08-11): テーブル直read廃止 → get_pre_input RPC。
-        // 以降の existing.data?.input_data の形を保つためラップする。
-        const existingRes = await sb.rpc('get_pre_input', { p_customer_id: customerId });
-        if (existingRes.error) throw existingRes.error;
-        const existing = { data: existingRes.data ? { input_data: existingRes.data } : null };
-        
-        // merge: ロール別マージ（fix#7）
-        let merged = inputData;
-        if (existing.data?.input_data) {
-          const current = existing.data.input_data;
-          const role = window.GAS_CONFIG.role || 'staff';
-          if (role === 'exec') {
-            merged = {
-              ...current,
-              executiveAnswers: inputData.executiveAnswers || {},
-              executiveCompleted: inputData.executiveCompleted || false,
-            };
-          } else {
-            merged = {
-              ...inputData,
-              executiveAnswers: current.executiveAnswers || inputData.executiveAnswers || {},
-              executiveCompleted: current.executiveCompleted || inputData.executiveCompleted || false,
-            };
-          }
-        }
-        
-        // DB status同期（fix#2）
-        const dbStatus = merged.status === '完了' ? '完了'
-          : merged.executiveCompleted ? '上層部完了'
+        // v3.3: 取り合わせ（担当者／上層部）と状態の後戻り防止は preinput_save が DB 側で行う
+        const role = window.GAS_CONFIG.role === 'exec' ? 'exec' : 'staff';
+        const dbStatus = inputData.status === '完了' ? '完了'
+          : inputData.executiveCompleted ? '上層部完了'
           : '入力済み';
-        
-        // write: RPC経由でDB側ON CONFLICT実行（PostgREST upsertの409問題を回避）
-        const { error } = await sb.rpc('upsert_pre_input', {
-          p_customer_id: customerId,
-          p_input_data: merged,
+        const { error } = await sb.rpc('preinput_save', {
+          p_id: customerId,
+          p_token: window.GAS_CONFIG.token || '',
+          p_role: role,
+          p_data: inputData,
           p_status: dbStatus
         });
+        if (error && String(error.message || '').includes('invalid_token')) return { success: false, error: 'invalid_token' };
         if (error) throw error;
         return { success: true };
       },
@@ -556,6 +549,25 @@ const gasPost = async (action, body = {}) => {
     return { success: false, error: err.message };
   }
 };
+
+// v3.5: 出来事の記録（投げっぱなし。待たない・止めない）
+let _logDisabled = false;
+function logEvent(event, step = '', meta = {}) {
+  if (_logDisabled) return;
+  (async () => {
+    try {
+      const sb = await ensureSupabase();
+      const { error } = await sb.rpc('preinput_log', {
+        p_id: window.GAS_CONFIG.customerId || '', p_token: window.GAS_CONFIG.token || '',
+        p_role: window.GAS_CONFIG.role === 'exec' ? 'exec' : 'staff',
+        p_event: event, p_step: step || '', p_meta: meta || {}
+      });
+      if (error && /PGRST202|42883|Could not find the function|does not exist/i.test((error.message || '') + ' ' + (error.code || ''))) {
+        _logDisabled = true;   // パッチ09 未適用
+      }
+    } catch (e) { /* 記録の失敗は回答に影響させない */ }
+  })();
+}
 
 const API = {
   customerId: window.GAS_CONFIG?.customerId || '',
@@ -633,35 +645,6 @@ const CountdownTimer = ({ totalSeconds, onTimeUp, isRunning }) => {
 };
 
 // ========================================
-// プログレスバー
-// ========================================
-const ProgressBar = ({ currentStep, totalSteps, steps }) => (
-  <div className="glass-card rounded-2xl p-4 mb-6">
-    <div className="flex items-center justify-between mb-3">
-      {(steps || STEPS).map((step, i) => (
-        <React.Fragment key={step.id}>
-          <div className="flex flex-col items-center">
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
-              i < currentStep ? 'bg-green-500 text-white' :
-              i === currentStep ? 'bg-blue-600 text-white ring-4 ring-blue-200' :
-              'bg-gray-200 text-gray-500'
-            }`}>
-              {i < currentStep ? <SolidIcon name="checkCircle" className="w-5 h-5" /> : step.num}
-            </div>
-            <span className={`text-[10px] mt-1 whitespace-nowrap ${
-              i === currentStep ? 'text-blue-700 font-bold' : 'text-gray-400'
-            }`}>{step.label}</span>
-          </div>
-          {i < (steps || STEPS).length - 1 && (
-            <div className={`flex-1 h-0.5 mx-1 rounded ${
-              i < currentStep ? 'bg-green-400' : 'bg-gray-200'
-            }`} />
-          )}
-        </React.Fragment>
-      ))}
-    </div>
-  </div>
-);
 
 // ========================================
 // Step 1: 採用職種選定
@@ -671,9 +654,9 @@ const ProgressBar = ({ currentStep, totalSteps, steps }) => (
 // ========================================
 // v3.1 BugA fix: BB診断のgetCompanySizeCategory()と同じ3段階に統一
 const COMPANY_SIZES = [
-  { key: 'small', label: '100名以下', desc: 'スタートアップ・小規模〜中小企業', icon: '🏠' },
-  { key: 'medium', label: '101〜300名', desc: '中堅企業', icon: '🏢' },
-  { key: 'large', label: '301名以上', desc: '大企業', icon: '🏙️' },
+  { key: 'small', label: '100名以下', desc: 'スタートアップ・小規模〜中小企業' },
+  { key: 'medium', label: '101〜300名', desc: '中堅企業' },
+  { key: 'large', label: '301名以上', desc: '大企業' },
 ];
 
 const StepCompanySize = ({ data, onChange }) => (
@@ -689,7 +672,6 @@ const StepCompanySize = ({ data, onChange }) => (
             className={`flex flex-col items-center gap-2 p-6 rounded-xl border-2 transition-all ${
               selected ? 'border-blue-500 bg-blue-50 shadow-md' : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
             }`}>
-            <span className="text-3xl">{size.icon}</span>
             <span className={`font-bold text-base ${selected ? 'text-blue-800' : 'text-gray-700'}`}>{size.label}</span>
             <span className="text-xs text-gray-500">{size.desc}</span>
             {selected && (
@@ -1057,6 +1039,31 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
   const answersKey = `${roleKey}Answers`;
   const answers = data[answersKey] || {};
   const answeredCount = Object.keys(answers).filter(k => answers[k]).length;
+  // v3.4: 問診は1問ずつ表示する（直感で答えてもらうため）。qi = いま表示している問い
+  const [qi, setQi] = useState(0);
+  const quizStartRef = useRef(null);   // v3.5: 問診の開始時刻（所要時間の参考値。正式な時刻はDB側）
+  const quizLive = timerStarted && !timeUp && !quizFinished;
+  const choose = (q, v) => {
+    const cur = (data[answersKey] || {})[q.id];
+    onChange({ ...data, [answersKey]: { ...(data[answersKey] || {}), [q.id]: cur === v ? undefined : v } });
+    // 選んだら少し置いて次の問いへ（取り消しのときは進まない）
+    if (cur !== v) setTimeout(() => setQi(i => Math.min(i + 1, (questions || []).length - 1)), 220);
+  };
+  // キーボードの A・B（問診中だけ）
+  useEffect(() => {
+    if (!quizLive || !questions || !questions.length) return;
+    const h = (e) => {
+      if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      const k = e.key.toLowerCase();
+      const q = questions[qi]; if (!q) return;
+      if (k === 'a') { e.preventDefault(); choose(q, 'A'); }
+      else if (k === 'b') { e.preventDefault(); choose(q, 'B'); }
+      else if (e.key === 'ArrowRight') setQi(i => Math.min(i + 1, questions.length - 1));
+      else if (e.key === 'ArrowLeft') setQi(i => Math.max(i - 1, 0));
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [quizLive, qi, questions, data]);
   
   // v3.1 fix#8: 問診中のブラウザ閉じ・リロード防止
   useEffect(() => {
@@ -1075,6 +1082,16 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
     setConfirming(true);
     const newData = { ...data, [completedKey]: true };
     onChange(newData);
+    // v3.5: 問診の終了を記録（回答数・理由・画面で測った経過秒）
+    {
+      const ans = newData[answersKey] || {};
+      logEvent('quiz_end', roleKey, {
+        answered: Object.keys(ans).filter(k => ans[k]).length,
+        total: (questions || []).length,
+        reason: timeUp ? 'timeup' : 'finished',
+        elapsed_sec: quizStartRef.current ? Math.round((Date.now() - quizStartRef.current) / 1000) : null
+      });
+    }
     // v3.1 fix#4: 問診完了時に即座にDB保存（ブラウザ閉じ対策）
     (async () => {
       try { await API.savePreInput(newData); }
@@ -1188,6 +1205,8 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
           <button
             onClick={() => {
               setTimerStarted(true);
+              quizStartRef.current = Date.now();
+              logEvent('quiz_start', roleKey);
               if (onQuizActive) onQuizActive(true);
             }}
             className="btn-ripple px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-lg rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition shadow-lg hover:shadow-xl"
@@ -1229,111 +1248,54 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
     );
   }
   
-  // 問診回答画面
+  // 問診回答画面（v3.4: 1問ずつ）
+  const q = questions[Math.min(qi, questions.length - 1)];
+  const cur = answers[q.id];
+  const isLast = qi >= questions.length - 1;
+  const choiceBtn = (v, text) => {
+    const on = cur === v;
+    return (
+      <button type="button" onClick={() => choose(q, v)} aria-pressed={on}
+        style={{ display:'flex', alignItems:'center', gap:16, width:'100%', padding:'18px 20px', textAlign:'left', cursor:'pointer',
+                 borderRadius:8, border: on ? '2px solid var(--acc)' : '1px solid var(--line)', background: on ? 'var(--accSoft)' : 'var(--surf)' }}>
+        <span style={{ width:30, height:30, flexShrink:0, borderRadius:6, display:'inline-flex', alignItems:'center', justifyContent:'center', fontWeight:600,
+                       background: on ? 'var(--acc)' : 'transparent', color: on ? '#FFFFFF' : 'var(--sub)', border: on ? 'none' : '1px solid var(--line)' }}>{v}</span>
+        <span style={{ fontSize:17, lineHeight:1.7, color:'var(--ink)' }}>{text}</span>
+      </button>
+    );
+  };
   return (
-    <div className="animate-in">
-      <div className="glass-card rounded-2xl p-4 mb-4 sticky top-0 z-10">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-bold text-gray-800">{title}</h2>
-          <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-            {answeredCount}/{questions.length}問回答
-          </span>
+    <div className="animate-in" style={{ display:'flex', flexDirection:'column', gap:20 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+        <h2 style={{ margin:0, fontSize:18, fontWeight:600 }}>{title}</h2>
+        <span className="mono" style={{ fontSize:13, color:'var(--sub)' }}>回答 {answeredCount} / {questions.length}</span>
+        <div style={{ marginLeft:'auto', minWidth:220, flex:'0 1 320px' }}>
+          <CountdownTimer totalSeconds={timerSeconds} isRunning={true} onTimeUp={() => setTimeUp(true)} />
         </div>
-        <CountdownTimer
-          totalSeconds={timerSeconds}
-          isRunning={true}
-          onTimeUp={() => setTimeUp(true)}
-        />
-        <div className="flex items-center justify-between mt-2">
-          <p className="text-xs text-gray-400">
-            <span className="inline-flex items-center gap-1"><SolidIcon name="lightbulb" className="w-3.5 h-3.5" />どちらにも回答できない場合は選択せずに飛ばしてください</span>
-          </p>
-          <button
-            onClick={() => setQuizFinished(true)}
-            disabled={quizFinished || confirming}
-            className={`text-xs px-3 py-1 rounded-full transition font-bold flex items-center gap-1 ${
-              quizFinished || confirming
-                ? 'bg-gray-200 text-gray-400 cursor-wait'
-                : 'bg-green-100 text-green-700 hover:bg-green-200'
-            }`}
-          >
-            {(quizFinished || confirming) && (
-              <svg className="w-3 h-3 flex-shrink-0" style={{ animation: 'spin 0.8s linear infinite' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                <circle cx="12" cy="12" r="10" className="opacity-25" /><path d="M4 12a8 8 0 018-8" className="opacity-75" />
-              </svg>
-            )}
-            {quizFinished || confirming ? '保存中...' : '回答を終了する'}
+      </div>
+      <div style={{ height:3, background:'var(--rule2)', borderRadius:2, overflow:'hidden' }}>
+        <div style={{ width: `${((qi + 1) / questions.length) * 100}%`, height:3, background:'var(--acc)', transition:'width 0.2s' }} />
+      </div>
+      <section className="glass-card" style={{ padding:'32px 32px 28px', display:'flex', flexDirection:'column', gap:24 }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
+          <span className="mono" style={{ fontSize:14, color:'var(--sub)' }}>Q {qi + 1} / {questions.length}</span>
+          <span style={{ fontSize:13, color:'var(--sub)' }}>直感で、近いほうを選んでください</span>
+        </div>
+        <p style={{ margin:0, fontSize:22, fontWeight:600, lineHeight:1.7, whiteSpace:'pre-line' }}>{q.question}</p>
+        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+          {choiceBtn('A', q.choiceA)}
+          {choiceBtn('B', q.choiceB)}
+        </div>
+      </section>
+      <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+        <button type="button" className="pi-btn" onClick={() => setQi(i => Math.max(i - 1, 0))} disabled={qi === 0}>前の問い</button>
+        <span style={{ fontSize:12, color:'var(--sub)' }}>キーボードの A・B でも選べます。答えられない問いは飛ばして構いません</span>
+        <span style={{ marginLeft:'auto', display:'flex', gap:8 }}>
+          {!isLast && <button type="button" className="pi-btn" onClick={() => setQi(i => Math.min(i + 1, questions.length - 1))}>{cur ? '次の問い' : '答えずに次へ'}</button>}
+          <button type="button" className={isLast ? 'pi-btn primary' : 'pi-btn'} onClick={() => setQuizFinished(true)} disabled={quizFinished || confirming}>
+            {quizFinished || confirming ? '保存しています…' : '回答を終える'}
           </button>
-        </div>
-      </div>
-      
-      <div className="space-y-3">
-        {questions.map((q, idx) => {
-          const answer = answers[q.id];
-          return (
-            <div key={q.id} className="glass-card rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">
-                  Q{idx + 1}
-                </span>
-                {answer && (
-                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-600 rounded-full">回答済</span>
-                )}
-              </div>
-              <p className="text-sm font-medium text-gray-800 mb-3" style={{ whiteSpace: 'pre-line' }}>
-                {q.question}
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => onChange({
-                    ...data,
-                    [answersKey]: { ...answers, [q.id]: answer === 'A' ? undefined : 'A' }
-                  })}
-                  className={`p-3 rounded-lg text-sm text-left transition border-2 ${
-                    answer === 'A'
-                      ? 'border-blue-500 bg-blue-100 text-blue-800'
-                      : 'border-gray-200 bg-white hover:border-blue-300'
-                  }`}
-                >
-                  <span className="font-bold mr-2">A.</span>{q.choiceA}
-                </button>
-                <button
-                  onClick={() => onChange({
-                    ...data,
-                    [answersKey]: { ...answers, [q.id]: answer === 'B' ? undefined : 'B' }
-                  })}
-                  className={`p-3 rounded-lg text-sm text-left transition border-2 ${
-                    answer === 'B'
-                      ? 'border-blue-500 bg-blue-100 text-blue-800'
-                      : 'border-gray-200 bg-white hover:border-blue-300'
-                  }`}
-                >
-                  <span className="font-bold mr-2">B.</span>{q.choiceB}
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      
-      {/* 末尾の回答終了ボタン */}
-      <div className="text-center mt-6">
-        <button
-          onClick={() => setQuizFinished(true)}
-          disabled={quizFinished || confirming}
-          className={`btn-ripple px-8 py-3 font-bold rounded-xl transition shadow-lg flex items-center gap-2 mx-auto ${
-            quizFinished || confirming
-              ? 'bg-gray-400 text-white cursor-wait'
-              : 'bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700'
-          }`}
-        >
-          {(quizFinished || confirming) && (
-            <svg className="w-4 h-4 flex-shrink-0" style={{ animation: 'spin 0.8s linear infinite' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-              <circle cx="12" cy="12" r="10" className="opacity-25" /><path d="M4 12a8 8 0 018-8" className="opacity-75" />
-            </svg>
-          )}
-          {quizFinished || confirming ? '保存中...' : '回答を終了する'}
-        </button>
+        </span>
       </div>
     </div>
   );
@@ -1713,10 +1675,8 @@ const App = () => {
   const customerId = API.customerId;
   const isExec = urlRole === 'exec';
   
-  const isTokenValid = useMemo(() => {
-    if (!customerId || !urlToken) return false;
-    return urlToken === window.generatePreInputToken(customerId);
-  }, [customerId, urlToken]);
+  // v3.3: token の正否は DB（preinput_get）の返事で判断する。ここでは「付いているか」だけを見る
+  const isTokenValid = !!(customerId && urlToken);
   
   const steps = useMemo(() => buildSteps(urlRole, !!urlSize), [urlRole, urlSize]);
   
@@ -1753,11 +1713,16 @@ const App = () => {
           setError('問い合わせ番号が指定されていません。\nURLに ?id=XXXXX&tk=YYYYY の形式でアクセスしてください。');
           setLoading(false); return;
         }
-        console.log('[事前問診 v3.2] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
+        console.log('[事前問診 v3.5] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
         const pingRes = await gasGet('ping');
         if (!pingRes.success) throw new Error('サーバーに接続できません。');
         
         const preRes = await API.loadPreInput();
+        if (!preRes.success && preRes.error === 'invalid_token') {
+          setError('このURLは無効です。\n正しいURLを担当コンサルタントから受け取ってください。');
+          setLoading(false); return;
+        }
+        logEvent('open');   // v3.5: URLを開いた（token が通ったときだけ）
         if (preRes.success && preRes.data) {
           const ld = { ...preRes.data };
           const sHas = Object.keys(ld.staffAnswers || {}).filter(k => ld.staffAnswers[k]).length > 0;
@@ -1770,7 +1735,7 @@ const App = () => {
           else if (!isExec && ld.status === '完了') setCompleted(true);
           // v3.1 fix#5: exec URLにsize指定なし＆担当者も未入力の場合は警告
           if (isExec && !urlSize && !ld.companySize) {
-            console.warn('[事前問診 v3.2] 上層部アクセスだが企業規模が不明。フォールバック適用。');
+            console.warn('[事前問診 v3.5] 上層部アクセスだが企業規模が不明。フォールバック適用。');
           }
         } else if (isExec && !urlSize) {
           // v3.1 fix#5: 担当者の事前データも存在しない場合
@@ -1828,10 +1793,16 @@ const App = () => {
     return questions.filter(q => { if (seen.has(q.id)) return false; seen.add(q.id); return true; });
   }, [questionMaster, data.targetLayers, data.recruitmentMethods, methodMaster, determinedSize]);
   
+  const [savedAt, setSavedAt] = useState('');
   const saveProgress = useCallback(async (nd) => {
     setSaving(true);
-    try { await API.savePreInput(nd || data); }
-    catch (e) { toast('保存に失敗しました。', 'error', 4000); }
+    try {
+      const res = await API.savePreInput(nd || data);
+      // v3.4: 失敗を成功と見せない（関数は success:false を返すことがある）
+      if (res && res.success === false) { toast('保存できませんでした。通信を確かめて、もう一度お試しください。', 'error', 5000); logEvent('save_error', steps[currentStep]?.id || '', { message: String(res.error || '').slice(0, 200) }); }
+      else setSavedAt(new Date().toTimeString().slice(0, 5));
+    }
+    catch (e) { toast('保存できませんでした。通信を確かめて、もう一度お試しください。', 'error', 5000); }
     finally { setSaving(false); }
   }, [data]);
   
@@ -1844,8 +1815,10 @@ const App = () => {
         // v3.1 fix#3: 最終ステップはfinalDataのみ保存（二重保存防止）
         const finalData = isExec ? { ...data, executiveCompleted: true } : { ...data, status: '完了' };
         setData(finalData); await saveProgress(finalData); setCompleted(true);
+        logEvent('submit', steps[currentStep]?.id || '');
       } else {
         await saveProgress(data);
+        logEvent('step', steps[currentStep + 1]?.id || '', { from: steps[currentStep]?.id || '' });
         setCurrentStep(prev => prev + 1);
       }
     } finally { setNavigating(false); }
@@ -1921,13 +1894,14 @@ const App = () => {
             <ul className="text-sm text-gray-700 space-y-2">
               <li className="flex items-start gap-2"><SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" /><span>ご入力いただく情報は、株式会社Gakusapoが<span className="font-bold">厳重に管理</span>し、本診断の目的以外には一切使用いたしません。</span></li>
               <li className="flex items-start gap-2"><SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" /><span>第三者への提供・開示は行いません。</span></li>
+              <li className="flex items-start gap-2"><SolidIcon name="dot" className="w-3 h-3 mt-1 text-blue-500 flex-shrink-0" /><span>回答の日時と所要時間（ページを開いた時刻、問診にかかった時間など）も、お打ち合わせの準備のために記録します。</span></li>
             </ul>
           </div>
           <label className={`flex items-start gap-3 p-4 border-2 rounded-xl cursor-pointer transition mb-6 ${privacyAgreed ? 'bg-blue-50 border-blue-400' : 'bg-white border-gray-200 hover:border-blue-300'}`}>
             <input type="checkbox" checked={privacyAgreed} onChange={e => setPrivacyAgreed(e.target.checked)} className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 cursor-pointer" />
             <span className="text-sm text-gray-800 leading-relaxed">上記の情報の取り扱いについて確認し、<span className="font-bold text-blue-700">個人情報および企業情報の取り扱いに同意</span>のうえ、{isExec ? '上層部問診' : '事前問診'}を開始します。</span>
           </label>
-          <button disabled={!privacyAgreed} onClick={() => setStarted(true)}
+          <button disabled={!privacyAgreed} onClick={() => { setStarted(true); logEvent('start'); }}
             className={`btn-ripple w-full py-4 rounded-xl font-bold text-lg transition shadow-lg ${privacyAgreed ? (isExec ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white') : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
             {isExec ? '上層部問診を開始する' : '事前問診を開始する'}
           </button>
@@ -1938,27 +1912,75 @@ const App = () => {
   
   const currentStepDef = steps[currentStep];
   const nextDisabled = !canProceed || navigating;
+  const isLastStep = currentStep >= steps.length - 1;
+  const sizeLabel = ({ small:'100名以下', medium:'101〜300名', large:'301名以上' })[determinedSize] || '';
+  const saveStatus = saving
+    ? <span style={{ fontSize:12, color:'var(--sub)' }}>保存しています…</span>
+    : savedAt
+      ? <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:12, color:'var(--sub)' }}><span style={{ width:7, height:7, borderRadius:'50%', background:'var(--ok)' }} />保存しました {savedAt}</span>
+      : null;
+  // v3.4 画面の骨組み（案2）: 左に手順・右に入力。問診は1問ずつ（案3）
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
-      <ProgressBar currentStep={currentStep} totalSteps={steps.length} steps={steps} />
-      {currentStepDef?.id === 'companySize' && <StepCompanySize data={data} onChange={d => setData(d)} />}
-      {currentStepDef?.id === 'jobType' && <StepJobType data={data} onChange={d => setData(d)} />}
-      {currentStepDef?.id === 'target' && <StepTarget data={data} onChange={d => setData(d)} />}
-      {currentStepDef?.id === 'method' && <StepMethod data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
-      {currentStepDef?.id === 'challenges' && <StepChallenges data={data} onChange={d => setData(d)} />}
-      {currentStepDef?.id === 'staff' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="staff" questions={staffQuestions} title="担当者問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, staffCompleted: true}))} />}
-      {currentStepDef?.id === 'executive' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="executive" questions={executiveQuestions} title="上層部問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, executiveCompleted: true}))} />}
-      {currentStepDef?.id === 'funnel' && <StepFunnel data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
-      {!quizActive && (
-        <div className="flex items-center justify-between mt-6 mb-8">
-          <button onClick={goPrev} disabled={currentStep === 0} className={`px-4 py-3 rounded-xl font-bold transition ${currentStep === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}>← 戻る</button>
-          <span className="text-sm text-gray-400">{saving ? <span className="flex items-center gap-1.5 text-blue-500"><svg className="w-3.5 h-3.5" style={{animation:'spin 0.8s linear infinite'}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><circle cx="12" cy="12" r="10" className="opacity-25"/><path d="M4 12a8 8 0 018-8" className="opacity-75"/></svg>保存中...</span> : `${currentStep+1} / ${steps.length}`}</span>
-          <button onClick={goNext} disabled={nextDisabled}
-            className={`btn-ripple px-6 py-3 rounded-xl font-bold transition shadow-lg flex items-center gap-2 ${nextDisabled ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : currentStep >= steps.length-1 ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white' : isExec ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'}`}>
-            {navigating ? (currentStep >= steps.length-1 ? '送信中...' : '保存中...') : currentStep >= steps.length-1 ? <span className="inline-flex items-center gap-1.5">送信する<SolidIcon name="checkCircle" className="w-5 h-5" /></span> : '次へ →'}
-          </button>
+    <div className="pi-shell">
+      <aside className="pi-side" aria-label="回答の手順">
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <span style={{ width:28, height:28, borderRadius:6, background:'var(--acc)', color:'#FFFFFF', display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:600 }}>G</span>
+          <span style={{ fontSize:14, fontWeight:600 }}>採用ブラックボックス診断<sup style={{ fontSize:9 }}>®</sup></span>
         </div>
-      )}
+        <div style={{ padding:14, background:'var(--surfSub)', border:'1px solid var(--rule2)', borderRadius:8 }}>
+          <div style={{ fontSize:12, color:'var(--sub)' }}>{isExec ? '上層部の方の問診' : '担当者の方の事前問診'}</div>
+          <div className="mono" style={{ fontSize:13, marginTop:4 }}>No. {customerId}</div>
+          {sizeLabel && <div style={{ fontSize:12, color:'var(--sub)', marginTop:4 }}>従業員 {sizeLabel}</div>}
+        </div>
+        <nav style={{ display:'flex', flexDirection:'column', gap:2 }}>
+          {steps.map((st, i) => {
+            const done = i < currentStep, cur = i === currentStep;
+            return (
+              <div key={st.id} aria-current={cur ? 'step' : undefined}
+                style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 12px', borderRadius:8, background: cur ? 'var(--accSoft)' : 'transparent' }}>
+                <span className="mono" style={{ width:22, height:22, borderRadius:'50%', display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:12, flexShrink:0,
+                  background: done ? 'var(--acc)' : cur ? 'var(--ink)' : 'var(--surf)', color: (done || cur) ? '#FFFFFF' : 'var(--sub)',
+                  border: `1px solid ${done ? 'var(--acc)' : cur ? 'var(--ink)' : 'var(--line)'}` }}>{done ? '✓' : i + 1}</span>
+                <span style={{ fontSize:14, fontWeight: cur ? 600 : 400, color: (done || cur) ? 'var(--ink)' : 'var(--sub)' }}>{st.label}</span>
+                {done && <span style={{ marginLeft:'auto', fontSize:12, color:'var(--sub)' }}>済み</span>}
+              </div>
+            );
+          })}
+        </nav>
+        <div style={{ marginTop:'auto', fontSize:12, color:'var(--sub)', lineHeight:1.8 }}>
+          回答は次へ進むたびに保存されます。途中で閉じても、同じURLから続きを始められます（問診の途中を除く）。<br />
+          ご不明点は、担当者までお問い合わせください。
+        </div>
+      </aside>
+      <main className="pi-main">
+        <div className="pi-top">
+          <span style={{ fontSize:13, color:'var(--sub)' }}>手順 <span className="mono">{currentStep + 1} / {steps.length}</span></span>
+          <span style={{ fontSize:13, color:'var(--ink)', fontWeight:600 }}>{currentStepDef?.label}</span>
+          <span style={{ marginLeft:'auto' }}>{saveStatus}</span>
+        </div>
+        <div className="pi-mobile-steps" aria-hidden="true">
+          {steps.map((st, i) => <span key={st.id} style={{ flex:1, height:3, borderRadius:2, background: i < currentStep ? 'var(--acc)' : i === currentStep ? 'var(--ink)' : 'var(--rule)' }} />)}
+        </div>
+        <div className="pi-body">
+          {currentStepDef?.id === 'companySize' && <StepCompanySize data={data} onChange={d => setData(d)} />}
+          {currentStepDef?.id === 'jobType' && <StepJobType data={data} onChange={d => setData(d)} />}
+          {currentStepDef?.id === 'target' && <StepTarget data={data} onChange={d => setData(d)} />}
+          {currentStepDef?.id === 'method' && <StepMethod data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
+          {currentStepDef?.id === 'challenges' && <StepChallenges data={data} onChange={d => setData(d)} />}
+          {currentStepDef?.id === 'staff' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="staff" questions={staffQuestions} title="担当者問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, staffCompleted: true}))} />}
+          {currentStepDef?.id === 'executive' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="executive" questions={executiveQuestions} title="上層部問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, executiveCompleted: true}))} />}
+          {currentStepDef?.id === 'funnel' && <StepFunnel data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
+          {!quizActive && (
+            <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:24, paddingTop:20, borderTop:'1px solid var(--rule)' }}>
+              <button type="button" className="pi-btn" onClick={goPrev} disabled={currentStep === 0 || navigating}>戻る</button>
+              {!canProceed && <span style={{ fontSize:13, color:'var(--sub)' }}>この手順の入力が済むと進めます</span>}
+              <button type="button" className="pi-btn primary" onClick={goNext} disabled={nextDisabled} style={{ marginLeft:'auto' }}>
+                {navigating ? (isLastStep ? '送信しています…' : '保存しています…') : isLastStep ? '送信する' : `次へ　${steps[currentStep + 1]?.label || ''}`}
+              </button>
+            </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 };
