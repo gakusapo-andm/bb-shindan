@@ -108,6 +108,16 @@
        ①-b コメント各行を1行に収まる文字サイズへ（12px→10px。見出し・平均値リストは据え置き）
        ② ヘッダー暫定注記を1行化（<br/>削除・maxWidth 300px撤廃・whiteSpace nowrap）
        表示のみ・計算無変更 -->
+  <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
+       DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v76（旧・作業名 v65）: 問診番号の重なりによる他社診断の上書きを防止（2026-09-25）
+       [X1] 新規保存は insert（同じ番号があれば止める）。返事が届かず再保存した「自分の保存」だけは下書きIDで見分けて続行
+       [X1-a,b] 画面内での採番（ローカル採番）を廃止。サーバーで採番できなければ保存しない（取り直しボタン）
+       [X1-c] 番号は採番時点の年月で固定（診断日を変えても番号の月は変えない）
+       [記録] 事前問診の「回答の経過」（初めて開いた・送信・問診の所要時間・止まっている手順）を表示（DBパッチ09。未適用なら非表示）
+       [知らせ] 事前問診の「回答あり（未取込）」をヘッダーの鈴と顧客一覧の印で知らせる（DBパッチ11）。営業担当は自分の担当分、事務・管理者は全員分。
+         取り込むと preinput_mark_imported で記録して消える。5分ごと・画面に戻ったときに見直す
+       [T1] 今日の日付を日本時間で決める。診断日の表示は保存された文字の日付をそのまま使う（UTC変換で翌日になる表示ずれを修正） -->
   <!--
     ============================================================
     【v57 修正詳細】2026-07-07 実施
@@ -283,9 +293,11 @@
     InputFormのセレクトボックスはテキストラベル("50〜100名"等)で保存される。
     getCompanySizeCategory() が先頭数値を抽出してキーに変換する。
 
-    ■ トークン認証
-    generatePreInputToken(id) = hash(id + 'gksp2026') → base36 8文字
-    事前問診側で同一関数で検証。DB認証ではなくアプリ層バリデーション。
+    ■ トークン認証（v64〜）
+    token は DB が乱数で発行する（bb_diagnoses.access_token、32桁）。URL 作成時に
+    preinput_access_token(問診番号) で取得する。照合は事前問診側ではなく DB の関数で行う。
+    旧方式 generatePreInputToken(id)（hash(id + 固定文字列)）は、DBパッチ07 未適用時の保険としてのみ残す。
+    移行期間（app_settings.preinput_legacy_until）を過ぎたら、この関数と保険の分岐を削除すること。
     ============================================================
   -->
   <!-- ============================================================ -->
@@ -308,6 +320,39 @@
     // DB認証ではなくアプリ層の簡易バリデーション。目的は「URLを知らない人のアクセス防止」。
     // シード 'gksp2026' は固定。暗号学的強度は求めていない（推測困難なら十分）。
     // BB診断側と事前問診側で同一アルゴリズムを持つ。関数を共有する仕組みはなく、コピー。
+    // v65: 日本時間の今日（YYYY-MM-DD）と今の時刻（HH:mm）。toISOString は UTC のため使わない
+    window.newDraftIdImpl = function() {
+      try { return crypto.randomUUID(); } catch (e) { return 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+    };
+    window.jstToday = function() { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo' }).format(new Date()); };
+    window.jstNowHM = function() { return new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()); };
+    // v65: 保存された診断日（「YYYY-MM-DD HH:mm」や DB の「YYYY-MM-DDTHH:mm:ss+00:00」）から日付の部分だけを取る。
+    //   Date に変換すると時差で翌日になるため、文字のまま切り出す
+    window.bbDatePart = function(v) { return String(v || '').split(/[\sT]/)[0]; };
+    // v64: 事前問診URLの作成。token は DB から取る（DBパッチ07）
+    //   ・関数が無い（パッチ未適用）ときだけ旧 token で作る。それ以外のエラーでは作らない（誤ったURLを送らない）
+    //   ・token が取れない（診断が未保存）ときは作らずに知らせる
+    window.buildPreInputUrl = async function(id, size, role) {
+      var sb = window._supabase;
+      for (var i = 0; !sb && i < 50; i++) { await new Promise(function(r) { setTimeout(r, 100); }); sb = window._supabase; }
+      if (!sb) throw new Error('サーバーに接続できていません。少し待ってからもう一度お試しください。');
+      var res = await sb.rpc('preinput_access_token', { p_inquiry_no: id });
+      var tk = null;
+      if (res.error) {
+        var msg = String(res.error.message || '') + ' ' + String(res.error.code || '');
+        var missing = /PGRST202|42883|Could not find the function|does not exist/i.test(msg);
+        if (!missing) throw new Error('URL用の鍵を取得できませんでした: ' + (res.error.message || res.error.code));
+        console.warn('[BB診断 v76] preinput_access_token が未作成のため旧 token でURLを作成（DBパッチ07 適用前）');
+        tk = window.generatePreInputToken(id);
+      } else {
+        tk = res.data;
+        if (!tk) throw new Error('この診断はまだ保存されていないため、URLを作れません。保存してからもう一度お試しください。');
+      }
+      var base = 'https://gakusapo-andm.github.io/bb-shindan/customer/';
+      return base + '?id=' + encodeURIComponent(id) + '&tk=' + encodeURIComponent(tk)
+        + (size ? '&size=' + size : '') + (role === 'exec' ? '&role=exec' : '');
+    };
+    // 旧 token（移行期間の保険。DBパッチ07 適用前、または関数が無い環境でのみ使う）
     window.generatePreInputToken = function(id) {
       var s = id + 'gksp2026';
       var h = 0;
@@ -356,7 +401,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v75] Supabase接続完了');
+    console.log('[BB診断 v76] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -2807,7 +2852,7 @@ const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
   ping: async function(sb) {
-    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v75' };
+    return { success: true, message: 'pong (Supabase)', timestamp: new Date().toISOString(), version: 'v76' };
   },
 
   // ── デバッグデータロード（互換用）──
@@ -2951,6 +2996,7 @@ const SUPA_HANDLERS = {
       isDecisionMaker: c.isDecisionMaker ?? existingDiagData.isDecisionMaker ?? false,
       // v53-fix: 事前問診ステータス永続化（リロードでバッジが消えるのを防止）
       _preInputStatus: c._preInputStatus || existingDiagData._preInputStatus || '',
+      _draftId: c._draftId || existingDiagData._draftId || '', // v65: 新規保存の持ち主の印
     });
 
     var diagData = {
@@ -3005,10 +3051,30 @@ const SUPA_HANDLERS = {
       // selectエラー（updated_at列なし等）は保護なしで続行＝従来動作
     }
 
-    var res = await sb.from('bb_diagnoses')
-      .upsert(diagData, { onConflict: 'inquiry_no' })
-      .select('id, updated_at')
-      .single();
+    var res;
+    if (!c._dbUpdatedAt) {
+      // v65: 新規（DBから読んでいない）は insert。同じ番号が既にあれば上書きせずに止める。
+      //   例外: 前回の保存がDBに入ったのに返事が届かず、同じ画面から再保存した場合（下書きIDが一致）は続行
+      res = await sb.from('bb_diagnoses').insert(diagData).select('id, updated_at').single();
+      if (res.error && (res.error.code === '23505' || /duplicate key|unique/i.test(res.error.message || ''))) {
+        var own = await sb.from('bb_diagnoses')
+          .select('id, diagnosis_data, companies(name)')
+          .eq('inquiry_no', diagData.inquiry_no).maybeSingle();
+        var ownDraft = own.data && own.data.diagnosis_data && own.data.diagnosis_data._draftId;
+        if (!own.error && own.data && ownDraft && c._draftId && ownDraft === c._draftId) {
+          res = await sb.from('bb_diagnoses').update(diagData).eq('inquiry_no', diagData.inquiry_no).select('id, updated_at').single();
+        } else {
+          var otherName = (own.data && own.data.companies && own.data.companies.name) || '別の診断';
+          throw new Error('この問い合わせ番号（' + diagData.inquiry_no + '）は「' + otherName + '」で既に使われています。'
+            + '上書きを防ぐため保存を止めました。「＋新規診断」で番号を取り直してから入力し直してください。');
+        }
+      }
+    } else {
+      res = await sb.from('bb_diagnoses')
+        .upsert(diagData, { onConflict: 'inquiry_no' })
+        .select('id, updated_at')
+        .single();
+    }
     if (res.error) throw new Error('診断保存失敗: ' + res.error.message);
 
     // v56: 保存後のupdated_atを返却（クライアント側の_dbUpdatedAt更新用。返さないと次回保存で誤検知する）
@@ -3633,9 +3699,11 @@ const SUPA_HANDLERS = {
     if (res.error) throw new Error('採番失敗: ' + res.error.message);
 
     var inquiryNo = res.data;
-    var yy = inquiryNo.slice(4, 6);
-    var mm = inquiryNo.slice(8, 10);
-    var seq = parseInt(inquiryNo.slice(-3)) || 1;
+    // v65: 後ろから読む。担当者番号が5桁（例: 10000）だと番号が14桁になり、前から数えると年・月がずれる
+    //   構造: 担当者番号(4桁以上) + 年(2) + 業種(2) + 月(2) + 連番(3)
+    var seq = parseInt(inquiryNo.slice(-3), 10) || 1;
+    var mm = inquiryNo.slice(-5, -3);
+    var yy = inquiryNo.slice(-9, -7);
 
     return {
       success: true,
@@ -5896,6 +5964,134 @@ const INDUSTRY_CODES = {
 };
 
 // 問い合わせ番号生成ユーティリティ
+// v65: 事前問診の回答の経過（DBパッチ09 の preinput_timeline）。関数が無い環境では何も出さない
+const STEP_LABEL_JA = { companySize:'企業規模', jobType:'採用職種', target:'ターゲット学生', method:'採用手法', challenges:'課題・挑戦', staff:'担当者問診', executive:'上層部問診', funnel:'ファネル数値' };
+const fmtJst = (v) => v ? new Intl.DateTimeFormat('ja-JP', { timeZone:'Asia/Tokyo', month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(v)) : '—';
+const fmtSec = (n) => (n === null || n === undefined) ? '—' : (n >= 3600 ? Math.floor(n/3600) + '時間' + Math.floor((n%3600)/60) + '分' : Math.floor(n/60) + '分' + String(n%60).padStart(2,'0') + '秒');
+const PreInputTimeline = ({ inquiryNo }) => {
+  const [tl, setTl] = useState(null);
+  const [state, setState] = useState('loading');   // loading | ok | none | off
+  const load = React.useCallback(async () => {
+    try {
+      const sb = await ensureSupabase();
+      const { data, error } = await sb.rpc('preinput_timeline', { p_inquiry_no: inquiryNo });
+      if (error) { setState(/PGRST202|42883|Could not find the function|does not exist/i.test((error.message||'')+' '+(error.code||'')) ? 'off' : 'none'); return; }
+      setTl(data); setState(data && (data.staff || data.exec) ? 'ok' : 'none');
+    } catch (e) { setState('none'); }
+  }, [inquiryNo]);
+  useEffect(() => { load(); }, [load]);
+  if (state === 'off' || state === 'loading') return null;
+  const row = (label, r) => {
+    if (!r) return (
+      <div className="flex items-center gap-3 py-2 border-t border-gray-100 text-xs"><span className="w-16 text-gray-500">{label}</span><span className="text-gray-400">まだ開かれていません</span></div>
+    );
+    const quiz = r.quiz_started
+      ? (r.quiz_ended ? `${fmtSec(r.quiz_sec)}（${r.quiz_answered ?? '—'} / ${r.quiz_total ?? '—'}問${r.quiz_timeup ? '・時間切れ' : ''}）` : '回答中または中断')
+      : '未開始';
+    return (
+      <div className="py-2 border-t border-gray-100 text-xs">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="w-16 text-gray-500">{label}</span>
+          <span>初めて開いた <b className="font-mono">{fmtJst(r.first_open)}</b>（{r.opens}回）</span>
+          <span>送信 <b className="font-mono">{r.submitted ? fmtJst(r.submitted) : '未送信'}</b></span>
+          {r.total_sec !== null && r.total_sec !== undefined && <span>開始から送信まで <b className="font-mono">{fmtSec(r.total_sec)}</b></span>}
+        </div>
+        <div className="flex items-center gap-3 flex-wrap mt-1 pl-[76px] text-gray-600">
+          <span>問診 {quiz}</span>
+          {!r.submitted && r.last_step && <span>止まっている手順: {STEP_LABEL_JA[r.last_step] || r.last_step}</span>}
+          <span>最後の動き {fmtJst(r.last_activity)}</span>
+          {r.save_errors > 0 && <span className="text-red-600">保存の失敗 {r.save_errors}回</span>}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="mt-4 p-4 bg-white border border-gray-200 rounded-xl">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-xs font-bold text-gray-700">回答の経過</span>
+        <span className="text-[11px] text-gray-400">時刻は日本時間・サーバーで記録</span>
+        <button type="button" onClick={load} className="ml-auto text-[11px] px-2 py-1 rounded-md border border-gray-200 hover:bg-gray-50">更新</button>
+      </div>
+      {state === 'none' ? <div className="text-xs text-gray-400 py-2">まだ記録がありません（URLが開かれると記録されます）</div>
+        : <>{row('担当者', tl.staff)}{row('上層部', tl.exec)}</>}
+    </div>
+  );
+};
+
+// v76: 事前問診の「回答あり（未取込）」の知らせ（DBパッチ11 の preinput_inbox）。関数が無い環境では何も出さない
+//   取り込みは営業担当（診断の担当者）の仕事: 営業担当には自分の担当分を「要対応」、事務・管理者には全員分を「お知らせ」として出す
+const usePreinputInbox = () => {
+  const [inbox, setInbox] = useState({ items: [], scope: 'mine', role: '', off: false });
+  const load = React.useCallback(async () => {
+    try {
+      const sb = await ensureSupabase();
+      const { data, error } = await sb.rpc('preinput_inbox', { p_scope: 'auto' });
+      if (error) {
+        if (/PGRST202|42883|Could not find the function|does not exist/i.test((error.message||'')+' '+(error.code||''))) setInbox(v => ({ ...v, off: true }));
+        return;
+      }
+      setInbox({ items: (data && data.items) || [], scope: (data && data.scope) || 'mine', role: (data && data.role) || '', off: false });
+    } catch (e) { /* 通知の取得失敗は本体の操作に影響させない */ }
+  }, []);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5 * 60 * 1000);   // 5分ごとに見直す
+    const onFocus = () => load();                    // 画面に戻ったときも見直す
+    window.addEventListener('focus', onFocus);
+    window.bbReloadInbox = load;
+    return () => { clearInterval(t); window.removeEventListener('focus', onFocus); };
+  }, [load]);
+  return inbox;
+};
+const PreinputBell = ({ inbox, onOpen }) => {
+  const [open, setOpen] = useState(false);
+  if (inbox.off) return null;
+  const n = inbox.items.length;
+  const isMine = inbox.scope === 'mine';
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="relative p-2.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+        title={isMine ? '事前問診の回答（取り込みが必要）' : '事前問診の回答（全員分・未取込）'} aria-label={`事前問診の未取込の回答 ${n}件`}>
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+        </svg>
+        {n > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">{n > 99 ? '99+' : n}</span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 overflow-auto bg-white border border-gray-200 rounded-xl shadow-xl z-50 no-print" style={{ width: 380, maxHeight: '70vh' }}>
+          <div className="px-4 py-3 border-b border-gray-100">
+            <div className="text-sm font-bold text-gray-800">{isMine ? '事前問診の回答が届いています' : '事前問診の未取込（全員分）'}</div>
+            <div className="text-[11px] text-gray-500 mt-0.5">{isMine ? '開いて「事前データ取込」を押すと、この一覧から消えます' : '取り込みは各担当者が行います'}</div>
+          </div>
+          {n === 0 ? <div className="px-4 py-6 text-center text-xs text-gray-400">未取込の回答はありません</div> : inbox.items.map(it => (
+            <div key={it.inquiry_no} className="px-4 py-3 border-t border-gray-50 flex items-start gap-3">
+              <span className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${isMine ? 'bg-red-600' : 'bg-amber-500'}`}></span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-gray-800 truncate">{it.company || '（会社名未設定）'}</div>
+                <div className="text-[11px] text-gray-500 mt-0.5">
+                  {[it.staff_done && '担当者の回答', it.exec_done && '上層部の回答'].filter(Boolean).join('・')}
+                  {' ・ '}{fmtJst(it.answered_at)}
+                  {it.staff_quiz_sec ? ` ・ 問診 ${fmtSec(it.staff_quiz_sec)}` : ''}
+                  {!isMine && it.assignee_name ? ` ・ 担当 ${it.assignee_name}` : ''}
+                </div>
+                <div className="text-[11px] text-gray-400 font-mono mt-0.5">No. {it.inquiry_no}{it.diagnosis_date ? ` ・ 商談 ${it.diagnosis_date}` : ''}</div>
+              </div>
+              <button type="button" onClick={() => { setOpen(false); onOpen(it.inquiry_no); }}
+                className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 flex-shrink-0">開く</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// v65: 新規診断ごとの下書きID（自分の新規保存を見分ける）
+const newDraftId = () => window.newDraftIdImpl();
+
 const InquiryNoManager = {
   // 年コードを生成（2026年 → 26）
   getYearCode: (dateStr) => {
@@ -5954,36 +6150,16 @@ const InquiryNoManager = {
     }
   },
   
-  // v34: ローカルフォールバック（GAS未接続時 or スタンドアロンモード用）
-  generateNextInquiryNoLocal: (industry = '', diagnosisDate = '') => {
-    const gasStudentId = window.GAS_CONFIG?.studentId || null; // v58: 恒真三項を畳み込み
-    const studentId = (gasStudentId || StorageManager.getStudentId()).padStart(4, '0');
-    const year = InquiryNoManager.getYearCode(diagnosisDate);
-    const month = InquiryNoManager.getMonthCode(diagnosisDate);
-    const yearMonth = year + month;
-    const nextCount = StorageManager.getMonthlyCount(yearMonth) + 1;
-    const countStr = String(nextCount).padStart(3, '0');
-    const industryCode = InquiryNoManager.getIndustryCode(industry);
-    return `${studentId}${year}${industryCode}${month}${countStr}`;
+  // v65: 画面内での採番（ローカル採番）は廃止。連番が常に001になり、他の診断の番号と重なって
+  //   上書きの原因になっていた。番号はサーバー（reserve_inquiry_no）だけで決める。
+  // v65: 採番した年月（yearMonth = YYMM）で番号を組み立てる。診断日を変えても番号の月は変えない
+  buildFromReserved: (studentId, industry, yearMonth, seqNo) => {
+    const sid = String(studentId || '0000').padStart(4, '0');
+    const ic = InquiryNoManager.getIndustryCode(industry);
+    const yy = String(yearMonth || '').slice(0, 2), mm = String(yearMonth || '').slice(2, 4);
+    return `${sid}${yy}${ic}${mm}${String(seqNo || 1).padStart(3, '0')}`;
   },
-  
-  // 後方互換: 同期版（初期state等で使用 - localStorageベース）
-  generateNextInquiryNo: (industry = '', diagnosisDate = '') => {
-    return InquiryNoManager.generateNextInquiryNoLocal(industry, diagnosisDate);
-  },
-  
-  // 保存時に商談数をインクリメント（スタンドアロンモード用のみ。GASモードではサーバーで管理済み）
-  confirmInquiryNo: (diagnosisDate = '') => {
-    // GASモードではサーバー側で予約済みのためスキップ
-    if (true) { // v58: 恒真（採番はreserve_inquiry_no RPCでサーバー管理。ローカルカウントは常にスキップ）
-      console.log('[InquiryNoManager] confirmInquiryNoスキップ（サーバー管理）');
-      return 0;
-    }
-    const year = InquiryNoManager.getYearCode(diagnosisDate);
-    const month = InquiryNoManager.getMonthCode(diagnosisDate);
-    const yearMonth = year + month;
-    return StorageManager.incrementMonthlyCount(yearMonth);
-  }
+
 };
 
 // ========================================
@@ -9227,7 +9403,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
               <label className="block text-sm font-medium text-gray-700 mb-2">診断日</label>
               <input
                 type="date"
-                value={(data.diagnosisDate || '').split(/[\sT]/)[0] || new Date().toISOString().split('T')[0]}
+                value={(data.diagnosisDate || '').split(/[\sT]/)[0] || window.jstToday()}
                 onChange={(e) => onChange({ ...data, diagnosisDate: e.target.value })}
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
               />
@@ -9237,6 +9413,14 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
               <div className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-lg tracking-wider text-gray-700">
                 {data.inquiryNo || '-------------'}
               </div>
+              {!data.inquiryNo && !data.id && (
+                /* v65: サーバーで採番できていないときだけ出す（この状態では保存できない） */
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-red-600">番号が未採番のため保存できません</span>
+                  <button type="button" onClick={() => window.bbRetryInquiryNo && window.bbRetryInquiryNo()}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50">番号を取り直す</button>
+                </div>
+              )}
             </div>
           </div>
           
@@ -9245,7 +9429,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
               3ボタン構成: 担当者URL / 上層部URL / データ取込
               - 担当者URLと上層部URLを分離することで、BB診断の②→④の流れで担当者URLを、
                 ⑤の流れで上層部URLをそれぞれ発行できる。
-              - URL生成はクライアントサイド完結（generatePreInputToken + getCompanySizeCategory）。
+              - URL生成は v64 から token を DB で取得（buildPreInputUrl。パッチ07未適用時のみ旧 token）。
               - 上層部URLには必ず &size= を含める（事前問診側fix#5のガード条件）。
               - データ取込は handleImportPreInput() を呼び出し、確認後にcurrentDataにマージ。
           */}
@@ -9277,12 +9461,11 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                     採用担当者に送付する事前問診フォームのURLです。
                   </p>
                   <button
-                    onClick={() => {
-                      const id = data.inquiryNo;
-                      const tk = window.generatePreInputToken(id);
-                      const size = getCompanySizeCategory(data.companySize);
-                      const base = 'https://gakusapo-andm.github.io/bb-shindan/customer/';
-                      const url = base + '?id=' + encodeURIComponent(id) + '&tk=' + tk + (size ? '&size=' + size : '');
+                    onClick={async () => {
+                      // v64: token は DB から取得（window.buildPreInputUrl）
+                      let url;
+                      try { url = await window.buildPreInputUrl(data.inquiryNo, getCompanySizeCategory(data.companySize), 'staff'); }
+                      catch (e) { alert(e.message); return; }
                       navigator.clipboard.writeText(url).then(() => {
                         alert('担当者用URLをコピーしました。\n\n' + url);
                       }).catch(() => {
@@ -9305,12 +9488,11 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                     経営層・管理職に送付する上層部専用問診URLです。
                   </p>
                   <button
-                    onClick={() => {
-                      const id = data.inquiryNo;
-                      const tk = window.generatePreInputToken(id);
-                      const size = getCompanySizeCategory(data.companySize);
-                      const base = 'https://gakusapo-andm.github.io/bb-shindan/customer/';
-                      const url = base + '?id=' + encodeURIComponent(id) + '&tk=' + tk + (size ? '&size=' + size : '') + '&role=exec';
+                    onClick={async () => {
+                      // v64: token は DB から取得（window.buildPreInputUrl）
+                      let url;
+                      try { url = await window.buildPreInputUrl(data.inquiryNo, getCompanySizeCategory(data.companySize), 'exec'); }
+                      catch (e) { alert(e.message); return; }
                       navigator.clipboard.writeText(url).then(() => {
                         alert('上層部用URLをコピーしました。\n\n' + url);
                       }).catch(() => {
@@ -9343,6 +9525,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                   </button>
                 </div>
               </div>
+              <PreInputTimeline inquiryNo={data.inquiryNo} />
             </div>
           )}
           {/* v53-fix: 未保存時は事前問診URLを発行できないことを案内 */}
@@ -11828,7 +12011,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
           <div className="text-right">
             <div className="text-lg font-bold text-gray-800">{data.companyName || '企業名未設定'}</div>
             <div className="text-xs text-gray-500">
-              分析年月日：{data.diagnosisDate ? new Date(data.diagnosisDate).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '年').replace(/年(\d+)$/, '月$1日') : '---'}
+              分析年月日：{data.diagnosisDate ? new Date(window.bbDatePart(data.diagnosisDate) + 'T00:00:00').toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '年').replace(/年(\d+)$/, '月$1日') : '---'}
             </div>
             <div className="text-xs text-gray-500">問い合わせ番号：{data.inquiryNo || '-------------'}</div>
           </div>
@@ -12288,7 +12471,7 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
 // 顧客データベース（スプレッドシート形式）
 // ========================================
 
-const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
+const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId, pendingPreinputNos }) => {
   const [searchText, setSearchText] = useState('');
   const [searchInquiryNo, setSearchInquiryNo] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -12539,6 +12722,10 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
                     </td>
                     <td className="px-3 py-2.5 font-medium text-gray-800">
                       {c.companyName || '未設定'}
+                      {pendingPreinputNos && pendingPreinputNos.has(c.inquiryNo) && (
+                        /* v76: 事前問診の回答あり（未取込） */
+                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 align-middle">回答あり・未取込</span>
+                      )}
                       {c.contactName && (
                         <span className="text-xs text-gray-400 ml-2">({c.contactName})</span>
                       )}
@@ -12547,7 +12734,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
                       {c.industry || '-'}
                     </td>
                     <td className="px-3 py-2.5 text-gray-600">
-                      {c.diagnosisDate || '-'}
+                      {window.bbDatePart(c.diagnosisDate) || '-'}
                     </td>
                     <td className="px-3 py-2.5 text-center">
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold rank-${rank.toLowerCase()}`}>
@@ -12594,7 +12781,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId }) => {
                       </span>
                     </div>
                     <div className="text-xs text-gray-500 space-y-0.5">
-                      <div>{c.diagnosisDate} | {c.industry || '業種未設定'}</div>
+                      <div>{window.bbDatePart(c.diagnosisDate) || '-'} | {c.industry || '業種未設定'}</div>
                       <div className="font-mono text-gray-400">{c.inquiryNo || '-'}</div>
                     </div>
                   </div>
@@ -16675,7 +16862,7 @@ const App = () => {
   // AI診断モーダル表示（ヘッダーから起動用）
   const [showAIDiagnosis, setShowAIDiagnosis] = useState(false);
   
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = window.jstToday(); // v65: 日本時間
   
   // 歩留まり率マスターを取得（GASモードの場合はスプレッドシートから）
   const savedYieldMaster = GASDataManager.getYieldMaster();
@@ -16687,7 +16874,8 @@ const App = () => {
     industry: '',
     companySize: '',
     diagnosisDate: todayStr,
-    inquiryNo: InquiryNoManager.generateNextInquiryNo('', todayStr),
+    inquiryNo: '', // v65: 番号はサーバーで採番（ログイン後の useEffect）
+    _draftId: newDraftId(), // v65: 自分の新規保存を見分ける印
     assigneeId: (() => {
       const gasId = window.GAS_CONFIG?.studentId || null; // v58: 恒真三項を畳み込み
       return String(gasId || StorageManager.getStudentId() || '0001').padStart(4, '0');
@@ -16884,43 +17072,48 @@ const App = () => {
       ).padStart(4, '0');
       
       // v34: 予約済み通番がある場合は業種コード部分だけ差し替え（新たな採番は不要）
-      if (currentData.reservedSeqNo) {
-        const newNo = InquiryNoManager.buildInquiryNo(
-          currentStudentId, currentData.industry, currentData.diagnosisDate, currentData.reservedSeqNo
+      // v65: 月は採番した年月で固定（診断日の月は使わない）。未採番なら何もしない（ローカル採番は廃止）
+      if (currentData.reservedSeqNo && currentData.reservedYM) {
+        const newNo = InquiryNoManager.buildFromReserved(
+          currentStudentId, currentData.industry, currentData.reservedYM, currentData.reservedSeqNo
         );
         setCurrentData(prev => ({
           ...prev,
           inquiryNo: newNo,
           assigneeId: currentStudentId
         }));
-      } else {
-        // フォールバック: ローカル生成（初回ログイン直後等）
-        setCurrentData(prev => ({
-          ...prev,
-          inquiryNo: InquiryNoManager.generateNextInquiryNoLocal(prev.industry, prev.diagnosisDate),
-          assigneeId: currentStudentId
-        }));
       }
     }
   }, [isLoggedIn, studentId, currentData.industry, currentData.diagnosisDate]);
   
-  // v34: ログイン後の初回サーバー採番（新規診断状態で未予約の場合）
+  // v76: 事前問診の未取込の回答（鈴と顧客一覧の印）
+  const preinputInbox = usePreinputInbox();
+  const pendingPreinputNos = React.useMemo(() => new Set(preinputInbox.items.map(x => x.inquiry_no)), [preinputInbox.items]);
+  // v65: サーバー採番（初回・新規・取り直しで共通）。失敗したら番号を空のままにし、取り直しを促す
+  const reserveNumber = React.useCallback(async (industry) => {
+    const reserved = await InquiryNoManager.reserveFromServer(industry || '', '');
+    if (reserved) {
+      setCurrentData(prev => prev.id ? prev : ({
+        ...prev,
+        inquiryNo: InquiryNoManager.buildFromReserved(
+          String(window.GAS_CONFIG?.studentId || StorageManager.getStudentId() || '0001').padStart(4, '0'),
+          prev.industry, reserved.yearMonth, reserved.sequentialNo),
+        reservedSeqNo: reserved.sequentialNo,
+        reservedYM: reserved.yearMonth
+      }));
+      return true;
+    }
+    toast(window.AUTH?.isLoggedIn === false
+      ? 'ログインの期限が切れています。ログインし直してから「番号を取り直す」を押してください。'
+      : '問い合わせ番号を採番できませんでした。通信を確かめて、基本情報の「番号を取り直す」を押してください。', 'error');
+    return false;
+  }, []);
+  // 基本情報の「番号を取り直す」ボタンから呼ぶ
+  useEffect(() => { window.bbRetryInquiryNo = () => reserveNumber(currentData.industry); }, [reserveNumber, currentData.industry]);
+  // ログイン後の初回サーバー採番（新規診断状態で未予約の場合）
   useEffect(() => {
     if (isLoggedIn && isGasMode && !currentData.id && !currentData.reservedSeqNo && window.AUTH?.isLoggedIn) {
-      (async () => {
-        try {
-          const reserved = await InquiryNoManager.reserveFromServer(currentData.industry, currentData.diagnosisDate);
-          if (reserved) {
-            setCurrentData(prev => ({
-              ...prev,
-              inquiryNo: reserved.inquiryNo,
-              reservedSeqNo: reserved.sequentialNo
-            }));
-          }
-        } catch (e) {
-          console.log('[初回採番] フォールバック使用:', e.message);
-        }
-      })();
+      reserveNumber(currentData.industry);
     }
   }, [isLoggedIn]);
   
@@ -17013,18 +17206,17 @@ const App = () => {
     setSaveComplete(false);
     
     try {
-      // 新規保存の場合のみ商談カウントをインクリメント
-      const isNew = !currentData.id;
-      if (isNew) {
-        InquiryNoManager.confirmInquiryNo(currentData.diagnosisDate);
+      // v65: 番号が無い（サーバーで採番できていない）新規は保存しない
+      if (!currentData.id && !currentData.inquiryNo) {
+        toast('問い合わせ番号がまだありません。基本情報の「番号を取り直す」を押してから保存してください。', 'error');
+        return false;
       }
       
       // 診断日に時刻が含まれていない場合、現在時刻を付加
       let diagnosisDateWithTime = currentData.diagnosisDate || '';
       if (diagnosisDateWithTime && !diagnosisDateWithTime.includes(' ') && !diagnosisDateWithTime.includes('T')) {
-        const now = new Date();
-        const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-        diagnosisDateWithTime = diagnosisDateWithTime + ' ' + timeStr;
+        // v65: 時刻は日本時間（従来どおり「YYYY-MM-DD HH:mm」の書き方。既存データと形をそろえる）
+        diagnosisDateWithTime = diagnosisDateWithTime + ' ' + window.jstNowHM();
       }
       
       const toSave = {
@@ -17342,6 +17534,12 @@ const App = () => {
             setCurrentData(prev => ({ ...prev, _dbUpdatedAt: importSaveRes.updatedAt }));
           }
           await refreshCustomers();
+          // v76: 取り込んだことを記録（鈴と一覧の印が消える）。失敗しても取り込み自体は成功扱い
+          try {
+            const sbm = await ensureSupabase();
+            await sbm.rpc('preinput_mark_imported', { p_inquiry_no: inquiryNo });
+            window.bbReloadInbox && window.bbReloadInbox();
+          } catch (e) { console.warn('[v76] 取込の記録に失敗:', e && e.message); }
           toast('事前問診データを取り込み・保存しました', 'success');
         } catch (saveErr) {
           console.error('事前問診取込後の自動保存エラー:', saveErr);
@@ -17375,26 +17573,24 @@ const App = () => {
     if (isCreatingNew) return;
     setIsCreatingNew(true);
     try {
-    const newDate = new Date().toISOString().split('T')[0];
+    const newDate = window.jstToday(); // v65: 日本時間
     // マスターデータは現在の値を維持
     const currentYieldMaster = GASDataManager.getYieldMaster();
     const currentMethodMaster = GASDataManager.getMethodMaster() || DEFAULT_RECRUITMENT_METHODS;
     const currentLayerMediaUsage = GASDataManager.getMediaUsageMaster() || DEFAULT_LAYER_MEDIA_USAGE;
     
     // v34: GASモードではサーバーから通番を予約
+    // v65: サーバー採番のみ。失敗したら番号は空（保存時に止め、取り直しを促す）
     let inquiryNo = '';
     let reservedSeqNo = null;
-    if (isGasMode && window.AUTH?.isLoggedIn) {
-      const reserved = await InquiryNoManager.reserveFromServer('', newDate);
-      if (reserved) {
-        inquiryNo = reserved.inquiryNo;
-        reservedSeqNo = reserved.sequentialNo;
-      } else {
-        // フォールバック: ローカル生成
-        inquiryNo = InquiryNoManager.generateNextInquiryNoLocal('', newDate);
-      }
+    let reservedYM = null;
+    const reserved = await InquiryNoManager.reserveFromServer('', newDate);
+    if (reserved) {
+      inquiryNo = reserved.inquiryNo;
+      reservedSeqNo = reserved.sequentialNo;
+      reservedYM = reserved.yearMonth;
     } else {
-      inquiryNo = InquiryNoManager.generateNextInquiryNoLocal('', newDate);
+      toast('問い合わせ番号を採番できませんでした。通信を確かめて、基本情報の「番号を取り直す」を押してください。', 'error');
     }
     
     setCurrentData({
@@ -17406,6 +17602,8 @@ const App = () => {
       diagnosisDate: newDate,
       inquiryNo: inquiryNo,
       reservedSeqNo: reservedSeqNo, // v34: サーバー予約済み通番を保持
+      reservedYM: reservedYM,       // v65: 採番した年月（番号の月はこれで固定）
+      _draftId: newDraftId(),       // v65: 自分の新規保存を見分ける印
       staffScores: {},
       executiveScores: {},
       studentScores: {},
@@ -18076,6 +18274,12 @@ const App = () => {
                 </svg>
               </button>
             )}
+            {/* v76: 事前問診の回答の知らせ */}
+            <PreinputBell inbox={preinputInbox} onOpen={(no) => {
+              const c = (customers || []).find(x => x.inquiryNo === no || x.id === no);
+              if (c) { handleSelect(c); setView('input'); }
+              else toast('この診断が一覧に見つかりません（担当外の可能性）。顧客DBで番号を検索してください。', 'warning', 4000);
+            }} />
             {/* 学生番号表示 */}
             <button
               onClick={() => setShowSettings(true)}
@@ -18102,7 +18306,7 @@ const App = () => {
               ) : '+ 新規診断'}
             </button>
             <button 
-              onClick={handleSave}
+              onClick={() => handleSave(false)} /* v65: 旧 onClick={handleSave} はクリックイベントが silent 引数に入り、成功・失敗の通知が常に出ていなかった */
               disabled={isSaving}
               className={`btn-ripple px-4 py-2.5 text-sm rounded-xl font-medium shadow-lg transition flex items-center gap-1.5 min-w-[90px] justify-center ${
                 saveComplete
@@ -18358,6 +18562,7 @@ const App = () => {
             )}
             <CustomerDatabase 
               customers={customers}
+              pendingPreinputNos={pendingPreinputNos}
               onSelect={(c) => { handleSelect(c); setView('input'); }}
               onDelete={handleDelete}
               selectedId={currentData.id}
