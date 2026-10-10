@@ -110,6 +110,16 @@
        表示のみ・計算無変更 -->
   <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
        DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v77: 「他の端末・タブでこの診断が更新されています」で保存できない誤検知の修正（2026-10-10）
+       [症状] 一人で操作しているのに保存が断られる。一度断られると再読み込みするまで何度押しても断られる。
+       [根因] 楽観ロックが bb_diagnoses.updated_at を比べていた。updated_at は moddatetime トリガーで「どんな UPDATE でも」進むため、
+         画面の保存以外の書き込み — AI診断の履歴保存(saveAIHistory: ai_result の UPDATE)・引き継ぎ(assignee_id)・
+         DB関数(事前問診URLの鍵の発行・取込の記録 等) — でも進み、画面の _dbUpdatedAt は古いまま残っていた。
+         とくに「診断開始→AI生成→基本情報で保存」はほぼ毎回これに当たる。
+       [直し] 比べるものを「画面の保存が書いた印」に変更。saveCustomer が保存のたびに diagnosis_data._saveToken（乱数）を書き、
+         保存前に DB の diagnosis_data->>_saveToken と画面が持つ _dbSaveToken を比べる。ほかの書き込みは diagnosis_data を変えないので誤検知しない。
+         別の端末・タブで本当に保存された場合だけ断る（本来の目的は維持）。印がまだ無い既存行は、最初の1回だけ従来どおり保護なしで保存し印を付ける。
+       [予防] 楽観ロックの基準は「その画面が書く物だけが動かす値」にする。トリガーで進む updated_at を基準にしない。DB変更なし -->
   <!-- v76（旧・作業名 v65）: 問診番号の重なりによる他社診断の上書きを防止（2026-09-25）
        [X1] 新規保存は insert（同じ番号があれば止める）。返事が届かず再保存した「自分の保存」だけは下書きIDで見分けて続行
        [X1-a,b] 画面内での採番（ローカル採番）を廃止。サーバーで採番できなければ保存しない（取り直しボタン）
@@ -2910,6 +2920,8 @@ const SUPA_HANDLERS = {
         _companyId: row.company_id,
         // v56: 楽観ロック用（handleSaveでupdatedAtがクライアント時刻に上書きされるため別名で保持）
         _dbUpdatedAt: row.updated_at || null,
+        // v77: 楽観ロックの基準（画面の保存だけが書く印）。updated_at はAI履歴・引き継ぎ・DB関数でも進むため基準にしない
+        _dbSaveToken: (row.diagnosis_data && row.diagnosis_data._saveToken) || null,
       };
     });
     return { success: true, customers: customers };
@@ -2963,6 +2975,7 @@ const SUPA_HANDLERS = {
     // v50: diagnosis_data に全データバックアップを構築
     // normalizeGASCustomer が fullData から復元する全フィールドを網羅する
     var existingDiagData = (c.diagnosisData && typeof c.diagnosisData === 'object' && Object.keys(c.diagnosisData).length > 0) ? c.diagnosisData : {};
+    var newSaveToken = window.newDraftIdImpl(); // v77: この保存の印（楽観ロック用）
     var fullBackup = Object.assign({}, existingDiagData, {
       // 回答データ（個別カラムにも保存するが、バックアップとしても保持）
       staffAnswers: c.staffAnswers || existingDiagData.staffAnswers || {},
@@ -2997,6 +3010,7 @@ const SUPA_HANDLERS = {
       // v53-fix: 事前問診ステータス永続化（リロードでバッジが消えるのを防止）
       _preInputStatus: c._preInputStatus || existingDiagData._preInputStatus || '',
       _draftId: c._draftId || existingDiagData._draftId || '', // v65: 新規保存の持ち主の印
+      _saveToken: newSaveToken, // v77: 画面の保存だけが書く印。楽観ロックはこれを比べる
     });
 
     var diagData = {
@@ -3033,22 +3047,26 @@ const SUPA_HANDLERS = {
       diagData.assignee_id = c.assigneeId;
     }
 
-    // v56: 楽観ロック（同時編集の後勝ち全置換による巻き戻り防止）
-    // 前提: bb_diagnoses.updated_at がUPDATE時に自動更新されること（moddatetimeトリガー等）。
-    // トリガー未設定の環境では両者が常に一致するため従来動作（保護なし）で素通りする。
+    // v56→v77: 楽観ロック（同時編集の後勝ち全置換による巻き戻り防止）
+    // v77: 比べるのは updated_at ではなく diagnosis_data._saveToken。
+    //   updated_at は moddatetime トリガーで AI履歴保存・引き継ぎ・DB関数の UPDATE でも進むため、
+    //   一人で操作していても「他の端末で更新」と誤判定していた。_saveToken は saveCustomer だけが書く。
+    //   条件: c._dbUpdatedAt がある＝DBから読んだ行（fullSync・一括アップロードは消してから呼ぶ＝保護なしの上書き操作）
     if (c._dbUpdatedAt && (c.inquiryNo || c.id)) {
       var lockRes = await sb.from('bb_diagnoses')
-        .select('updated_at')
+        .select('tok:diagnosis_data->>_saveToken')
         .eq('inquiry_no', c.inquiryNo || c.id)
         .maybeSingle();
-      if (!lockRes.error && lockRes.data && lockRes.data.updated_at) {
-        var dbTime = new Date(lockRes.data.updated_at).getTime();
-        var myTime = new Date(c._dbUpdatedAt).getTime();
-        if (!isNaN(dbTime) && !isNaN(myTime) && dbTime !== myTime) {
-          throw new Error('他の端末・タブでこの診断が更新されています。データを再読み込みしてから保存してください。');
+      if (!lockRes.error && lockRes.data) {
+        var dbTok = lockRes.data.tok || null;
+        var myTok = c._dbSaveToken || null;
+        // 両方とも印なし＝v77以前に保存された行の最初の保存 → 従来どおり通して印を付ける
+        if (dbTok !== myTok) {
+          throw new Error('別の端末・タブでこの診断が保存されています（あなたの画面の内容は古い可能性があります）。'
+            + '画面を再読み込みして最新の内容を確認してから、入力し直して保存してください。');
         }
       }
-      // selectエラー（updated_at列なし等）は保護なしで続行＝従来動作
+      // selectエラーは保護なしで続行＝従来動作
     }
 
     var res;
@@ -3078,7 +3096,7 @@ const SUPA_HANDLERS = {
     if (res.error) throw new Error('診断保存失敗: ' + res.error.message);
 
     // v56: 保存後のupdated_atを返却（クライアント側の_dbUpdatedAt更新用。返さないと次回保存で誤検知する）
-    return { success: true, data: { id: c.inquiryNo || c.id, updatedAt: res.data ? res.data.updated_at : null } };
+    return { success: true, data: { id: c.inquiryNo || c.id, updatedAt: res.data ? res.data.updated_at : null, saveToken: newSaveToken } };
   },
 
   // ── 顧客データ削除 ──
@@ -17245,6 +17263,10 @@ const App = () => {
         if (saveRes && saveRes.updatedAt) {
           toSave._dbUpdatedAt = saveRes.updatedAt;
         }
+        // v77: 次の保存の楽観ロック基準（この保存で書いた印）
+        if (saveRes && saveRes.saveToken) {
+          toSave._dbSaveToken = saveRes.saveToken;
+        }
         // v61-fix: 旧実装の setCurrentData(toSave) は「保存開始時点のスナップショット」で
         // 全置換するため、保存await中（数百ms〜数秒）にユーザーが入力した値
         // （目標人数等）が保存完了時に巻き戻されて消えていた。
@@ -17255,7 +17277,8 @@ const App = () => {
           updatedAt: toSave.updatedAt,
           aiResult: prev.aiResult || toSave.aiResult,
           savedQuestionMaster: prev.savedQuestionMaster || toSave.savedQuestionMaster,
-          _dbUpdatedAt: toSave._dbUpdatedAt ?? prev._dbUpdatedAt
+          _dbUpdatedAt: toSave._dbUpdatedAt ?? prev._dbUpdatedAt,
+          _dbSaveToken: toSave._dbSaveToken ?? prev._dbSaveToken // v77
         }));
         await refreshCustomers();
         if (!silent) {
@@ -17531,7 +17554,7 @@ const App = () => {
           const importSaveRes = await GASDataManager.saveCustomer(saveData);
           // v56: 保存後のupdated_atをcurrentDataに反映（次回手動保存での楽観ロック誤検知防止）
           if (importSaveRes && importSaveRes.updatedAt) {
-            setCurrentData(prev => ({ ...prev, _dbUpdatedAt: importSaveRes.updatedAt }));
+            setCurrentData(prev => ({ ...prev, _dbUpdatedAt: importSaveRes.updatedAt, _dbSaveToken: importSaveRes.saveToken ?? prev._dbSaveToken })); // v77
           }
           await refreshCustomers();
           // v76: 取り込んだことを記録（鈴と一覧の印が消える）。失敗しても取り込み自体は成功扱い
