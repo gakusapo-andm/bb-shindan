@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -110,6 +111,9 @@
        表示のみ・計算無変更 -->
   <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
        DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v82c: 手法名を大きく（text-sm→text-base・太字）、説明を10px→12px。採用手法タブの「予算」「順位」「開始」の見出しを入力欄の左に（枠の上→左。行が低くなり見やすく）（2026-10-19） -->
+  <!-- v82b: タブ名「ターゲット学生」→「ターゲット」。採用手法タブ: 使っている手法の行を青枠で強調し、予算・順位・開始時期の欄を大きく、未入力はオレンジ、
+       上に「選んだ手法／未入力の件数」のまとめを表示（入れ忘れ防止）。使っていない手法の入力欄は隠す（2026-10-19） -->
   <!-- v82: ターゲット層の見直し 第1段（2026-10-19・DBパッチ16/16b/16c とセット・事前問診 v3.9 とセット）
        [層] 新しいターゲット層 A 文系／B 理系／C 専門学校（介護系・建築系）／D 高卒／E その他（中途・第二新卒）。targetLayers に新キー（bunkei 等）＋ layerModel: 2。
             文系・理系は「主に狙う大学（上位校／中堅校／地元の大学・その他）」。割合は自動（いちばん採りたい層60%・残り均等）で、ターゲット学生タブで直せる。
@@ -468,7 +472,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v82] Supabase接続完了');
+    console.log('[BB診断 v82c] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -9724,6 +9728,13 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
 };
 
 
+// v82b: 採用手法タブの入力欄（大きく・未入力はオレンジ）
+const methodInputCls = (m, field) => {
+  const v = m ? m[field] : undefined;
+  const empty = field === 'priority' ? !v : (v === undefined || v === '' || v === null);
+  return 'w-20 px-2 py-2 border rounded-lg text-center text-base ' + (empty ? 'border-orange-400 bg-orange-50' : 'border-gray-300 bg-white font-bold');
+};
+
 // ========================================
 // v82: ターゲット学生タブ（新しいターゲット層 A〜E）
 //   層を選ぶ／外す・いちばん採りたい層を変えると、割合を自動で入れ直す（いちばん60%・残り均等）。割合は手で直せる
@@ -9857,7 +9868,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
   
   const tabs = [
     { id: 'basic', label: '基本情報' },
-    { id: 'target', label: 'ターゲット学生' },
+    { id: 'target', label: 'ターゲット' }, // v82b
     { id: 'method', label: '採用手法' },
     { id: 'funnel', label: 'ファネル数値' }, // v79: 採用担当者問診の前へ
     { id: 'staff', label: '採用担当者問診' },
@@ -10535,6 +10546,24 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             
             return (
               <>
+                {/* v82b: 入れ忘れを防ぐまとめ */}
+                {(() => {
+                  const act = Object.entries(data.recruitmentMethods || {}).filter(([k, m]) => m?.active && RECRUITMENT_METHODS[k]);
+                  const noBudget = act.filter(([k, m]) => m.budget === undefined || m.budget === '' || m.budget === null).length;
+                  const noPrio = act.filter(([k, m]) => !m.priority).length;
+                  const noStart = showStart ? act.filter(([k, m]) => !m.startMonth && !isMidCareerOnlyMethod(k, segMaster)).length : 0;
+                  const ok = act.length > 0 && noBudget + noPrio + noStart === 0;
+                  return (
+                    <div className={`mb-5 p-3 rounded-xl border-2 flex flex-wrap items-center gap-x-5 gap-y-1 ${ok ? 'border-green-300 bg-green-50' : 'border-orange-300 bg-orange-50'}`}>
+                      <span className="text-sm font-bold text-gray-800">選んだ手法 {act.length}件</span>
+                      <span className={`text-sm ${noBudget ? 'font-bold text-orange-700' : 'text-gray-600'}`}>投資予算額 未入力 {noBudget}件</span>
+                      <span className={`text-sm ${noPrio ? 'font-bold text-orange-700' : 'text-gray-600'}`}>注力順位 未入力 {noPrio}件</span>
+                      {showStart && <span className={`text-sm ${noStart ? 'font-bold text-orange-700' : 'text-gray-600'}`}>開始時期 未入力 {noStart}件</span>}
+                      <span className="text-xs text-gray-500">使っている手法にチェックを入れると、入力欄が出ます（未入力はオレンジ）</span>
+                    </div>
+                  );
+                })()}
+
                 {/* カテゴリごとにグループ化 */}
                 {methodGroups.map(([category, methods]) => {
                   if (methods.length === 0) return null;
@@ -10547,7 +10576,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                 </h4>
                 <div className="space-y-2">
                   {methods.map(([key, method]) => (
-                    <div key={key} className="bg-gray-50 rounded-xl overflow-hidden">
+                    <div key={key} className={`rounded-xl overflow-hidden ${data.recruitmentMethods?.[key]?.active ? 'bg-blue-50 border-2 border-blue-400' : 'bg-gray-50 border-2 border-transparent'}`}>
                       <div className="grid grid-cols-12 gap-3 items-center p-3">
                         {/* チェックボックス（左側） */}
                         <div className="col-span-1 flex justify-center">
@@ -10567,12 +10596,12 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                         </div>
                         {/* ツール名・説明 */}
                         <div className={showStart ? 'col-span-4' : 'col-span-5'}>
-                          <div className="font-medium text-gray-800 text-sm">{method.name}</div>
-                          <div className="text-[10px] text-gray-500">{method.description}</div>
+                          <div className="font-bold text-gray-800 text-base">{method.name}</div>
+                          <div className="text-xs text-gray-500">{method.description}</div>
                         </div>
                         {/* 投資予算額 */}
-                        <div className={showStart ? 'col-span-2' : 'col-span-3'}>
-                          <label className="block text-[10px] text-gray-500 mb-1">投資予算額</label>
+                        <div className={(showStart ? 'col-span-2' : 'col-span-3') + ' flex items-center gap-2'} style={{ visibility: data.recruitmentMethods?.[key]?.active ? 'visible' : 'hidden' }}>
+                          <span className="text-sm font-bold text-gray-600 whitespace-nowrap">予算</span>
                           <div className="flex items-center gap-1">
                             <input
                               type="number"
@@ -10586,14 +10615,14 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                                   [key]: { ...data.recruitmentMethods?.[key], budget: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) }
                                 }
                               })}
-                              className="w-16 px-2 py-1.5 border border-gray-200 rounded text-center text-sm"
+                              className={methodInputCls(data.recruitmentMethods?.[key], 'budget')} aria-label={`${method.name}の投資予算額`}
                             />
                             <span className="text-xs text-gray-400">万円</span>
                           </div>
                         </div>
                         {/* 注力順位 */}
-                        <div className={showStart ? 'col-span-2' : 'col-span-3'}>
-                          <label className="block text-[10px] text-gray-500 mb-1">注力順位</label>
+                        <div className={(showStart ? 'col-span-2' : 'col-span-3') + ' flex items-center gap-2'} style={{ visibility: data.recruitmentMethods?.[key]?.active ? 'visible' : 'hidden' }}>
+                          <span className="text-sm font-bold text-gray-600 whitespace-nowrap">順位</span>
                           <div className="flex items-center gap-1">
                             <input
                               type="number"
@@ -10608,16 +10637,16 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                                   [key]: { ...data.recruitmentMethods?.[key], priority: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) }
                                 }
                               })}
-                              className="w-16 px-2 py-1.5 border border-gray-200 rounded text-center text-sm"
+                              className={methodInputCls(data.recruitmentMethods?.[key], 'priority')} aria-label={`${method.name}の注力順位`}
                             />
                             <span className="text-xs text-gray-400">位</span>
                           </div>
                         </div>
                         {/* v82: 開始時期（商談の当日に営業が入力。中途向けだけの手法には出さない） */}
                         {showStart && (
-                          <div className="col-span-3">
-                            {!isMidCareerOnlyMethod(key, segMaster) && (<>
-                              <label className="block text-[10px] text-gray-500 mb-1">開始時期</label>
+                          <div className="col-span-3 flex items-center gap-2">
+                            {data.recruitmentMethods?.[key]?.active && !isMidCareerOnlyMethod(key, segMaster) && (<>
+                              <span className="text-sm font-bold text-gray-600 whitespace-nowrap">開始</span>
                               <select
                                 value={data.recruitmentMethods?.[key]?.startMonth ?? ''}
                                 aria-label={`${method.name}の開始時期`}
@@ -10628,9 +10657,9 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                                     [key]: { ...data.recruitmentMethods?.[key], startMonth: e.target.value === '' ? '' : parseInt(e.target.value, 10) }
                                   }
                                 })}
-                                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm bg-white"
+                                className={`flex-1 min-w-0 px-2 py-2 border rounded-lg text-base ${data.recruitmentMethods?.[key]?.startMonth ? 'border-gray-300 bg-white font-bold' : 'border-orange-400 bg-orange-50'}`}
                               >
-                                <option value="">—</option>
+                                <option value="">未入力</option>
                                 {Array.from({ length: 24 }, (_, i) => <option key={i + 1} value={i + 1}>{startMonthLabel(i + 1, tlV2)}</option>)}
                               </select>
                             </>)}
