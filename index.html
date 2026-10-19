@@ -110,6 +110,21 @@
        表示のみ・計算無変更 -->
   <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
        DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v82: ターゲット層の見直し 第1段（2026-10-19・DBパッチ16/16b/16c とセット・事前問診 v3.9 とセット）
+       [層] 新しいターゲット層 A 文系／B 理系／C 専門学校（介護系・建築系）／D 高卒／E その他（中途・第二新卒）。targetLayers に新キー（bunkei 等）＋ layerModel: 2。
+            文系・理系は「主に狙う大学（上位校／中堅校／地元の大学・その他）」。割合は自動（いちばん採りたい層60%・残り均等）で、ターゲット学生タブで直せる。
+            旧 A〜H を選んでいる過去の診断は、旧の画面・旧の計算のまま（切り替えボタンあり）。
+       [計算] 相性 ◎○△× を3点満点で、狙う層の割合で平均（DB の target_segment_fit）。推奨配分（％）は新しい層では出さない。
+       [入力] 採用手法タブに「開始時期」（1=卒業の前の年度4月…24=卒業年度3月。いちばん採りたい層の学年で表示。中途向けだけの手法には出さない）。
+       [結果] 結果画面の下のタブに「動き方」を追加（注力1〜3位の相性と点数／◎なのに使っていない手法／動く時期と御社の動き出し／ずれの指摘）。
+       [AI] {recruitmentAnalysis} に層の名前・相性・点数・開始時期・ずれの指摘を渡す（旧 A〜H の診断も層の名前つき）。
+       [マスター] 起動時に target_segments / target_segment_fit / target_segment_timing を読む。診断の保存時に写し（savedSegmentMaster）を残し、過去の診断は写しで計算。
+       [質問マスター] ターゲット層別の質問の区分を新しい5区分に（旧A〜Hの質問は0件のため移行なし）。 -->
+  <!-- v81b: 本番のカテゴリ名（「1.ナビサイト」「求人」「業界特化型」等）でも決めた並びで出るように、表示用に名前をそろえる（2026-10-19・DB変更なし・事前問診 v3.8b とセット） -->
+  <!-- v81: 採用手法の並び（2026-10-19・DB変更なし・事前問診 v3.8 とセット）
+       採用手法タブのカテゴリを ナビサイト→求人サイト→合同説明会→大学連携→インターンシップ→ダイレクトリクルーティング→
+       口コミ・情報サイト→SNS・動画→地域特化→業界特化 の順に固定。「実習受け入れ」は大学連携の中に表示（マスターのカテゴリは変えない）。
+       「先輩・友人紹介」「自社説明会・オープンカンパニー」は選択肢に出さない（マスターには残す。その診断で選択済みなら表示） -->
   <!-- v80: 設定画面の見直し（2026-10-19）。要 DBパッチ15（ログイン設定の行を消す）。v78・v79 の内容を含む
        [AI] AIテストは本番と同じ組み立て（診断ボタンを選び、そのボタンのプロンプトで生成）。口調「カスタム」の本文が空なら
          本番もテストも標準の口調を使う（旧: 本番は空の指示で生成）。使われていなかった「ユーザープロンプト」欄は撤去し案内に置換
@@ -453,7 +468,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v80] Supabase接続完了');
+    console.log('[BB診断 v82] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -1867,6 +1882,231 @@ const STUDENT_MATRIX = {
 };
 
 // ========================================
+// v82: 新しいターゲット層（A〜E）。旧 A〜H（STUDENT_MATRIX）は過去の診断の表示・計算だけに使う
+//   データは今までと同じ targetLayers に、新しいキー（bunkei 等）で入れる: { enabled, ratio, main, level }
+//   相性（◎○△×）・時期（●○）・ポイントは DB の target_segments / target_segment_fit / target_segment_timing（パッチ16）
+// ========================================
+const TARGET_LAYERS_V2 = {
+  bunkei:   { letter: 'A', name: '文系（大学）', short: '文系', description: '大学の文系学生', color: '#4f6ef2', characteristics: '', hasLevel: true, years: ['大3', '大4'] },
+  rikei:    { letter: 'B', name: '理系（大学）', short: '理系', description: '大学の理系学生', color: '#0ea5e9', characteristics: '', hasLevel: true, years: ['大3', '大4'] },
+  senmon:   { letter: 'C', name: '専門学校（介護系・建築系）', short: '専門学校', description: '専門学校の学生', color: '#14b8a6', characteristics: '', years: ['専門1年', '専門2年'] },
+  kousotsu: { letter: 'D', name: '高卒', short: '高卒', description: '高校生', color: '#f59e0b', characteristics: '', years: ['高2', '高3'] },
+  chuto:    { letter: 'E', name: 'その他（中途・第二新卒）', short: '中途・第二新卒', description: '中途・第二新卒', color: '#8b5cf6', characteristics: '', years: null }
+};
+const TARGET_LEVELS = { top: '上位校', mid: '中堅校', local: '地元の大学・その他' };
+const TARGET_LEVEL_SHORT = { top: '上位校', mid: '中堅校', local: '地元の大学' };
+const FIT_POINTS = { '◎': 3, '○': 2, '△': 1, '×': 0 };
+const NEW_GRAD_SEGMENTS = ['bunkei_top', 'bunkei_mid', 'bunkei_local', 'rikei_top', 'rikei_mid', 'rikei_local', 'senmon', 'kousotsu'];
+
+// 新しい層で入力する診断か（旧 A〜H を1つでも選んでいる診断は旧のまま）
+const isLayerModelV2 = (data) => {
+  if (data && data.layerModel === 2) return true;
+  const tl = (data && data.targetLayers) || {};
+  return !Object.keys(tl).some(k => STUDENT_MATRIX[k] && tl[k] && tl[k].enabled);
+};
+const layerEntriesFor = (data) => isLayerModelV2(data) ? Object.entries(TARGET_LAYERS_V2) : Object.entries(STUDENT_MATRIX);
+const layerShortOf = (key) => TARGET_LAYERS_V2[key] ? (TARGET_LAYERS_V2[key].letter + ' ' + TARGET_LAYERS_V2[key].short) : (key + '層');
+// AIや一覧に出す名前（旧層も名前つき）
+const layerLabelOf = (key, conf) => {
+  const v = TARGET_LAYERS_V2[key];
+  if (v) return v.letter + ' ' + v.name + (v.hasLevel && conf && conf.level ? '・主に' + (TARGET_LEVELS[conf.level] || conf.level) : '');
+  return key + '層' + (STUDENT_MATRIX[key] ? '（' + STUDENT_MATRIX[key].name + '）' : '');
+};
+const v2LayersOf = (tl) => {
+  const out = {};
+  Object.keys(TARGET_LAYERS_V2).forEach(k => { if (tl && tl[k]) out[k] = tl[k]; });
+  return out;
+};
+const segmentKeyOf = (key, conf) => TARGET_LAYERS_V2[key] && TARGET_LAYERS_V2[key].hasLevel ? key + '_' + ((conf && conf.level) || 'mid') : key;
+const segmentLabelOf = (segKey, master) => {
+  const s = master && master.segments && master.segments[segKey];
+  if (s && s.label) return s.label;
+  const [k, lv] = String(segKey).split('_');
+  const v = TARGET_LAYERS_V2[k];
+  return v ? v.short + (lv ? '・' + (TARGET_LEVEL_SHORT[lv] || lv) : '') : segKey;
+};
+const primaryLayerKeyOf = (tl) => {
+  const on = Object.keys(TARGET_LAYERS_V2).filter(k => tl && tl[k] && tl[k].enabled);
+  return on.find(k => tl[k].main) || on[0] || null;
+};
+// 割合を自動で入れる: いちばん採りたい層 60%、残りを均等（1層なら100%）。整数で合計100
+const autoLayerRatios = (tl) => {
+  const out = { ...(tl || {}) };
+  const on = Object.keys(TARGET_LAYERS_V2).filter(k => out[k] && out[k].enabled);
+  if (on.length === 0) return out;
+  const main = primaryLayerKeyOf(out);
+  if (on.length === 1) { out[main] = { ...out[main], ratio: 100 }; return out; }
+  const rest = on.filter(k => k !== main);
+  const each = Math.floor(40 / rest.length);
+  rest.forEach(k => { out[k] = { ...out[k], ratio: each }; });
+  out[main] = { ...out[main], ratio: 100 - each * rest.length };
+  return out;
+};
+// 事前問診の取り込み: 新しい層なら、同じ層の組み合わせで BB 側が直した割合は残す。違えば自動で入れ直す
+const mergeImportedLayers = (pre, prev) => {
+  const preV2 = v2LayersOf(pre);
+  if (Object.keys(preV2).length === 0) return null; // 旧 A〜H の事前問診 → 今まで通り
+  const onPre = Object.keys(preV2).filter(k => preV2[k].enabled).sort().join(',');
+  const prevV2 = v2LayersOf(prev);
+  const onPrev = Object.keys(prevV2).filter(k => prevV2[k].enabled).sort().join(',');
+  const merged = {};
+  Object.keys(preV2).forEach(k => { merged[k] = { ...preV2[k] }; });
+  if (onPre && onPre === onPrev && Object.keys(prevV2).every(k => !prevV2[k].enabled || Number(prevV2[k].ratio) > 0)) {
+    Object.keys(merged).forEach(k => { if (prevV2[k] && prevV2[k].ratio !== undefined) merged[k].ratio = prevV2[k].ratio; });
+    return merged;
+  }
+  return autoLayerRatios(merged);
+};
+// 開始時期: 1 = 卒業の前の年度4月 … 24 = 卒業年度3月。書き方は「いちばん採りたい層」の学年
+const START_MONTHS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
+const startYearsFor = (tl) => {
+  const main = primaryLayerKeyOf(tl);
+  if (main && TARGET_LAYERS_V2[main].years) return TARGET_LAYERS_V2[main].years;
+  const other = Object.keys(TARGET_LAYERS_V2).find(k => tl && tl[k] && tl[k].enabled && TARGET_LAYERS_V2[k].years);
+  return (other && TARGET_LAYERS_V2[other].years) || TARGET_LAYERS_V2.bunkei.years;
+};
+const startMonthLabel = (n, tl) => {
+  const i = parseInt(n, 10);
+  if (!(i >= 1 && i <= 24)) return '';
+  const years = startYearsFor(tl);
+  return years[i <= 12 ? 0 : 1] + '・' + START_MONTHS[(i - 1) % 12] + '月';
+};
+// 中途向けだけの手法（新卒の区分がすべて × で、中途が × でない）には開始時期を出さない
+const isMidCareerOnlyMethod = (methodKey, master) => {
+  const f = master && master.fit && master.fit[methodKey];
+  if (!f) return false;
+  return NEW_GRAD_SEGMENTS.every(s => f[s] === '×') && f.chuto && f.chuto !== '×';
+};
+// 使う相性の表: 診断に保存した写し（過去の版）→ 無ければ今のマスター
+const segmentMasterFor = (data) => {
+  const snap = data && data.savedSegmentMaster;
+  if (snap && snap.fit && Object.keys(snap.fit).length > 0) return snap;
+  return (typeof GASDataManager !== 'undefined' && GASDataManager.getSegmentMaster && GASDataManager.getSegmentMaster()) || null;
+};
+// 保存時の写し（新しい層の診断で、まだ写していなければ今のマスターを写す）
+const snapshotSegmentMaster = (data) => {
+  if (data && data.savedSegmentMaster && data.savedSegmentMaster.fit) return data.savedSegmentMaster;
+  if (!isLayerModelV2(data)) return null;
+  const tl = v2LayersOf(data && data.targetLayers);
+  if (!Object.keys(tl).some(k => tl[k].enabled)) return null;
+  const live = GASDataManager.getSegmentMaster();
+  if (!live || !live.fit || Object.keys(live.fit).length === 0) return null;
+  return { ...live, _savedAt: new Date().toISOString() };
+};
+
+// 「動き方」の計算（画面とAIで共通）。判定の言葉は使わず、◎○△× と 3点満点の点数だけ
+const calcTargetFit = (data, master) => {
+  const M = master || { segments: {}, fit: {}, timing: {} };
+  const tl = v2LayersOf(data && data.targetLayers);
+  const METHODS = (data && data.methodMaster) || DEFAULT_RECRUITMENT_METHODS;
+  const mainKey = primaryLayerKeyOf(tl);
+  const layers = Object.keys(TARGET_LAYERS_V2).filter(k => tl[k] && tl[k].enabled).map(k => {
+    const segKey = segmentKeyOf(k, tl[k]);
+    return { key: k, conf: tl[k], ratio: Number(tl[k].ratio) || 0, main: k === mainKey, segKey, segLabel: segmentLabelOf(segKey, M) };
+  });
+  const sumRatio = layers.reduce((s, l) => s + l.ratio, 0);
+  layers.forEach(l => { l.weight = sumRatio > 0 ? l.ratio / sumRatio : 1 / Math.max(layers.length, 1); });
+  const primary = layers.find(l => l.main) || layers[0] || null;
+  const active = Object.entries((data && data.recruitmentMethods) || {}).filter(([k, m]) => m && m.active && METHODS[k]);
+  const methods = active.map(([k, m]) => {
+    const symbols = layers.map(l => (M.fit[k] && M.fit[k][l.segKey]) || null);
+    const known = symbols.every(s => s && FIT_POINTS[s] !== undefined);
+    const score = known && layers.length > 0
+      ? Math.round(layers.reduce((s, l, i) => s + FIT_POINTS[symbols[i]] * l.weight, 0) * 10) / 10
+      : null;
+    return { key: k, name: METHODS[k].name || k, priority: parseInt(m.priority, 10) || null, budget: parseInt(m.budget, 10) || 0,
+             startMonth: parseInt(m.startMonth, 10) || null, symbols, score };
+  });
+  const top3 = methods.filter(m => m.priority).sort((a, b) => a.priority - b.priority).slice(0, 3);
+  const activeKeys = new Set(active.map(([k]) => k));
+  const hidden = typeof HIDDEN_METHOD_KEYS !== 'undefined' ? HIDDEN_METHOD_KEYS : [];
+  const unused = layers.map(l => ({
+    segKey: l.segKey, segLabel: l.segLabel,
+    names: Object.keys(METHODS).filter(k => !activeKeys.has(k) && !hidden.includes(k) && M.fit[k] && M.fit[k][l.segKey] === '◎').map(k => METHODS[k].name || k)
+  })).filter(u => u.names.length > 0);
+  const timingRows = layers.map(l => {
+    const t = (M.timing && M.timing[l.segKey]) || {};
+    return { segKey: l.segKey, segLabel: l.segLabel, main: l.main, marks: Array.from({ length: 24 }, (_, i) => t[i + 1] || '') };
+  });
+  const starts = methods.filter(m => m.startMonth).map(m => ({ month: m.startMonth, name: m.name }));
+  const gaps = [];
+  if (primary) {
+    // 媒体: 注力1〜3位で、いちばん採りたい層に △ か × の手法
+    const idx = layers.indexOf(primary);
+    const weak = top3.filter(m => m.symbols[idx] === '△' || m.symbols[idx] === '×');
+    if (weak.length > 0) {
+      const u = unused.find(x => x.segKey === primary.segKey);
+      gaps.push({ type: '媒体', text: weak.map(m => '注力' + m.priority + '位の ' + m.name + ' は、いちばん採りたい層（' + primary.segLabel + '）には' + m.symbols[idx] + 'です。').join('')
+        + (u ? primary.segLabel + 'には、' + u.names.slice(0, 3).join('・') + 'が◎です。' : '') });
+    }
+    // 時期: 新卒の層で、最初の接点が「動き始め」より遅い
+    if (primary.key !== 'chuto' && starts.length > 0) {
+      const row = timingRows.find(r => r.segKey === primary.segKey);
+      const firstMove = row ? row.marks.findIndex(x => x) + 1 : 0;
+      const earliest = Math.min(...starts.map(s => s.month));
+      if (firstMove > 0 && earliest > firstMove) {
+        const note = (M.segments[primary.segKey] && M.segments[primary.segKey].timing_note) || '';
+        gaps.push({ type: '時期', text: '最初の接点が' + startMonthLabel(earliest, tl) + 'です。' + primary.segLabel + 'は' + startMonthLabel(firstMove, tl) + 'ごろから動き始めます。' + note });
+      }
+    }
+  }
+  // 層ごと: その層に ◎ の手法を1つも使っていない → ポイントの表の指摘文
+  layers.forEach(l => {
+    const has = methods.some(m => M.fit[m.key] && M.fit[m.key][l.segKey] === '◎');
+    const msg = M.segments[l.segKey] && M.segments[l.segKey].gap_message;
+    if (!has && msg) gaps.push({ type: l.segLabel, text: msg });
+  });
+  const hasMaster = M.fit && Object.keys(M.fit).length > 0;
+  return { layers, primary, methods, top3, unused, timingRows, starts, gaps, hasMaster, tl };
+};
+
+// AIに渡す文章（新しい層）
+const formatTargetFitForAI = (fit) => {
+  if (!fit || fit.layers.length === 0) return 'ターゲット層: 未設定';
+  let text = 'ターゲット層: ' + fit.layers.map(l => l.segLabel + '(' + l.ratio + '%' + (l.main ? '・いちばん採りたい' : '') + ')').join('、') + '\n';
+  const ap = fit.layers.map(l => {
+    const s = fit._master && fit._master.segments && fit._master.segments[l.segKey];
+    return s && s.approach ? '・' + l.segLabel + 'の狙い方: ' + s.approach : '';
+  }).filter(Boolean);
+  if (ap.length) text += ap.join('\n') + '\n';
+  text += '利用媒体数: ' + fit.methods.length + '件\n\n【媒体別（狙う層との相性。◎3点・○2点・△1点・×0点を割合で平均、3点満点）】\n';
+  const sorted = [...fit.methods].sort((a, b) => (a.priority || 999) - (b.priority || 999));
+  sorted.forEach(m => {
+    text += m.name + ' [' + (m.priority ? '注力' + m.priority + '位' : '順位未設定') + '] 予算' + m.budget.toLocaleString() + '万円'
+      + ' 相性 ' + fit.layers.map((l, i) => l.segLabel + (m.symbols[i] || '未設定')).join('／')
+      + (m.score !== null ? '（' + m.score + '/3点）' : '')
+      + (m.startMonth ? ' 開始時期 ' + startMonthLabel(m.startMonth, fit.tl) : '') + '\n';
+  });
+  if (fit.unused.length) {
+    text += '\n【◎なのに使っていない手法】\n' + fit.unused.map(u => '・' + u.segLabel + ': ' + u.names.join('、')).join('\n') + '\n';
+  }
+  if (fit.gaps.length) {
+    text += '\n【ずれの指摘（Gakusapoの基準で判定済み。言い換えてよいが判断は変えないこと）】\n' + fit.gaps.map(g => '・' + g.type + ': ' + g.text).join('\n') + '\n';
+  }
+  return text;
+};
+
+// 採用手法の効率（新しい層）: 推奨配分（％）は出さない
+const calcRecruitmentEfficiencyV2 = (data) => {
+  const master = segmentMasterFor(data);
+  const fit = calcTargetFit(data, master);
+  fit._master = master;
+  const totalBudget = fit.methods.reduce((s, m) => s + m.budget, 0);
+  const methodDetails = fit.methods.map(m => ({
+    key: m.key, name: m.name, category: ((data.methodMaster || DEFAULT_RECRUITMENT_METHODS)[m.key] || {}).category || '不明',
+    budget: m.budget, priority: m.priority || 0, budgetRatio: totalBudget > 0 ? Math.round(m.budget / totalBudget * 100) : 0,
+    fitScore: m.score, fitSymbols: m.symbols, reachRate: null, recommended: null
+  }));
+  return {
+    layerModel: 2, targetFit: fit,
+    targetLayers: fit.layers.map(l => l.key),
+    targetLayerDetails: fit.layers.map(l => ({ layer: l.key, weight: l.ratio })),
+    activeMethods: methodDetails.map(m => ({ key: m.key, name: m.name, category: m.category, budget: m.budget, priority: m.priority })),
+    totalBudget, methodDetails, recommendedAllocation: {}
+  };
+};
+
+// ========================================
 // 採用手法・ツール一覧（デフォルト）
 // ========================================
 // 採用手法マスター（GASモードではスプレッドシートから取得）
@@ -2118,6 +2358,25 @@ const resolveSystemPrompt = (settings) => {
     return c ? st.customSystemPrompt : AI_TONE_PRESETS.standard.systemPrompt;
   }
   return (AI_TONE_PRESETS[st.selectedPreset] || AI_TONE_PRESETS.standard).systemPrompt;
+};
+
+// v81: 採用手法の表示の並び（事前問診 v3.8 と同じ）。マスターのカテゴリは変えず、表示だけまとめ直す
+const METHOD_CATEGORY_ORDER = ['ナビサイト', '求人サイト', '合同説明会', '大学連携', 'インターンシップ', 'ダイレクトリクルーティング', '口コミ・情報サイト', 'SNS・動画', '地域特化', '業界特化'];
+const HIDDEN_METHOD_KEYS = ['referral', 'company_briefing']; // 選択肢に出さない（その診断で選択済みのときだけ出す）
+// v81b: 本番のカテゴリ名は「1.ナビサイト」「求人」「業界特化型」のように番号や言い方が違うため、表示用にそろえる
+const CATEGORY_ALIASES = { '求人': '求人サイト', '業界特化型': '業界特化', '地域特化型': '地域特化', 'ダイレクト': 'ダイレクトリクルーティング' };
+const normalizeCategory = (c) => { const t = String(c || '').replace(/^\s*\d+\s*[.．、:：)）]\s*/, '').trim(); return CATEGORY_ALIASES[t] || t || 'その他'; };
+const displayCategoryOf = (key, m) => key === 'practical_training' ? '大学連携' : normalizeCategory(m && m.category);
+const groupMethodsForDisplay = (methods, selected) => {
+  const groups = {};
+  Object.entries(methods || {}).forEach(([key, m]) => {
+    if (HIDDEN_METHOD_KEYS.includes(key) && !(selected && selected[key] && selected[key].active)) return;
+    const cat = displayCategoryOf(key, m);
+    (groups[cat] = groups[cat] || []).push([key, m]);
+  });
+  const known = METHOD_CATEGORY_ORDER.filter(c => groups[c]);
+  const rest = Object.keys(groups).filter(c => !METHOD_CATEGORY_ORDER.includes(c)).sort();
+  return [...known, ...rest].map(c => [c, groups[c]]);
 };
 
 // v79: 採用職種（事前問診の JOB_TYPES と同じキー）と、新卒／中途の考え（事前問診の MID_CAREER_STANCES と同じキー）
@@ -3112,6 +3371,8 @@ const SUPA_HANDLERS = {
       channelLabels: c.channelLabels || existingDiagData.channelLabels || null,
       recruitmentMethods: c.recruitmentMethods || existingDiagData.recruitmentMethods || {},
       targetLayers: c.targetLayers || existingDiagData.targetLayers || {},
+      layerModel: c.layerModel ?? existingDiagData.layerModel ?? null, // v82
+      savedSegmentMaster: c.savedSegmentMaster || existingDiagData.savedSegmentMaster || null, // v82: 診断時のターゲット層の表
       yieldSettings: c.yieldSettings || existingDiagData.yieldSettings || {},
       industryAverages: c.industryAverages || existingDiagData.industryAverages || {},
       adjustedAverages: c.adjustedAverages || existingDiagData.adjustedAverages || {},
@@ -3774,6 +4035,21 @@ const SUPA_HANDLERS = {
       nested[row.layer][row.media_key] = Number(row.usage_rate) || 0;
     });
     return { success: true, data: nested };
+  },
+
+  // ── v82: ターゲット層の表（相性・時期・ポイント）取得 ──
+  getTargetSegmentMaster: async function(sb) {
+    var r1 = await fetchAllRows(function() { return sb.from('target_segments').select('*').order('key'); });
+    if (r1.error) throw new Error(r1.error.message);
+    var r2 = await fetchAllRows(function() { return sb.from('target_segment_fit').select('method_key, segment, fit').order('method_key').order('segment'); });
+    if (r2.error) throw new Error(r2.error.message);
+    var r3 = await fetchAllRows(function() { return sb.from('target_segment_timing').select('segment, month_no, mark').order('segment').order('month_no'); });
+    if (r3.error) throw new Error(r3.error.message);
+    var out = { segments: {}, fit: {}, timing: {} };
+    (r1.data || []).forEach(function(r) { out.segments[r.key] = { label: r.label, category: r.category, level: r.level, approach: r.approach || '', gap_message: r.gap_message || '', timing_note: r.timing_note || '', sort_order: r.sort_order }; });
+    (r2.data || []).forEach(function(r) { (out.fit[r.method_key] = out.fit[r.method_key] || {})[r.segment] = r.fit; });
+    (r3.data || []).forEach(function(r) { (out.timing[r.segment] = out.timing[r.segment] || {})[r.month_no] = r.mark; });
+    return { success: true, data: out };
   },
 
   // ── 媒体利用率マスター保存（v54: RPC replace_media_usage_rates でアトミック置換）──
@@ -4969,6 +5245,7 @@ const getLayerMediaUsage = () => {
 
 // 【inventory 2-12】採用手法効率分析（activeMethods, totalBudget, methodDetails）
 const calcRecruitmentEfficiency = (data) => {
+  if (isLayerModelV2(data)) return calcRecruitmentEfficiencyV2(data); // v82: 新しい層は相性で計算（推奨配分なし）
   const METHODS = data.methodMaster || DEFAULT_RECRUITMENT_METHODS;
   const LAYER_USAGE = data.layerMediaUsage || getLayerMediaUsage();
   
@@ -5078,6 +5355,7 @@ const calcRecruitmentEfficiency = (data) => {
 
 // 【inventory 3-2】採用手法分析をテキストに変換（{recruitmentAnalysis} に展開）
 const formatRecruitmentAnalysis = (efficiency) => {
+  if (efficiency && efficiency.layerModel === 2) return formatTargetFitForAI(efficiency.targetFit); // v82
   if (!efficiency || efficiency.activeMethods.length === 0) {
     return '採用手法データなし';
   }
@@ -5086,7 +5364,7 @@ const formatRecruitmentAnalysis = (efficiency) => {
   
   // ターゲット層と重み
   const layerText = efficiency.targetLayerDetails
-    .map(t => `${t.layer}層(${t.weight}%)`)
+    .map(t => `${layerLabelOf(t.layer)}(${t.weight}%)`) // v82: 層の名前もAIに渡す
     .join(', ');
   text += `ターゲット学生層: ${layerText}\n`;
   text += `利用媒体数: ${efficiency.activeMethods.length}件\n`;
@@ -5117,6 +5395,7 @@ const formatRecruitmentAnalysisPro = (efficiency) => {
   }
   
   let text = formatRecruitmentAnalysis(efficiency);
+  if (efficiency.layerModel === 2) return text; // v82: 新しい層では推奨配分（％）を出さない
   
   text += `\n【推奨投資配分 vs 実際の配分】\n`;
   text += `媒体名               | 注力順位 | 予算(万円) | 構成比 | 推奨配分\n`;
@@ -5335,6 +5614,7 @@ let _gasQuestionMaster = null;
 let _gasQuestionMasterFromDb = false; // v78: true のときだけ診断の写しに使う（端末の控えからは写さない）
 let _gasMethodMaster = null;
 let _gasMediaUsageMaster = null;
+let _gasSegmentMaster = null; // v82: ターゲット層の表
 let _gasAISettings = null;
 let _gasMasterDataLoaded = false;
 
@@ -5437,6 +5717,8 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
     channelLabels,
     recruitmentMethods,
     targetLayers,
+    layerModel: c.layerModel ?? fullData.layerModel ?? null, // v82
+    savedSegmentMaster: (hasContent(c.savedSegmentMaster) ? c.savedSegmentMaster : null) || fullData.savedSegmentMaster || null, // v82
     yieldSettings,
     industryAverages,
     adjustedAverages,
@@ -5828,6 +6110,34 @@ const GASDataManager = {
       }
   },
   
+  // v82: ターゲット層の表（相性・時期・ポイント）を読み込み
+  loadSegmentMaster: async () => {
+    try {
+      const r = await authFetch('getTargetSegmentMaster');
+      if (r && r.success && r.data && Object.keys(r.data.fit || {}).length > 0) {
+        _gasSegmentMaster = r.data;
+        try { localStorage.setItem('gakusapo_segment_master', JSON.stringify(r.data)); } catch (e) {}
+        return r.data;
+      }
+      console.warn('[マスター] ターゲット層の表が空です（DBパッチ16 未反映の可能性）');
+      return null;
+    } catch (err) {
+      console.error('ターゲット層の表 読み込みエラー:', err);
+      try {
+        const cached = localStorage.getItem('gakusapo_segment_master');
+        if (cached) { _gasSegmentMaster = JSON.parse(cached); return _gasSegmentMaster; }
+      } catch (e) {}
+      return null;
+    }
+  },
+  getSegmentMaster: () => {
+    if (_gasSegmentMaster) return _gasSegmentMaster;
+    try {
+      const saved = localStorage.getItem('gakusapo_segment_master');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  },
+
   // 全マスターデータを読み込み（起動時に呼び出す）
   loadAllMasterData: async () => {
     // v42: deploymentMode チェックを削除（呼び出し元の App で isGasMode ガード済み）
@@ -5842,10 +6152,11 @@ const GASDataManager = {
       GASDataManager.loadMethodMaster(),
       GASDataManager.loadMediaUsageMaster(),
       GASDataManager.loadAISettings(),
+      GASDataManager.loadSegmentMaster(), // v82
       LoginManager.loadConfigFromGAS()
     ]);
     
-    const labels = ['歩留まり', '質問', '採用手法', '媒体利用率', 'AI設定', 'ログイン設定'];
+    const labels = ['歩留まり', '質問', '採用手法', '媒体利用率', 'AI設定', 'ターゲット層の表', 'ログイン設定'];
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
         console.error('[loadAllMasterData] ' + labels[i] + 'マスター読み込み失敗:', r.reason);
@@ -8465,7 +8776,7 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
     // ターゲット学生
     const enabledLayers = Object.entries(data.targetLayers || {})
       .filter(([k, v]) => v?.enabled)
-      .map(([k, v]) => `${k}層(${v.ratio}%)`);
+      .map(([k, v]) => `${layerLabelOf(k, v)}(${v.ratio}%)`); // v82
     if (enabledLayers.length > 0) {
       summary.push(`【ターゲット学生】${enabledLayers.join(', ')}`);
       summary.push('');
@@ -8700,7 +9011,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
   const [activeSection, setActiveSection] = useState('base');
   const [selectedSize, setSelectedSize] = useState('small');
   const [selectedIndustry, setSelectedIndustry] = useState('製造業（ものづくり）');
-  const [selectedLayer, setSelectedLayer] = useState('A');
+  const [selectedLayer, setSelectedLayer] = useState('bunkei'); // v82
   const [selectedDepth, setSelectedDepth] = useState('surface');
   const [selectedRole, setSelectedRole] = useState('staff');
   
@@ -8722,7 +9033,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
   ];
   
   const industries = ['製造業（ものづくり）', '製造業（食品メーカー・その他）', 'IT・通信', '金融・保険', '小売・流通', 'サービス業', '建設・不動産', '医療・福祉', '飲食・宿泊', '運輸・物流', 'マスコミ・広告', 'コンサルティング', '商社・卸売', 'その他'];
-  const layers = Object.keys(STUDENT_MATRIX);
+  const layers = Object.keys(TARGET_LAYERS_V2); // v82: 新しい5区分
   
   // 質問を取得
   const getQuestions = () => {
@@ -9143,7 +9454,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
                   onChange={(e) => setSelectedLayer(e.target.value)}
                   className="px-3 py-2 border rounded-lg text-sm"
                 >
-                  {layers.map(l => <option key={l} value={l}>{l}層 - {STUDENT_MATRIX[l].name}</option>)}
+                  {layers.map(l => <option key={l} value={l}>{TARGET_LAYERS_V2[l].letter} {TARGET_LAYERS_V2[l].name}</option>)}
                 </select>
               </div>
             )}
@@ -9407,6 +9718,100 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+
+// ========================================
+// v82: ターゲット学生タブ（新しいターゲット層 A〜E）
+//   層を選ぶ／外す・いちばん採りたい層を変えると、割合を自動で入れ直す（いちばん60%・残り均等）。割合は手で直せる
+// ========================================
+const TargetLayersV2Editor = ({ data, onChange }) => {
+  const tl = v2LayersOf(data.targetLayers);
+  const master = segmentMasterFor(data);
+  const commit = (next, reRatio) => {
+    let out = next;
+    if (!primaryLayerKeyOf(out) || !Object.keys(out).some(k => out[k].enabled && out[k].main)) {
+      const first = primaryLayerKeyOf(out);
+      if (first) out = { ...out, [first]: { ...out[first], main: true } };
+    }
+    if (reRatio) out = autoLayerRatios(out);
+    onChange({ ...data, layerModel: 2, targetLayers: out });
+  };
+  const toggle = (key, on) => {
+    const next = { ...tl, [key]: { ...tl[key], enabled: on, main: on ? !!(tl[key] && tl[key].main) : false } };
+    if (!on) next[key].ratio = '';
+    commit(next, true);
+  };
+  const setMain = (key) => {
+    const next = {};
+    Object.keys(tl).forEach(k => { next[k] = { ...tl[k], main: false }; });
+    next[key] = { ...next[key], enabled: true, main: true };
+    commit(next, true);
+  };
+  const setLevel = (key, level) => commit({ ...tl, [key]: { ...tl[key], level } }, false);
+  const setRatio = (key, v) => commit({ ...tl, [key]: { ...tl[key], ratio: v === '' ? '' : (parseInt(v, 10) || 0) } }, false);
+  const total = Object.keys(tl).filter(k => tl[k].enabled).reduce((s, k) => s + (Number(tl[k].ratio) || 0), 0);
+  const anyOn = Object.keys(tl).some(k => tl[k].enabled);
+  return (
+    <div>
+      <div className="space-y-2">
+        {Object.entries(TARGET_LAYERS_V2).map(([key, layer]) => {
+          const conf = tl[key] || {};
+          const on = !!conf.enabled;
+          return (
+            <div key={key} className={`grid grid-cols-12 gap-3 items-center p-3 rounded-xl transition ${on ? 'bg-blue-50 border-2 border-blue-400' : 'bg-gray-50 border border-gray-200'}`}>
+              <label className="col-span-5 flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={on} onChange={(e) => toggle(key, e.target.checked)}
+                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold" style={{ backgroundColor: layer.color }}>{layer.letter}</div>
+                <div className={`text-sm ${on ? 'font-bold text-gray-800' : 'text-gray-700'}`}>{layer.name}</div>
+              </label>
+              <div className="col-span-2">
+                {on && (conf.main ? (
+                  <span className="text-[11px] font-bold text-white bg-blue-600 rounded px-2 py-1">いちばん採りたい</span>
+                ) : (
+                  <button type="button" onClick={() => setMain(key)} className="text-[11px] font-bold text-blue-700 border border-blue-400 rounded px-2 py-1 bg-white hover:bg-blue-50">いちばんにする</button>
+                ))}
+              </div>
+              <div className="col-span-3">
+                {on && layer.hasLevel && (
+                  <select value={conf.level || ''} onChange={(e) => setLevel(key, e.target.value)}
+                    aria-label={`${layer.short}で主に狙う大学`}
+                    className={`w-full px-2 py-1.5 border rounded-lg text-sm ${conf.level ? 'border-gray-200' : 'border-orange-400 bg-orange-50'}`}>
+                    <option value="">主に狙う大学（未選択）</option>
+                    {Object.entries(TARGET_LEVELS).map(([lk, ll]) => <option key={lk} value={lk}>主に狙う大学：{ll}</option>)}
+                  </select>
+                )}
+              </div>
+              <div className="col-span-2 flex items-center justify-end gap-1">
+                <input type="number" min="0" max="100" value={on ? (conf.ratio ?? '') : ''} placeholder="0" disabled={!on}
+                  aria-label={`${layer.short}の割合`}
+                  onChange={(e) => setRatio(key, e.target.value)}
+                  className="w-16 px-2 py-1.5 border border-gray-200 rounded-lg text-center font-bold disabled:bg-gray-100 disabled:text-gray-400" />
+                <span className="text-gray-500 text-sm">%</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200">
+        <div className="flex justify-between items-center">
+          <div>
+            <span className="font-bold text-gray-700">合計比率</span>
+            <span className="text-xs text-gray-500 ml-2">事前問診の答えから自動で入ります（いちばん採りたい層 60%、残りを均等）</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {anyOn && (
+              <button type="button" onClick={() => commit({ ...tl }, true)} className="text-xs px-3 py-1.5 rounded-lg border border-blue-300 bg-white text-blue-700 hover:bg-blue-50">自動で入れ直す</button>
+            )}
+            <span className={`text-2xl font-black ${total === 100 ? 'text-green-600' : 'text-red-500'}`}>{total}%</span>
+          </div>
+        </div>
+        {anyOn && total !== 100 && <div className="text-xs text-red-500 mt-1">※ 合計が100%になるように調整してください</div>}
+        {!master && <div className="text-xs text-amber-700 mt-1">※ 相性・時期の表（DB）が読み込めていません。DBパッチ16の反映を確認してください。</div>}
       </div>
     </div>
   );
@@ -9798,10 +10203,12 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
           <div className="flex items-start justify-between mb-4">
             <div>
               <h3 className="text-lg font-bold text-gray-800">
-                ターゲット学生属性（マトリクスA〜H層）
+                {isLayerModelV2(data) ? 'ターゲット層と割合' : 'ターゲット学生属性（マトリクスA〜H層）'}
               </h3>
               <p className="text-sm text-gray-500 mt-1">
-                採用ターゲットとする学生層を選択し、それぞれの比率を入力してください（合計100%）
+                {isLayerModelV2(data)
+                  ? '採用したい層を選び、いちばん採りたい層を決めてください。割合は自動で入り、ここで直せます（合計100%）'
+                  : '採用ターゲットとする学生層を選択し、それぞれの比率を入力してください（合計100%）'}
               </p>
             </div>
             <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
@@ -9839,6 +10246,16 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             </div>
           </div>
           
+          {isLayerModelV2(data) ? (
+            <TargetLayersV2Editor data={data} onChange={onChange} />
+          ) : (<>
+          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
+            <span className="text-xs text-amber-800">この診断は旧ターゲット層（A〜H）で入力されています。新しいターゲット層（A〜E）にすると「動き方」が出せます。</span>
+            <button type="button" className="text-xs px-3 py-1.5 rounded-lg bg-white border border-amber-400 text-amber-800 whitespace-nowrap"
+              onClick={() => { if (confirm('旧ターゲット層（A〜H）の選択と割合を消して、新しいターゲット層（A〜E）に切り替えます。よろしいですか？')) onChange({ ...data, layerModel: 2, targetLayers: {} }); }}>
+              新しいターゲット層に切り替える
+            </button>
+          </div>
           <div className="space-y-3">
             {Object.entries(STUDENT_MATRIX).map(([key, layer]) => (
               <div key={key} className="flex items-center gap-4 p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition">
@@ -9906,16 +10323,24 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             )}
           </div>
           
+          </>)}
+
           {/* 特性一覧 */}
           <div className="mt-6 border-t border-gray-200 pt-4">
             <h4 className="text-sm font-bold text-gray-700 mb-3">選択した層の特性</h4>
             <div className="space-y-2 text-xs">
-              {Object.entries(STUDENT_MATRIX)
+              {layerEntriesFor(data)
                 .filter(([key]) => data.targetLayers?.[key]?.enabled)
                 .map(([key, layer]) => (
                   <div key={key} className="flex gap-2 items-start p-2 bg-gray-50 rounded">
-                    <span className="font-bold text-white px-2 py-0.5 rounded" style={{ backgroundColor: layer.color }}>{key}層</span>
-                    <span className="text-gray-600">{layer.characteristics}</span>
+                    <span className="font-bold text-white px-2 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: layer.color }}>
+                      {TARGET_LAYERS_V2[key] ? segmentLabelOf(segmentKeyOf(key, data.targetLayers[key]), segmentMasterFor(data)) : key + '層'}
+                    </span>
+                    <span className="text-gray-600">
+                      {TARGET_LAYERS_V2[key]
+                        ? ((segmentMasterFor(data)?.segments?.[segmentKeyOf(key, data.targetLayers[key])]?.approach) || '（ターゲット層の表が読み込めていません）')
+                        : layer.characteristics}
+                    </span>
                   </div>
                 ))}
             </div>
@@ -9970,7 +10395,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                 </div>
                 
                 {/* 選択された層の一覧 */}
-                {Object.entries(STUDENT_MATRIX)
+                {layerEntriesFor(data)
                   .filter(([key]) => data.targetLayers?.[key]?.enabled)
                   .map(([key, layer]) => {
                     const selectedYear = data.funnelData?.selectedYear || '27卒';
@@ -9988,7 +10413,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                             className="w-6 h-6 rounded flex items-center justify-center text-white font-bold text-xs"
                             style={{ backgroundColor: layer.color }}
                           >
-                            {key}
+                            {layer.letter || key}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-gray-800 text-xs truncate">{layer.name}</div>
@@ -10079,7 +10504,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             <textarea
               value={data.targetNotes || ''}
               onChange={(e) => onChange({ ...data, targetNotes: e.target.value })}
-              placeholder="例：&#10;・A層（上位国立理系）は昨年0名だったため、研究室訪問を強化する&#10;・C層は応募数は多いが内定辞退率が高い（昨年3名中2名辞退）&#10;・来期からE層（体育会系）もターゲットに追加検討中"
+              placeholder={isLayerModelV2(data) ? "例：\n・文系は昨年0名だったため、学内説明会を強化する\n・専門学校は実習からの応募が多い\n・来期から中途（第二新卒）も追加検討中" : "例：\n・A層（上位国立理系）は昨年0名だったため、研究室訪問を強化する\n・C層は応募数は多いが内定辞退率が高い（昨年3名中2名辞退）\n・来期からE層（体育会系）もターゲットに追加検討中"}
               rows={4}
               className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 resize-none placeholder-gray-400"
             />
@@ -10101,14 +10526,17 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             // マスターデータを取得（カスタムまたはデフォルト、空オブジェクトもフォールバック対象）
             const RECRUITMENT_METHODS = data.methodMaster || DEFAULT_RECRUITMENT_METHODS;
             
-            // カテゴリ一覧を動的に取得
-            const categories = [...new Set(Object.values(RECRUITMENT_METHODS).map(m => m.category))].sort();
+            // v81: 決まった並びでカテゴリごとにまとめる（実習受け入れは大学連携、外した手法は選択済みのときだけ）
+            const methodGroups = groupMethodsForDisplay(RECRUITMENT_METHODS, data.recruitmentMethods);
+            // v82: 新しい層の診断だけ「開始時期」を出す
+            const showStart = isLayerModelV2(data);
+            const segMaster = segmentMasterFor(data);
+            const tlV2 = v2LayersOf(data.targetLayers);
             
             return (
               <>
                 {/* カテゴリごとにグループ化 */}
-                {categories.map(category => {
-                  const methods = Object.entries(RECRUITMENT_METHODS).filter(([_, m]) => m.category === category);
+                {methodGroups.map(([category, methods]) => {
                   if (methods.length === 0) return null;
             
             return (
@@ -10138,12 +10566,12 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                           />
                         </div>
                         {/* ツール名・説明 */}
-                        <div className="col-span-5">
+                        <div className={showStart ? 'col-span-4' : 'col-span-5'}>
                           <div className="font-medium text-gray-800 text-sm">{method.name}</div>
                           <div className="text-[10px] text-gray-500">{method.description}</div>
                         </div>
                         {/* 投資予算額 */}
-                        <div className="col-span-3">
+                        <div className={showStart ? 'col-span-2' : 'col-span-3'}>
                           <label className="block text-[10px] text-gray-500 mb-1">投資予算額</label>
                           <div className="flex items-center gap-1">
                             <input
@@ -10164,7 +10592,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                           </div>
                         </div>
                         {/* 注力順位 */}
-                        <div className="col-span-3">
+                        <div className={showStart ? 'col-span-2' : 'col-span-3'}>
                           <label className="block text-[10px] text-gray-500 mb-1">注力順位</label>
                           <div className="flex items-center gap-1">
                             <input
@@ -10185,6 +10613,29 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                             <span className="text-xs text-gray-400">位</span>
                           </div>
                         </div>
+                        {/* v82: 開始時期（商談の当日に営業が入力。中途向けだけの手法には出さない） */}
+                        {showStart && (
+                          <div className="col-span-3">
+                            {!isMidCareerOnlyMethod(key, segMaster) && (<>
+                              <label className="block text-[10px] text-gray-500 mb-1">開始時期</label>
+                              <select
+                                value={data.recruitmentMethods?.[key]?.startMonth ?? ''}
+                                aria-label={`${method.name}の開始時期`}
+                                onChange={(e) => onChange({
+                                  ...data,
+                                  recruitmentMethods: {
+                                    ...data.recruitmentMethods,
+                                    [key]: { ...data.recruitmentMethods?.[key], startMonth: e.target.value === '' ? '' : parseInt(e.target.value, 10) }
+                                  }
+                                })}
+                                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm bg-white"
+                              >
+                                <option value="">—</option>
+                                {Array.from({ length: 24 }, (_, i) => <option key={i + 1} value={i + 1}>{startMonthLabel(i + 1, tlV2)}</option>)}
+                              </select>
+                            </>)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -10860,7 +11311,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {enabledLayers.map(layer => (
                         <div key={layer.key} className="flex items-center gap-2">
-                          <label className="text-xs font-medium text-gray-700 whitespace-nowrap">{layer.key}層:</label>
+                          <label className="text-xs font-medium text-gray-700 whitespace-nowrap">{layerShortOf(layer.key)}:</label>
                           <input
                             type="number"
                             min="0"
@@ -12072,9 +12523,129 @@ const ScaledSheetContainer = ({ children }) => {
   );
 };
 
+
+// ========================================
+// v82: 結果画面「動き方」タブ（新しいターゲット層の診断だけ）
+// ========================================
+const TargetMovePanel = ({ data }) => {
+  if (!isLayerModelV2(data)) {
+    return (
+      <div className="section-card p-8 text-center text-gray-500" style={{ minHeight: '400px' }}>
+        <div className="text-lg font-bold mb-2">動き方</div>
+        <div className="text-sm">この診断は旧ターゲット層（A〜H）で入力されているため、「動き方」は出ません。</div>
+        <div className="text-xs mt-2 text-gray-400">入力画面の「ターゲット学生」タブで新しいターゲット層（A〜E）に切り替えると表示されます。</div>
+      </div>
+    );
+  }
+  const master = segmentMasterFor(data);
+  const fit = calcTargetFit(data, master);
+  if (fit.layers.length === 0) {
+    return (
+      <div className="section-card p-8 text-center text-gray-500" style={{ minHeight: '400px' }}>
+        <div className="text-lg font-bold mb-2">動き方</div>
+        <div className="text-sm">入力画面の「ターゲット学生」タブでターゲット層を選ぶと表示されます。</div>
+      </div>
+    );
+  }
+  const years = startYearsFor(fit.tl);
+  const companyRow = Array.from({ length: 24 }, (_, i) => fit.starts.filter(s => s.month === i + 1).map(s => s.name));
+  const cellStyle = (i) => ({ borderLeft: i === 12 ? '2px solid #9ca3af' : 'none' });
+  return (
+    <div className="section-card p-6 flex flex-col gap-6" style={{ minHeight: '650px' }}>
+      <div>
+        <div className="text-xl font-bold text-gray-800">動き方</div>
+        <div className="text-sm text-gray-600 mt-1">
+          狙う層：{fit.layers.map(l => l.segLabel + ' ' + l.ratio + '%' + (l.main ? '（いちばん）' : '')).join('／')}
+        </div>
+        {!fit.hasMaster && (
+          <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            相性・時期の表（DB）が読み込めていません。DBパッチ16が反映されているか確認してください。
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-12 gap-6">
+        <div className="col-span-7 flex flex-col gap-2">
+          <div className="text-sm font-bold text-gray-800">注力1〜3位と、狙う層との相性</div>
+          {fit.top3.length === 0 ? (
+            <div className="text-xs text-gray-500">採用手法タブで注力順位を入れると表示されます。</div>
+          ) : fit.top3.map(m => (
+            <div key={m.key} className="flex items-center gap-3 px-3 py-2 border border-gray-200 rounded-lg">
+              <span className="w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-bold flex items-center justify-center">{m.priority}</span>
+              <span className="flex-1 text-sm font-semibold text-gray-800">{m.name}</span>
+              <span className="text-xs text-gray-500 tracking-wider">{m.symbols.map(s => s || '－').join(' ')}</span>
+              <span className="text-sm font-bold text-gray-800 w-20 text-right">
+                {m.score !== null ? m.score.toFixed(1) : '－'}<span className="text-xs font-normal text-gray-500"> / 3点</span>
+              </span>
+            </div>
+          ))}
+          <div className="text-[11px] text-gray-500">
+            ◎3点・○2点・△1点・×0点を、狙う層の割合で平均した点数（3点満点）。記号は {fit.layers.map(l => l.segLabel).join('／')} の順
+          </div>
+        </div>
+        <div className="col-span-5 flex flex-col gap-2">
+          <div className="text-sm font-bold text-gray-800">◎なのに使っていない手法</div>
+          {fit.unused.length === 0 ? (
+            <div className="text-xs text-gray-500">ありません</div>
+          ) : fit.unused.map(u => (
+            <div key={u.segKey} className="px-3 py-2 bg-gray-50 rounded-lg">
+              <div className="text-xs font-bold text-gray-700">{u.segLabel}</div>
+              <div className="text-sm text-gray-800">{u.names.join('／')}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <div className="flex items-baseline gap-3">
+          <span className="text-sm font-bold text-gray-800">動く時期</span>
+          <span className="text-xs text-gray-500">● 山場　○ 動く　▲ 御社が手法を始める月（採用手法タブの開始時期）</span>
+        </div>
+        <div className="grid text-[11px] text-gray-500 text-center" style={{ gridTemplateColumns: '150px repeat(24, minmax(0, 1fr))' }}>
+          <span className="text-left font-bold">学年・月</span>
+          {Array.from({ length: 24 }, (_, i) => (
+            <span key={i} className="py-1" style={cellStyle(i)}>{(i % 12 === 0 ? years[i < 12 ? 0 : 1] + ' ' : '') + START_MONTHS[i % 12]}</span>
+          ))}
+        </div>
+        {fit.timingRows.map(r => (
+          <div key={r.segKey} className="grid items-center border-t border-gray-100" style={{ gridTemplateColumns: '150px repeat(24, minmax(0, 1fr))' }}>
+            <span className={`text-xs py-2 ${r.main ? 'font-bold text-gray-800' : 'text-gray-700'}`}>{r.segLabel}</span>
+            {r.marks.map((mk, i) => (
+              <span key={i} className="h-7 flex items-center justify-center text-sm"
+                style={{ ...cellStyle(i), color: '#0f766e', background: mk === '●' ? '#e6f4f1' : 'transparent' }}>{mk}</span>
+            ))}
+          </div>
+        ))}
+        <div className="grid items-center border-t border-gray-100" style={{ gridTemplateColumns: '150px repeat(24, minmax(0, 1fr))' }}>
+          <span className="text-xs py-2 font-bold text-gray-800">御社の動き出し</span>
+          {companyRow.map((names, i) => (
+            <span key={i} className="h-7 flex items-center justify-center text-sm" style={{ ...cellStyle(i), color: '#4f6ef2' }}
+              title={names.join('、')}>{names.length ? '▲' : ''}</span>
+          ))}
+        </div>
+        {fit.starts.length === 0 && (
+          <div className="text-[11px] text-gray-500 mt-1">採用手法タブで開始時期を入れると、御社の動き出しが表示され、時期のずれも確認できます。</div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="text-sm font-bold text-gray-800">ずれの指摘</div>
+        {fit.gaps.length === 0 ? (
+          <div className="text-xs text-gray-500">目立ったずれはありません。</div>
+        ) : fit.gaps.map((g, i) => (
+          <div key={i} className="flex gap-3 px-3 py-2 rounded-lg" style={{ border: '1px solid #fecdd3', background: '#fff1f2' }}>
+            <span className="text-xs font-bold flex-shrink-0" style={{ color: '#9f1239' }}>{g.type}</span>
+            <span className="text-sm text-gray-800">{g.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, isGeneratingAI, aiError, adviceMode }, ref) => {
   // タブ状態管理
-  const [activeTab, setActiveTab] = useState('result'); // 'result', 'advice', 'simulation'
+  const [activeTab, setActiveTab] = useState('result'); // 'result', 'move'(v82), 'advice', 'simulation'
   // v44: adviceMode は App から props で受け取り
   const [aiProgress, setAiProgress] = useState(0);
   
@@ -12616,6 +13187,9 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
         </>
       )}
       
+      {/* v82: 動き方タブ */}
+      {activeTab === 'move' && <TargetMovePanel data={data} />}
+
       {/* 導入効果シミュレーションタブ（プレースホルダー） */}
       {activeTab === 'simulation' && (
         <div className="flex items-center justify-center bg-gray-50 rounded-xl border border-gray-200" style={{ minHeight: '650px' }}>
@@ -12640,6 +13214,14 @@ const DiagnosisSheet = forwardRef(({ data, aiSettings, aiAdvice, onGenerateAI, i
         >
           {activeTab === 'result' && <div className="tab-active-bar"></div>}
           診断結果
+        </div>
+        <div
+          className={`tab-item ${activeTab === 'move' ? 'active' : ''}`}
+          onClick={() => setActiveTab('move')}
+          style={{ cursor: 'pointer' }}
+        >
+          {activeTab === 'move' && <div className="tab-active-bar"></div>}
+          動き方
         </div>
         <div 
           className={`tab-item ${activeTab === 'advice' ? 'active' : ''}`}
@@ -14022,7 +14604,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   const [questionEditSection, setQuestionEditSection] = useState('base');
   const [questionEditSize, setQuestionEditSize] = useState('small');
   const [questionEditIndustry, setQuestionEditIndustry] = useState('製造業（ものづくり）');
-  const [questionEditLayer, setQuestionEditLayer] = useState('A');
+  const [questionEditLayer, setQuestionEditLayer] = useState('bunkei'); // v82
   const [questionEditMethod, setQuestionEditMethod] = useState('ナビサイト');
   const [questionEditDepth, setQuestionEditDepth] = useState('surface');
   const [questionEditRole, setQuestionEditRole] = useState('staff');
@@ -14703,8 +15285,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                       onChange={(e) => setQuestionEditLayer(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg"
                     >
-                      {Object.entries(STUDENT_MATRIX).map(([key, layer]) => (
-                        <option key={key} value={key}>{key}層: {layer.name}</option>
+                      {Object.entries(TARGET_LAYERS_V2).map(([key, layer]) => (
+                        <option key={key} value={key}>{layer.letter} {layer.name}</option>
                       ))}
                     </select>
                   </div>
@@ -17396,7 +17978,8 @@ const App = () => {
             sizeObj && typeof sizeObj === 'object' && Object.values(sizeObj).some(arr => Array.isArray(arr) && arr.length > 0)
           );
           return hasAnyQuestions ? qm : null;
-        })()
+        })(),
+        savedSegmentMaster: snapshotSegmentMaster(currentData) // v82
       };
       // 担当者IDはフロントエンドから送信しない（引き継ぎで変更された値をサーバー側で保持するため）
       delete toSave.assigneeId;
@@ -17422,6 +18005,7 @@ const App = () => {
           updatedAt: toSave.updatedAt,
           aiResult: prev.aiResult || toSave.aiResult,
           savedQuestionMaster: prev.savedQuestionMaster || toSave.savedQuestionMaster,
+          savedSegmentMaster: prev.savedSegmentMaster || toSave.savedSegmentMaster, // v82
           _dbUpdatedAt: toSave._dbUpdatedAt ?? prev._dbUpdatedAt,
           _dbSaveToken: toSave._dbSaveToken ?? prev._dbSaveToken // v77
         }));
@@ -17659,7 +18243,8 @@ const App = () => {
         return {
           ...prev,
           // ターゲット学生
-          targetLayers: pick(preInput.targetLayers, prev.targetLayers),
+          targetLayers: mergeImportedLayers(preInput.targetLayers, prev.targetLayers) || pick(preInput.targetLayers, prev.targetLayers), // v82
+          layerModel: Object.keys(v2LayersOf(preInput.targetLayers)).length > 0 ? 2 : (prev.layerModel ?? null), // v82
           // 採用手法（優先順位込み）
           recruitmentMethods: mergedMethods,
           // 問診回答
@@ -17714,7 +18299,8 @@ const App = () => {
               if (!qm || !qm.base) return null;
               const hasQ = Object.values(qm.base).some(s => s && typeof s === 'object' && Object.values(s).some(a => Array.isArray(a) && a.length > 0));
               return hasQ ? qm : null;
-            })()
+            })(),
+            savedSegmentMaster: snapshotSegmentMaster(mergedData) // v82
           };
           delete saveData.assigneeId;
           const importSaveRes = await GASDataManager.saveCustomer(saveData);
