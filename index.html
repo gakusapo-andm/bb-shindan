@@ -110,6 +110,48 @@
        表示のみ・計算無変更 -->
   <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
        DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v80: 設定画面の見直し（2026-10-19）。要 DBパッチ15（ログイン設定の行を消す）。v78・v79 の内容を含む
+       [AI] AIテストは本番と同じ組み立て（診断ボタンを選び、そのボタンのプロンプトで生成）。口調「カスタム」の本文が空なら
+         本番もテストも標準の口調を使う（旧: 本番は空の指示で生成）。使われていなかった「ユーザープロンプト」欄は撤去し案内に置換
+       [AI設定の保存] 変わったときだけ保存し、結果を待つ。失敗したら知らせて閉じない。控えは DB に入ってから更新。
+         DB で空にした値（カスタム本文・OpenAI/Anthropic のモデル）が他の端末の古い値で復活しないよう、DB の値を正とする
+       [AI履歴] 担当者向け・上層部向けの項目名の食い違いを修正し、診断結果そのものを ai_result に保存（旧: 2項目が空で上書き）
+       [採用手法] 「更新」で中途／新卒の区分などの既存の項目を残す。新規追加で既存のキーと重なれば止める
+       [質問] 「注力タイプ別」区分の質問の注力タイプは区分で決まるので固定表示（旧: 選べるが保存されなかった）。
+         業種別質問の業種一覧を基本情報の業種と同じ一覧に（旧: 医療・福祉（資格職含む）・介護・福祉が無かった）
+       [歩留まり] 手法カテゴリの一覧を DB から作る（新しく足したカテゴリが歩留まりの選択に出る）
+       [読み込み] 顧客一覧・歩留まり・質問・採用手法・媒体利用率を1000件ずつ分けて全部読む
+         （旧: 1000件で切れていた。歩留まりは8/11に1000件で保存し直され、ナビサイトの三重・静岡が欠けた）
+       [撤去] ログイン設定（パスワード）・設定画面のパスワード・顧客データ保存設定（スプレッドシート）。設定は管理者なら直接開く。
+         ログアウトで抜けられないパスワード画面に入る不具合を修正（Google のログイン画面に戻る） -->
+  <!-- v79: 並び替えと「新卒／中途の考え」（2026-10-19）。要 DBパッチ14・事前問診 v3.7（v78 の内容を含む）
+       [タブ] 基本情報 → ターゲット学生 → 採用手法 → ファネル数値 → 採用担当者問診 → 上層部問診 → 学生問診 → 詳細設定
+       [基本情報] 「採用職種」「新卒／中途の考え」の欄を追加（事前問診から取り込み・ここで直せる）。
+         「良い方がいれば中途も検討したい」「中途も積極的に採りたい」で「中途OK」の印（クルサポ提案の目安）
+       [一覧] 会社名の横に「中途OK」の印、「中途OKだけ表示」の絞り込み
+       [保存] jobType / jobTypeOther / midCareerStance を diagnosis_data に保存・復元（旧: 職種はメモの文字だけだった）
+       [事前問診] 取り込んだ後は顧客の画面が見るだけになる（v3.7・preinput_status）。ファネル数値は一番注力している手法だけが入る
+       [再チェック修正 2026-10-19・画面の見た目は変えない]
+         ・設定を保存: 採用手法・媒体利用率・歩留まりは「変わったときだけ」保存し、結果を待って失敗なら知らせて閉じない
+           （旧: 保存のたびにログイン時の控えで全件置き換え。歩留まりは編集画面が無いのに毎回書き直し、
+            保存と読込の形が合わず地域や手法が空の行が壊れうる。DB が断っても成功に見えた）
+         ・控え（メモリ・localStorage）は DB に入ってから更新する。DB から読めていないマスターは保存しない
+         ・空の採用手法・媒体利用率・歩留まりは保存しない（旧: 「全てデフォルトに戻す」→保存で媒体利用率が全件削除された）
+         ・開いている診断にも保存したマスターが届くよう、各マスターの保存の後に設定を反映する
+         ・質問マスターが読めていないときは質問の保存を飛ばす（旧: 他の設定も保存できなくなった）
+         ・取込で「新卒／中途の考え」を顧客が外した場合も反映。設定の「軸」の選択肢を日本語の軸タイプでも出す -->
+  <!-- v78: 質問マスターの版の管理と、事前問診との質問のずれの修正（2026-10-19）。要 DBパッチ13・事前問診 v3.6
+       [版] 質問マスターを保存するたびに DB が版番号を付ける（save_question_master）。診断は初回保存時の版の質問を写して持ち、
+         問診画面（営業側のみ）に「質問マスター：第N版（日付）」と出す。顧客の事前問診には出さない。設定の質問項目にも現在の版を出す
+       [写し] 診断の写しは DB から読んだマスターだけから作る（読み込みに失敗して端末の控えを使っているときは写さない）。
+         管理者の保存が DB で断られたときは控えを更新しない（DB に無い質問で診断が固定されるのを防止）
+       [保存] 質問マスターは変わったときだけ保存。DB で断られたら知らせて設定を閉じない。空のマスターは保存しない
+         （旧: 「デフォルトに戻す」→保存で questions を全件削除できた）
+       [軸名] 問診画面のバッジ・設定の「軸」を結果画面と同じ名前に（採用体制／自責／経営関与／市場理解／計画性、
+         認知到達力／具体性スコア／差別化力／共感・ビジョン力／選考UX／対話力）。保存済みの写しの日本語・旧名の軸も名前で出す
+       [取込] 事前問診の取込は質問ごとに足し合わせる（旧: 回答を丸ごと置換し、業種別などBB側だけの回答が消えた）。
+         取り込んだ回答のうちこの診断の版に無い質問があれば件数を知らせる
+       [削除] 問診画面の「質問マスターをリセット」・設定の「デフォルトに戻す」を削除 -->
   <!-- v77: 「他の端末・タブでこの診断が更新されています」で保存できない誤検知の修正（2026-10-10）
        [症状] 一人で操作しているのに保存が断られる。一度断られると再読み込みするまで何度押しても断られる。
        [根因] 楽観ロックが bb_diagnoses.updated_at を比べていた。updated_at は moddatetime トリガーで「どんな UPDATE でも」進むため、
@@ -411,7 +453,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v76] Supabase接続完了');
+    console.log('[BB診断 v80] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -1642,8 +1684,10 @@ const getMethodCategoryList = () => {
     labelMap[item.key] = item.label;
   });
   
-  // GASカテゴリを元にリスト生成（出現順維持）
-  const result = gasCategories.map(key => ({
+  // v80: 既定の一覧（決まった並び）を先に、DB にしか無いカテゴリを後ろに足す
+  //   旧: DB のカテゴリだけで作るため、歩留まりの行が無いカテゴリ（インターンシップ等）が消え、並びも決まらなかった
+  const keys = [...DEFAULT_METHOD_CATEGORY_LIST.map(i => i.key), ...gasCategories.filter(k => !descMap.hasOwnProperty(k))];
+  const result = keys.map(key => ({
     key: key,
     label: labelMap[key] || key,
     description: descMap[key] || ''
@@ -2064,6 +2108,73 @@ const DEFAULT_QUESTION_MASTER = {
   targetLayer: {},
   depth: { surface: { staff: [], executive: [], student: [] }, middle: { staff: [], executive: [], student: [] }, deep: { staff: [], executive: [], student: [] } },
   recruitmentMethod: {}
+};
+
+// v80: システムプロンプトの決め方（本番の診断・再診断・AIテストで共通）。カスタムで本文が空なら標準の口調
+const resolveSystemPrompt = (settings) => {
+  const st = settings || {};
+  if (st.selectedPreset === 'custom') {
+    const c = (st.customSystemPrompt || '').trim();
+    return c ? st.customSystemPrompt : AI_TONE_PRESETS.standard.systemPrompt;
+  }
+  return (AI_TONE_PRESETS[st.selectedPreset] || AI_TONE_PRESETS.standard).systemPrompt;
+};
+
+// v79: 採用職種（事前問診の JOB_TYPES と同じキー）と、新卒／中途の考え（事前問診の MID_CAREER_STANCES と同じキー）
+const BB_JOB_TYPES = [
+  { key: 'sales', label: '営業職' }, { key: 'engineering', label: '技術職（機械・電気等）' },
+  { key: 'it', label: 'IT・システムエンジニア' }, { key: 'manufacturing', label: '製造・生産管理' },
+  { key: 'rd', label: '研究開発' }, { key: 'design', label: '設計・CAD' }, { key: 'admin', label: '事務・管理' },
+  { key: 'accounting', label: '経理・財務' }, { key: 'hr', label: '人事・総務' },
+  { key: 'planning', label: '企画・マーケティング' }, { key: 'welfare', label: '福祉・介護・保育' },
+  { key: 'construction', label: '施工管理・建築' }, { key: 'logistics', label: '物流・配送' },
+  { key: 'service', label: '接客・サービス' }, { key: 'other', label: 'その他・総合職' }
+];
+const MID_CAREER_STANCES = [
+  { key: 'newgrad', label: '新卒にこだわりたい' },
+  { key: 'open', label: '良い方がいれば中途も検討したい' },
+  { key: 'active', label: '中途も積極的に採りたい' }
+];
+const isMidCareerOk = (c) => !!c && (c.midCareerStance === 'open' || c.midCareerStance === 'active');
+
+// v78: 軸キーを英語キーにそろえる（DBの旧データ・保存済みの写しに残る日本語名／旧名を吸収）
+//   スコア計算(calcScoresFromAnswers の normalizeAxisKey)と同じ対応。表示はこれを通してから *_AXES の名前を出す
+const AXIS_KEY_ALIASES = {
+  '計画性': 'planning', '組織体制': 'structure', '採用体制': 'structure', '市場理解': 'marketUnderstanding',
+  '経営関与': 'management', '当事者意識': 'ownership', '自責': 'ownership',
+  '認知到達力': 'recognition', '認知度': 'recognition', '具体性': 'specificity', '具体性スコア': 'specificity',
+  '差別化力': 'differentiation', '独自性': 'differentiation', '差別化': 'differentiation',
+  '共感・ビジョン力': 'visionEmpathy', 'ビジョン共感': 'visionEmpathy', '共感性': 'visionEmpathy', '将来像': 'visionEmpathy',
+  '選考UX': 'selectionUX', '選考体験': 'selectionUX', '対話力': 'dialogue', '対話姿勢': 'dialogue',
+  '将来像提示力': 'visionEmpathy', 'visionPresentation': 'visionEmpathy', '信頼性': 'differentiation',
+  'credibility': 'differentiation', '共感形成力': 'visionEmpathy', 'empathyBuilding': 'visionEmpathy'
+};
+const toAxisKey = (key) => (key && AXIS_KEY_ALIASES[key]) || key || '';
+const isMindsetAxisType = (t) => t === 'mindset' || (typeof t === 'string' && (t.includes('マインドセット') || t.includes('減点')));
+const isDepthAxisType = (t) => t === 'depth' || (typeof t === 'string' && t.includes('注力タイプ'));
+// v78: 問診画面のバッジ用「基礎力: 採用体制」（結果画面と同じ名前）
+const axisBadgeText = (q) => {
+  if (isMindsetAxisType(q.axisType)) { const k = toAxisKey(q.axisKey); return '基礎力: ' + (MINDSET_AXES[k]?.name || k || '-'); }
+  if (isDepthAxisType(q.axisType)) return '注力タイプ: ' + (DEPTH_PHASES[q.depthKey]?.name || q.depthKey || '-');
+  const k = toAxisKey(q.axisKey); return '伝達力: ' + (EVALUATION_AXES[k]?.name || k || '-');
+};
+// v78: 質問マスターの版の表示（営業側の画面だけで使う。顧客の事前問診には出さない）
+//   v は { no, savedAt }（DB の save_question_master / question_master_version が返す形）
+const questionMasterVersionText = (v) => {
+  if (!v || !v.no) return null;
+  let d = '';
+  try { d = v.savedAt ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo' }).format(new Date(v.savedAt)) : ''; } catch (e) {}
+  return '第' + v.no + '版' + (d ? '（' + d + '）' : '');
+};
+// v78: マスター内の質問IDを全部集める（取込時に「この版に無い質問」を数える）
+const collectQuestionIds = (master) => {
+  const ids = new Set();
+  const walk = (o) => {
+    if (Array.isArray(o)) { o.forEach(q => { if (q && typeof q === 'object' && q.id) ids.add(q.id); }); return; }
+    if (o && typeof o === 'object') Object.entries(o).forEach(([k, v]) => { if (k !== '_version') walk(v); });
+  };
+  walk(master);
+  return ids;
 };
 
 // 質問マスターを取得するヘルパー関数（GASモードではスプレッドシートのデータを優先）
@@ -2693,15 +2804,16 @@ const AISettingsManager = {
             provider: gasSettings.provider || localSettings.provider || 'gemini',
             // v70: apiKey系フィールドを全廃（キーはEdge Function Secretsのみ。クライアント設定に存在しない）
             modelGemini: gasSettings.modelGemini ?? localSettings.modelGemini ?? gasSettings.model ?? localSettings.model ?? 'gemini-3.5-flash',
-            modelOpenai: gasSettings.modelOpenai || localSettings.modelOpenai || '',
-            modelAnthropic: gasSettings.modelAnthropic || localSettings.modelAnthropic || '',
+            // v80: DB で空にした値が他の端末の古い値で復活しないよう、DB の値を正とする
+            modelOpenai: gasSettings.modelOpenai ?? localSettings.modelOpenai ?? '',
+            modelAnthropic: gasSettings.modelAnthropic ?? localSettings.modelAnthropic ?? '',
             // レガシー互換: model(旧Gemini用)は表示フォールバックに使うため読みを維持。
             // v70: apiKeyのレガシー読みは削除（DBのキー行は11_v67で削除済み・用途消滅）
             model: gasSettings.model || localSettings.model || 'gemini-3.5-flash',
             maxTokens: gasSettings.maxTokens || localSettings.maxTokens || 4096,
             // プロンプト設定（GAS優先）
             selectedPreset: gasSettings.selectedPreset || localSettings.selectedPreset || 'standard',
-            customSystemPrompt: gasSettings.customSystemPrompt || localSettings.customSystemPrompt || '',
+            customSystemPrompt: gasSettings.customSystemPrompt ?? localSettings.customSystemPrompt ?? '', // v80
             userPromptTemplate: gasSettings.userPromptTemplate || localSettings.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
             // 診断ボタン設定（GAS優先、nullの場合はデフォルトを使用）
             sideButtons: (gasSettings.hasOwnProperty('sideButtons') && gasSettings.sideButtons !== null) 
@@ -2749,43 +2861,34 @@ const AISettingsManager = {
       masterSpreadsheetUrl: ''
     };
   },
-  saveSettings: (settings) => {
-    const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
+  // v80: 変わったときだけ DB に保存し、結果（{success, error}）を返す。DB に入ってから端末の控えを更新する
+  saveSettings: async (settings) => {
     const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
-    
-    try {
-      // v67: APIキーは永続化しない / v70: キー欄自体を撤去（設定オブジェクトからも全廃）。
-      // destructuring除外は旧バージョンのlocalStorageから読み込んだ残存キーを確実に落とすため維持
-      const { apiKey, apiKeyGemini, apiKeyOpenai, apiKeyAnthropic, ...persistable } = settings;
-      localStorage.setItem('gakusapo_bb_ai_settings', JSON.stringify(persistable));
-      
-      // GASモードかつ管理者の場合はスプレッドシートにも保存
-      if (isGasMode && isAdmin && typeof GASDataManager !== 'undefined') {
-        GASDataManager.saveAISettings({
-          // API設定
-          enabled: true,
-          // v66: マルチプロバイダ / v67: APIキーはDBに保存しない（Edge Function Secretsへ移行）
-          provider: settings.provider || 'gemini',
-          modelGemini: settings.modelGemini || '',
-          modelOpenai: settings.modelOpenai || '',
-          modelAnthropic: settings.modelAnthropic || '',
-          // レガシーモデルキーもGemini値で同期更新（旧版ロールバック時の表示整合用）
-          model: settings.modelGemini ?? settings.model ?? 'gemini-3.5-flash',
-          maxTokens: settings.maxTokens || 4096,
-          // プロンプト設定
-          selectedPreset: settings.selectedPreset || 'standard',
-          customSystemPrompt: settings.customSystemPrompt || '',
-          userPromptTemplate: settings.userPromptTemplate || '',
-          // 診断ボタン設定
-          sideButtons: settings.sideButtons || DEFAULT_SIDE_BUTTONS
-        });
+    const { apiKey, apiKeyGemini, apiKeyOpenai, apiKeyAnthropic, ...persistable } = settings || {};
+    const payload = {
+      enabled: true,
+      provider: settings.provider || 'gemini',
+      modelGemini: settings.modelGemini || '',
+      modelOpenai: settings.modelOpenai || '',
+      modelAnthropic: settings.modelAnthropic || '',
+      model: settings.modelGemini ?? settings.model ?? 'gemini-3.5-flash',
+      maxTokens: settings.maxTokens || 4096,
+      selectedPreset: settings.selectedPreset || 'standard',
+      customSystemPrompt: settings.customSystemPrompt || '',
+      userPromptTemplate: settings.userPromptTemplate || '',
+      sideButtons: settings.sideButtons || DEFAULT_SIDE_BUTTONS
+    };
+    if (isAdmin && typeof GASDataManager !== 'undefined') {
+      const prev = GASDataManager.getAISettings();
+      const norm = (v) => (v && typeof v === 'object') ? JSON.stringify(v) : String(v ?? '');
+      const changed = !prev || Object.keys(payload).filter(k => k !== 'enabled').some(k => norm(payload[k]) !== norm(prev[k]));
+      if (changed) {
+        const r = await GASDataManager.saveAISettings(payload);
+        if (!r || !r.success) return { success: false, error: (r && r.error) || 'AI設定を保存できませんでした' };
       }
-      
-      return true;
-    } catch (e) {
-      console.error('AI設定の保存に失敗:', e);
-      return false;
     }
+    try { localStorage.setItem('gakusapo_bb_ai_settings', JSON.stringify(persistable)); } catch (e) {}
+    return { success: true };
   }
 };
 
@@ -2858,6 +2961,21 @@ async function ensureSupabase() {
 // v47: Supabase アクションハンドラー（全26+アクション）
 // GAS API互換のレスポンス形式を厳密に維持する
 // ============================================================
+// v80: PostgREST は1回に最大1000件しか返さないため、1000件ずつ分けて全部読む。
+//   makeQuery は毎回新しい問い合わせを作る関数（並びを固定するため id で並べる）
+async function fetchAllRows(makeQuery) {
+  var PAGE = 1000, all = [], from = 0;
+  for (var guard = 0; guard < 200; guard++) {
+    var res = await makeQuery().range(from, from + PAGE - 1);
+    if (res.error) return { data: null, error: res.error };
+    var rows = res.data || [];
+    all = all.concat(rows);
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return { data: all, error: null };
+}
+
 const SUPA_HANDLERS = {
 
   // ── 接続テスト ──
@@ -2872,10 +2990,10 @@ const SUPA_HANDLERS = {
 
   // ── 顧客データ取得 ──
   getCustomers: async function(sb) {
-    var res = await sb
-      .from('bb_diagnoses')
-      .select('*, companies(*)')
-      .order('created_at', { ascending: true });
+    var res = await fetchAllRows(function() { // v80: 1000件を超えても全部読む
+      return sb.from('bb_diagnoses').select('*, companies(*)')
+        .order('created_at', { ascending: true }).order('id', { ascending: true });
+    });
     if (res.error) throw new Error(res.error.message);
     
     var customers = (res.data || []).map(function(row) {
@@ -3010,6 +3128,10 @@ const SUPA_HANDLERS = {
       // v53-fix: 事前問診ステータス永続化（リロードでバッジが消えるのを防止）
       _preInputStatus: c._preInputStatus || existingDiagData._preInputStatus || '',
       _draftId: c._draftId || existingDiagData._draftId || '', // v65: 新規保存の持ち主の印
+      // v79: 採用職種・新卒／中途の考え（空文字で消せるよう undefined だけ既存値に戻す）
+      jobType: (c.jobType !== undefined ? c.jobType : existingDiagData.jobType) || '',
+      jobTypeOther: (c.jobTypeOther !== undefined ? c.jobTypeOther : existingDiagData.jobTypeOther) || '',
+      midCareerStance: (c.midCareerStance !== undefined ? c.midCareerStance : existingDiagData.midCareerStance) || '',
       _saveToken: newSaveToken, // v77: 画面の保存だけが書く印。楽観ロックはこれを比べる
     });
 
@@ -3151,7 +3273,7 @@ const SUPA_HANDLERS = {
 
   // ── 歩留まりマスター取得 ──
   getYieldMaster: async function(sb) {
-    var res = await sb.from('yield_rates').select('*');
+    var res = await fetchAllRows(function() { return sb.from('yield_rates').select('*').order('id'); }); // v80
     if (res.error) throw new Error(res.error.message);
     var rows = res.data || [];
     if (rows.length === 0) return { success: true, data: null };
@@ -3196,7 +3318,10 @@ const SUPA_HANDLERS = {
         }
       }
     });
-    return { success: true, data: nested };
+    // v80: 手法カテゴリの一覧（歩留まり画面の選択肢）。旧: GAS 版だけが返していた
+    var cats = [];
+    rows.forEach(function(r) { var m = r.method_category || ''; if (m && cats.indexOf(m) < 0) cats.push(m); });
+    return { success: true, data: nested, methodCategories: cats };
   },
 
   // ── 歩留まりマスター保存（v48: RPC replace_yield_rates でアトミック置換）──
@@ -3245,8 +3370,8 @@ const SUPA_HANDLERS = {
     }
 
     if (!Array.isArray(masterData) || masterData.length === 0) {
-      await sb.from('yield_rates').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      return { success: true };
+      // v79: 空は保存しない（旧: 全件削除していた）
+      throw new Error('歩留まりのデータが空のため保存しませんでした（全件削除を防ぐため）');
     }
     var cleaned = masterData.map(function(r) {
       var row = Object.assign({}, r);
@@ -3262,7 +3387,7 @@ const SUPA_HANDLERS = {
 
   // ── 質問マスター取得 ──
   getQuestionMaster: async function(sb) {
-    var res = await sb.from('questions').select('*').order('sort_order');
+    var res = await fetchAllRows(function() { return sb.from('questions').select('*').order('sort_order').order('id'); }); // v80
     if (res.error) throw new Error(res.error.message);
     var rows = res.data || [];
     if (rows.length === 0) return { success: true, data: null };
@@ -3324,6 +3449,12 @@ const SUPA_HANDLERS = {
         nested.depth[phase][role].push(qObj);
       }
     });
+
+    // v78: 現在の版（DBパッチ13）。関数が無い環境では版なし＝従来どおり
+    try {
+      var vRes = await sb.rpc('question_master_version');
+      if (!vRes.error && vRes.data && vRes.data.no) nested._version = vRes.data;
+    } catch (e) { /* 版なしで続行 */ }
 
     return { success: true, data: nested };
   },
@@ -3457,9 +3588,9 @@ const SUPA_HANDLERS = {
       questionsData = flatRows;
     }
 
+    // v78: 空のマスターは保存しない（旧: questions を全件削除していた。「デフォルトに戻す」→保存で全質問が消えた）
     if (!Array.isArray(questionsData) || questionsData.length === 0) {
-      await sb.from('questions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      return { success: true };
+      throw new Error('質問が1件もないため保存しませんでした（全件削除を防ぐため）');
     }
     var cleaned = questionsData.map(function(r) {
       var row = Object.assign({}, r);
@@ -3468,9 +3599,20 @@ const SUPA_HANDLERS = {
       delete row.updated_at;
       return row;
     });
-    var res = await sb.rpc('replace_questions', { p_data: cleaned });
-    if (res.error) throw new Error('質問マスター保存失敗: ' + res.error.message);
-    return { success: true };
+    // v78: 置き換えと版の採番を1つの関数（同じトランザクション）で行う（DBパッチ13）
+    var res = await sb.rpc('save_question_master', { p_data: cleaned });
+    if (res.error) {
+      var msg = String(res.error.message || '') + ' ' + String(res.error.code || '');
+      if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) {
+        // パッチ13 未適用: 従来どおり置き換えだけ（版なし）
+        console.warn('[BB診断 v78] save_question_master が未作成のため版なしで保存（DBパッチ13 適用前）');
+        res = await sb.rpc('replace_questions', { p_data: cleaned });
+        if (res.error) throw new Error('質問マスター保存失敗: ' + res.error.message);
+        return { success: true, version: null };
+      }
+      throw new Error('質問マスター保存失敗: ' + res.error.message);
+    }
+    return { success: true, version: (res.data && res.data.no) ? res.data : null };
   },
 
   // ── AI設定取得（GAS互換: { success, settings: { enabled, apiKey, ... } }）── v65: apiType廃止
@@ -3541,7 +3683,7 @@ const SUPA_HANDLERS = {
 
   // ── 採用手法マスター取得 ──
   getRecruitmentMethods: async function(sb) {
-    var res = await sb.from('recruitment_methods').select('*');
+    var res = await fetchAllRows(function() { return sb.from('recruitment_methods').select('*').order('id'); }); // v80
     if (res.error) throw new Error(res.error.message);
     var rows = res.data || [];
     if (rows.length === 0) return { success: true, data: {} };
@@ -3606,8 +3748,8 @@ const SUPA_HANDLERS = {
     }
 
     if (!Array.isArray(methodsData) || methodsData.length === 0) {
-      await sb.from('recruitment_methods').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      return { success: true };
+      // v79: 空は保存しない（旧: 全件削除していた）
+      throw new Error('採用手法が1件もないため保存しませんでした（全件削除を防ぐため）');
     }
     var cleaned = methodsData.map(function(r) {
       var row = Object.assign({}, r);
@@ -3624,7 +3766,7 @@ const SUPA_HANDLERS = {
   // ── 媒体利用率マスター取得 ──
   // v54: 配列→GAS互換ネスト構造に変換 { "A": { "openwork": 5, ... }, "B": { ... } }
   getLayerMediaUsage: async function(sb) {
-    var res = await sb.from('media_usage_rates').select('*');
+    var res = await fetchAllRows(function() { return sb.from('media_usage_rates').select('*').order('id'); }); // v80
     if (res.error) throw new Error(res.error.message);
     var nested = {};
     (res.data || []).forEach(function(row) {
@@ -3656,8 +3798,8 @@ const SUPA_HANDLERS = {
       });
     }
     if (!rows || rows.length === 0) {
-      await sb.from('media_usage_rates').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      return { success: true };
+      // v79: 空は保存しない（旧: 「全てデフォルトに戻す」→保存で全件削除していた）
+      throw new Error('媒体利用率のデータが空のため保存しませんでした（全件削除を防ぐため）');
     }
     // RPC でアトミック置換（DELETE + INSERT をトランザクション内で実行）
     var res = await sb.rpc('replace_media_usage_rates', { p_data: rows });
@@ -5190,6 +5332,7 @@ const StorageManager = {
 let _gasYieldMaster = null;
 let _gasMethodCategories = null;  // スプレッドシートから取得した手法カテゴリ一覧
 let _gasQuestionMaster = null;
+let _gasQuestionMasterFromDb = false; // v78: true のときだけ診断の写しに使う（端末の控えからは写さない）
 let _gasMethodMaster = null;
 let _gasMediaUsageMaster = null;
 let _gasAISettings = null;
@@ -5320,6 +5463,10 @@ const normalizeGASCustomer = (c, questionMasterCache = {}) => {
     isDecisionMaker: c.isDecisionMaker ?? fullData.isDecisionMaker ?? false,
     // v53-fix: 事前問診ステータス復元（diagnosis_data内に永続化されたもの）
     _preInputStatus: c._preInputStatus || fullData._preInputStatus || '',
+    // v79: 採用職種・新卒／中途の考え（旧データは事前問診取込時の _preInputJobType から職種だけ拾う）
+    jobType: c.jobType ?? fullData.jobType ?? fullData._preInputJobType ?? '',
+    jobTypeOther: c.jobTypeOther ?? fullData.jobTypeOther ?? '',
+    midCareerStance: c.midCareerStance ?? fullData.midCareerStance ?? '',
   };
 };
 
@@ -5392,16 +5539,13 @@ const GASDataManager = {
   saveYieldMaster: async (masterData) => {
       const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
-      // ローカルストレージに保存
-      try {
-        localStorage.setItem('gakusapo_yield_master', JSON.stringify(masterData));
-        _gasYieldMaster = masterData;
-      } catch (e) {}
-      
-      // v34: authPost使用
+      // v79: 控えは DB に入ってから更新する
       try {
         const result = await authPost('saveYieldMaster', { masterData: masterData });
-        console.log('歩留まりマスターをスプレッドシートに保存しました');
+        if (result && result.success) {
+          _gasYieldMaster = masterData;
+          try { localStorage.setItem('gakusapo_yield_master', JSON.stringify(masterData)); } catch (e) {}
+        }
         return result;
       } catch (err) {
         console.error('歩留まりマスター保存エラー:', err);
@@ -5429,6 +5573,7 @@ const GASDataManager = {
             }
             if (qmResult.success && qmResult.data) {
               _gasQuestionMaster = qmResult.data;
+              _gasQuestionMasterFromDb = true; // v78
               try { localStorage.setItem('gakusapo_question_master', JSON.stringify(qmResult.data)); } catch (e) {}
               return qmResult.data;
             } else if (qmResult.success && !qmResult.data) {
@@ -5462,6 +5607,12 @@ const GASDataManager = {
       }
   },
   
+  // v79: 設定の保存で「変わったか」を比べる元。DB から読めていなければ null（保存しない）
+  getLoadedMaster: (kind) => ({ method: _gasMethodMaster, media: _gasMediaUsageMaster, yield: _gasYieldMaster })[kind] || null,
+
+  // v78: DB から読んだ（または DB に保存できた）マスターだけを返す。診断の写しはこれから作る
+  getDbQuestionMaster: () => (_gasQuestionMasterFromDb && _gasQuestionMaster) ? _gasQuestionMaster : null,
+
   // 質問マスターを取得（キャッシュから）
   getQuestionMaster: () => {
     if (_gasQuestionMaster) {
@@ -5476,25 +5627,26 @@ const GASDataManager = {
     }
   },
   
-  // 質問マスターを保存（スプレッドシートに）
+  // 質問マスターを保存（v78: DB に入ってから控えを更新する。断られたら控えはそのまま）
   saveQuestionMaster: async (questionsData) => {
-      // ローカルストレージに保存
-      try {
-        localStorage.setItem('gakusapo_question_master', JSON.stringify(questionsData));
-      } catch (e) {}
-      
-      // v34: authPost使用
-      _gasQuestionMaster = questionsData;
       try {
         const qmSaveResult = await authPost('saveQuestionMaster', { questionsData: questionsData });
-        console.log('質問マスターをスプレッドシートに保存しました');
-        return qmSaveResult;
+        if (!qmSaveResult || !qmSaveResult.success) {
+          return { success: false, error: (qmSaveResult && qmSaveResult.error) || '保存に失敗しました' };
+        }
+        const saved = { ...questionsData };
+        if (qmSaveResult.version) saved._version = qmSaveResult.version; else delete saved._version;
+        _gasQuestionMaster = saved;
+        _gasQuestionMasterFromDb = true;
+        try { localStorage.setItem('gakusapo_question_master', JSON.stringify(saved)); } catch (e) {}
+        console.log('[v78] 質問マスターを保存しました', qmSaveResult.version || '(版なし)');
+        return { success: true, version: qmSaveResult.version || null };
       } catch (err) {
         console.error('質問マスター保存エラー:', err);
         return { success: false, error: err.message };
       }
   },
-  
+
   // AI設定を読み込み
   loadAISettings: async () => {
       try {
@@ -5538,17 +5690,13 @@ const GASDataManager = {
   
   // AI設定を保存（スプレッドシートに）
   saveAISettings: async (settings) => {
-      const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
-      
-      try {
-        localStorage.setItem('gakusapo_ai_settings', JSON.stringify(settings));
-        _gasAISettings = settings;
-      } catch (e) {}
-      
-      // v34: authPost使用
+      // v80: 控えは DB に入ってから更新する
       try {
         const aiSaveResult = await authPost('saveAISettings', { settings: settings });
-        console.log('AI設定をスプレッドシートに保存しました');
+        if (aiSaveResult && aiSaveResult.success) {
+          _gasAISettings = settings;
+          try { localStorage.setItem('gakusapo_ai_settings', JSON.stringify(settings)); } catch (e) {}
+        }
         return aiSaveResult;
       } catch (err) {
         console.error('AI設定保存エラー:', err);
@@ -5604,15 +5752,13 @@ const GASDataManager = {
   saveMethodMaster: async (methodsData) => {
       const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
-      try {
-        localStorage.setItem('gakusapo_method_master', JSON.stringify(methodsData));
-        _gasMethodMaster = methodsData;
-      } catch (e) {}
-      
-      // v34: authPost使用
+      // v79: 控えは DB に入ってから更新する
       try {
         const mmSaveResult = await authPost('saveRecruitmentMethods', { methodsData: methodsData });
-        console.log('採用手法マスターをスプレッドシートに保存しました');
+        if (mmSaveResult && mmSaveResult.success) {
+          _gasMethodMaster = methodsData;
+          try { localStorage.setItem('gakusapo_method_master', JSON.stringify(methodsData)); } catch (e) {}
+        }
         return mmSaveResult;
       } catch (err) {
         console.error('採用手法マスター保存エラー:', err);
@@ -5668,15 +5814,13 @@ const GASDataManager = {
   saveMediaUsageMaster: async (mediaData) => {
       const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
       
-      try {
-        localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(mediaData));
-        _gasMediaUsageMaster = mediaData;
-      } catch (e) {}
-      
-      // v34: authPost使用
+      // v79: 控えは DB に入ってから更新する
       try {
         const muSaveResult2 = await authPost('saveLayerMediaUsage', { usageData: mediaData });
-        console.log('媒体利用率マスターをスプレッドシートに保存しました');
+        if (muSaveResult2 && muSaveResult2.success) {
+          _gasMediaUsageMaster = mediaData;
+          try { localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(mediaData)); } catch (e) {}
+        }
         return muSaveResult2;
       } catch (err) {
         console.error('媒体利用率マスター保存エラー:', err);
@@ -9124,7 +9268,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">軸</label>
                     <select
-                      value={q.axisKey}
+                      value={toAxisKey(q.axisKey)}
                       onChange={(e) => updateQuestion(q.id, 'axisKey', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg text-sm"
                     >
@@ -9310,10 +9454,10 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
     { id: 'basic', label: '基本情報' },
     { id: 'target', label: 'ターゲット学生' },
     { id: 'method', label: '採用手法' },
+    { id: 'funnel', label: 'ファネル数値' }, // v79: 採用担当者問診の前へ
     { id: 'staff', label: '採用担当者問診' },
     { id: 'executive', label: '上層部問診' },
     { id: 'student', label: '学生問診' },
-    { id: 'funnel', label: 'ファネル数値' },
     { id: 'settings', label: '詳細設定' }
   ];
   
@@ -9416,6 +9560,45 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                 <option value="500〜1000名">500〜1000名</option>
                 <option value="1000名以上">1000名以上</option>
               </select>
+            </div>
+            {/* v79: 採用職種（事前問診から取り込み・ここで直せる） */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">採用職種</label>
+              <select
+                value={data.jobType || ''}
+                onChange={(e) => onChange({ ...data, jobType: e.target.value })}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              >
+                <option value="">選択してください</option>
+                {BB_JOB_TYPES.map(j => <option key={j.key} value={j.key}>{j.label}</option>)}
+              </select>
+              {data.jobType === 'other' && (
+                <input
+                  type="text"
+                  value={data.jobTypeOther || ''}
+                  onChange={(e) => onChange({ ...data, jobTypeOther: e.target.value })}
+                  placeholder="職種名"
+                  aria-label="その他の職種名"
+                  className="w-full mt-2 px-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                />
+              )}
+            </div>
+            {/* v79: 新卒／中途の考え（中途OK＝クルサポ提案の目安） */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">新卒／中途の考え</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={data.midCareerStance || ''}
+                  onChange={(e) => onChange({ ...data, midCareerStance: e.target.value })}
+                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                >
+                  <option value="">未回答</option>
+                  {MID_CAREER_STANCES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </select>
+                {isMidCareerOk(data) && (
+                  <span className="flex-shrink-0 px-2.5 py-1 rounded-md bg-teal-700 text-white text-sm font-bold">中途OK</span>
+                )}
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">診断日</label>
@@ -10055,6 +10238,18 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
             </div>
           )}
           
+          {/* v78: この診断が使う質問マスターの版（営業側だけに表示。顧客の事前問診には出さない） */}
+          {(() => {
+            const snap = data.savedQuestionMaster && data.savedQuestionMaster.base ? data.savedQuestionMaster : null;
+            const cur = GASDataManager.getQuestionMaster();
+            const text = snap
+              ? (questionMasterVersionText(snap._version) || 'v78より前に固定した版')
+              : ((questionMasterVersionText(cur?._version) || '最新') + '・初回保存でこの版に固定');
+            return (
+              <div className="mb-2 text-[11px] text-gray-400">質問マスター：{text}</div>
+            );
+          })()}
+
           {/* 表示設定トグル（折りたたみ） */}
           <details className="mb-6">
             <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">
@@ -10110,18 +10305,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                 />
                 <span className="text-xs text-gray-600">ギャップバッジを表示</span>
               </label>
-              <button
-                onClick={() => {
-                  if (confirm('質問マスターをデフォルトに戻しますか？\n質問が重複・欠落している場合はこれで修正できます。')) {
-                    localStorage.removeItem('gakusapo_question_master');
-                    alert('質問マスターをリセットしました。ページを再読み込みしてください。');
-                    window.location.reload();
-                  }
-                }}
-                className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded border border-red-200"
-              >
-                質問マスターをリセット
-              </button>
+              {/* v78: 「質問マスターをリセット」は削除（診断の写しには効かず誤解を招くため） */}
             </div>
           </details>
           
@@ -10341,14 +10525,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                           )}
                           {showAxisInfo && (
                             <span className="text-[10px] text-gray-400">
-                              {(q.axisType === 'mindset' || q.axisType?.includes('マインドセット')) ? '基礎力' : 
-                               (q.axisType === 'depth' || q.axisType?.includes('注力タイプ')) ? '注力タイプ' : '伝達力'}: {
-                                (q.axisType === 'mindset' || q.axisType?.includes('マインドセット'))
-                                  ? (MINDSET_AXES[q.axisKey]?.name || q.axisKey)
-                                  : (q.axisType === 'depth' || q.axisType?.includes('注力タイプ'))
-                                  ? (DEPTH_PHASES[q.depthKey]?.name || q.depthKey)
-                                  : (EVALUATION_AXES[q.axisKey]?.name || q.axisKey)
-                              }
+                              {axisBadgeText(q) /* v78: 結果画面と同じ軸名（旧名・日本語のキーも変換） */}
                             </span>
                           )}
                           {showGapBadge && (q.gapCheck === true || q.gapCheck === 'true') && (
@@ -12497,6 +12674,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId, pendingPr
   const [sortKey, setSortKey] = useState('diagnosisDate');
   const [sortOrder, setSortOrder] = useState('desc');
   const [viewMode, setViewMode] = useState('table'); // 'table' or 'card'
+  const [midOnly, setMidOnly] = useState(false); // v79: 中途OKだけ表示
   
   // フィルタリング
   const filteredCustomers = useMemo(() => {
@@ -12517,10 +12695,11 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId, pendingPr
       // 期間検索
       if (dateFrom && c.diagnosisDate < dateFrom) return false;
       if (dateTo && c.diagnosisDate > dateTo) return false;
+      if (midOnly && !isMidCareerOk(c)) return false; // v79: 中途OKだけ
       
       return true;
     });
-  }, [customers, searchText, searchInquiryNo, dateFrom, dateTo]);
+  }, [customers, searchText, searchInquiryNo, dateFrom, dateTo, midOnly]);
   
   // ソート
   const sortedCustomers = useMemo(() => {
@@ -12575,6 +12754,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId, pendingPr
     setSearchInquiryNo('');
     setDateFrom('');
     setDateTo('');
+    setMidOnly(false);
   };
   
   const SortIcon = ({ columnKey }) => {
@@ -12592,7 +12772,12 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId, pendingPr
             （{filteredCustomers.length} / {customers.length}件）
           </span>
         </h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* v79: 中途OKだけ表示 */}
+          <label className="flex items-center gap-1.5 text-xs text-gray-700 mr-2 cursor-pointer">
+            <input type="checkbox" checked={midOnly} onChange={(e) => setMidOnly(e.target.checked)} className="w-4 h-4" />
+            中途OKだけ表示
+          </label>
           <button
             onClick={() => setViewMode('table')}
             className={`px-3 py-1.5 text-xs rounded-lg transition ${
@@ -12740,6 +12925,10 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId, pendingPr
                     </td>
                     <td className="px-3 py-2.5 font-medium text-gray-800">
                       {c.companyName || '未設定'}
+                      {isMidCareerOk(c) && (
+                        /* v79: 中途OK（クルサポ提案の目安） */
+                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-teal-700 text-white font-bold align-middle">中途OK</span>
+                      )}
                       {pendingPreinputNos && pendingPreinputNos.has(c.inquiryNo) && (
                         /* v76: 事前問診の回答あり（未取込） */
                         <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 align-middle">回答あり・未取込</span>
@@ -12794,6 +12983,7 @@ const CustomerDatabase = ({ customers, onSelect, onDelete, selectedId, pendingPr
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-gray-800">{c.companyName || '企業名未設定'}</span>
+                      {isMidCareerOk(c) && <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-700 text-white font-bold">中途OK</span>}
                       <span className={`text-xs font-bold px-2 py-0.5 rounded rank-${rank.toLowerCase()}`}>
                         {rank}
                       </span>
@@ -13777,6 +13967,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   const [activeSection, setActiveSection] = useState('layermedia');
   const [testResult, setTestResult] = useState(null);
   const [isTesting, setIsTesting] = useState(false);
+  const [testButtonId, setTestButtonId] = useState('btn1'); // v80: AIテストで使う診断ボタン（本番と同じプロンプト）
   // v66: モデル一覧ライブ取得（プロバイダごとにキャッシュ。永続化はしない＝常に押下時点の最新）
   const [modelCatalog, setModelCatalog] = useState({});      // { gemini: [{id,label,meta}], ... }
   const [modelFetchState, setModelFetchState] = useState({}); // { gemini: 'loading'|'error:...'|'done@HH:MM', ... }
@@ -13951,12 +14142,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
   
   const currentPreset = AI_TONE_PRESETS[localSettings.selectedPreset] || AI_TONE_PRESETS.standard;
   
-  const getEffectiveSystemPrompt = () => {
-    if (localSettings.selectedPreset === 'custom') {
-      return localSettings.customSystemPrompt || AI_TONE_PRESETS.standard.systemPrompt;
-    }
-    return currentPreset.systemPrompt;
-  };
+  const getEffectiveSystemPrompt = () => resolveSystemPrompt(localSettings); // v80: 本番と同じ決め方
   
   const handlePresetChange = (presetId) => {
     setLocalSettings(prev => ({
@@ -13976,6 +14162,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
     const testData = {
       companyName: 'サンプル株式会社',
       industry: 'IT・通信',
+      companySize: '101～300名', // v80: buildUserPrompt が読む名前（旧: employeeCount で「未選択」になっていた）
       employeeCount: '101～300名',
       rank: 'B',
       diagnosisType: { name: 'ステルス・ゴースト', description: '認知度不足で見つけてもらえない' },
@@ -14005,7 +14192,10 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
     };
     
     const systemPrompt = getEffectiveSystemPrompt();
-    const userPrompt = buildUserPrompt(localSettings.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE, testData);
+    // v80: 本番の診断と同じく、選んだ診断ボタンのプロンプトで組み立てる（旧: 本番では使わないユーザープロンプト欄で試していた）
+    const testButtons = localSettings.sideButtons || DEFAULT_SIDE_BUTTONS;
+    const testButton = testButtons.find(b => b.id === testButtonId) || testButtons[0] || DEFAULT_SIDE_BUTTONS[0];
+    const userPrompt = buildUserPrompt(testButton.prompt, testData);
     
     try {
       // v66: プロバイダ分岐はディスパッチャに集約
@@ -14027,92 +14217,51 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
     }
   };
   
-  const handleSave = () => {
+  const handleSave = async () => {
     const isGasMode = true; // v58: Supabase移行済みのため恒真（旧GAS互換分岐。将来的に分岐ごと削除予定）
     const isAdmin = window.GAS_CONFIG?.permissions?.includes('admin');
-    
-    onSave(localSettings);
-    // スプレッドシート設定も保存
-    SpreadsheetManager.saveConfig(spreadsheetConfig);
-    // マスターデータ用スプレッドシート設定も保存
-    if (localSettings.masterSpreadsheetUrl) {
-      MasterDataSpreadsheetManager.saveConfig({
-        enabled: true,
-        scriptUrl: localSettings.masterSpreadsheetUrl,
-        lastSync: new Date().toISOString()
-      });
-    }
-    // ログイン設定も保存
-    LoginManager.saveConfig(loginConfig);
-    
-    // 学生層別媒体利用率マスターも保存
-    if (layerMediaUsage) {
-      try {
-        localStorage.setItem('gakusapo_layer_media_usage', JSON.stringify(layerMediaUsage));
-      } catch (e) {
-        console.error('媒体利用率マスターの保存に失敗:', e);
-      }
-      // GASモードの場合はキャッシュを更新
-      if (isGasMode) {
-        // 管理者の場合はスプレッドシートにも保存
-        if (isAdmin) {
-          GASDataManager.saveMediaUsageMaster(layerMediaUsage);
-        } else {
-          // 管理者以外でもキャッシュを更新
-          GASDataManager.updateMediaUsageCache(layerMediaUsage);
+
+    // v78: 質問マスターは変わったときだけ、先に DB へ保存する（版が増える）。断られたら知らせて閉じない
+    if (questionMaster && isAdmin && GASDataManager.getDbQuestionMaster()) { // v79: DB から読めていなければ飛ばす
+      const strip = (m) => { const c = { ...(m || {}) }; delete c._version; return JSON.stringify(c); };
+      if (strip(questionMaster) !== strip(GASDataManager.getQuestionMaster())) {
+        const qmRes = await GASDataManager.saveQuestionMaster(questionMaster);
+        if (!qmRes || !qmRes.success) {
+          alert('質問マスターを保存できませんでした。\n' + ((qmRes && qmRes.error) || '') + '\n\n変更は画面に残っています。もう一度「設定を保存」を押してください。');
+          return;
         }
+        const vt = questionMasterVersionText(qmRes.version);
+        if (vt) alert('質問マスターを保存しました（' + vt + '）。\nこれから作る診断はこの版の質問を使います。保存済みの診断はそれぞれの版のままです。');
       }
     }
     
-    // 質問マスターも保存
-    if (questionMaster) {
-      try {
-        localStorage.setItem('gakusapo_question_master', JSON.stringify(questionMaster));
-      } catch (e) {
-        console.error('質問マスターの保存に失敗:', e);
-      }
-      // GASモードの場合はキャッシュを更新
-      if (isGasMode) {
-        if (isAdmin) {
-          GASDataManager.saveQuestionMaster(questionMaster);
-        } else {
-          GASDataManager.updateQuestionMasterCache(questionMaster);
+    // v79: 採用手法・媒体利用率・歩留まりは「変わったときだけ」保存し、結果を待つ。失敗したら知らせて閉じない。
+    //   DB から読めていないマスター（比べる元が無い）は保存しない。歩留まりは編集画面が無いので通常は保存されない
+    if (isAdmin) {
+      const masters = [
+        { kind: 'method', label: '採用手法', value: methodMaster, save: (v) => GASDataManager.saveMethodMaster(v) },
+        { kind: 'media', label: '媒体利用率', value: layerMediaUsage, save: (v) => GASDataManager.saveMediaUsageMaster(v) },
+        { kind: 'yield', label: '歩留まり', value: yieldMaster, save: (v) => GASDataManager.saveYieldMaster(v) }
+      ];
+      for (const m of masters) {
+        const loaded = GASDataManager.getLoadedMaster(m.kind);
+        if (!m.value || !loaded) continue;
+        if (JSON.stringify(m.value) === JSON.stringify(loaded)) continue;
+        const r = await m.save(m.value);
+        if (!r || !r.success) {
+          alert(m.label + 'マスターを保存できませんでした。\n' + ((r && r.error) || '') + '\n\n変更は画面に残っています。もう一度「設定を保存」を押してください。');
+          return;
         }
       }
     }
-    
-    // 採用手法マスターも保存
-    if (methodMaster) {
-      try {
-        localStorage.setItem('gakusapo_method_master', JSON.stringify(methodMaster));
-      } catch (e) {
-        console.error('採用手法マスターの保存に失敗:', e);
-      }
-      // GASモードの場合はキャッシュを更新
-      if (isGasMode) {
-        if (isAdmin) {
-          GASDataManager.saveMethodMaster(methodMaster);
-        } else {
-          GASDataManager.updateMethodMasterCache(methodMaster);
-        }
-      }
-    }
-    
-    // 歩留まり率マスターも保存
-    if (yieldMaster) {
-      // GASモードの場合はキャッシュを更新
-      if (isGasMode) {
-        if (isAdmin) {
-          GASDataManager.saveYieldMaster(yieldMaster);
-        } else {
-          GASDataManager.updateYieldMasterCache(yieldMaster);
-        }
-      } else {
-        // 非GASモードでもlocalStorageに保存
-        try {
-          localStorage.setItem('gakusapo_yield_master', JSON.stringify(yieldMaster));
-        } catch (e) {}
-      }
+
+    // v79: マスターの保存の後に反映する（開いている診断にも新しいマスターが届く）
+    // v80: AI設定の保存結果を待つ。失敗したら知らせて閉じない。
+    //   スプレッドシート連携・ログイン設定は撤去したので保存しない
+    const aiRes = await onSave(localSettings);
+    if (aiRes && aiRes.success === false) {
+      alert('AI設定を保存できませんでした。\n' + (aiRes.error || '') + '\n\n変更は画面に残っています。もう一度「設定を保存」を押してください。');
+      return;
     }
     onClose();
   };
@@ -14226,8 +14375,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
               {[
                 { id: 'layermedia', icon: 'chart', label: '媒体利用率設定' },
                 { id: 'method', icon: 'clipboard', label: '採用手法詳細設定' },
-                { id: 'question', icon: 'question', label: '質問項目設定' },
-                { id: 'spreadsheet', icon: 'database', label: '顧客データ保存設定' }
+                { id: 'question', icon: 'question', label: '質問項目設定' }
+                // v80: 「顧客データ保存設定」（スプレッドシート連携）は撤去。Supabase 移行後は使われていなかった
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -14311,7 +14460,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
               <div className="px-4 py-2 mt-4 text-xs font-bold text-gray-400 uppercase tracking-wider">その他</div>
               {[
                 { id: 'api', icon: 'key', label: 'API設定' },
-                { id: 'login', icon: 'lock', label: 'ログイン設定' },
+                // v80: 「ログイン設定」（パスワード）は撤去。ログインは Google のみ
                 { id: 'members', icon: 'users', label: 'メンバー管理' },
                 { id: 'handover', icon: 'handover', label: '引き継ぎ管理' }
               ].map(tab => (
@@ -14378,7 +14527,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
               <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl">
                 <div className="text-sm font-medium text-purple-800 mb-1">連携AIプロバイダ</div>
                 <div className="text-xs text-purple-700">
-                  プロバイダとモデルの選択は全メンバーのAI診断に即時反映されます（デプロイ不要）。
+                  プロバイダとモデルの選択は、保存すると全メンバーのAI診断に反映されます（他のメンバーは次にログインしたときから。デプロイ不要）。
                   AI生成もモデル一覧の取得もサーバー側（Edge Function）で実行され、<b>APIキーはSupabaseのSecretsに保管</b>されます。
                   この画面でキーを入力することはありません。キーの登録・変更は
                   Supabaseダッシュボード → Edge Functions → Secrets で行ってください
@@ -14482,6 +14631,11 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                 <div className="text-xs text-orange-700">
                   診断で使用する質問を管理します。企業規模・業種・ターゲット層ごとにカスタマイズできます。
                 </div>
+                {/* v78: 版の表示 */}
+                <div className="text-xs text-orange-700 mt-1.5">
+                  現在の版：{questionMasterVersionText(GASDataManager.getQuestionMaster()?._version) || '版なし'}
+                  　保存すると新しい版になります（保存済みの診断はそれぞれの版のまま）
+                </div>
               </div>
               
               {/* セクション選択 */}
@@ -14533,7 +14687,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                       onChange={(e) => setQuestionEditIndustry(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg"
                     >
-                      {['製造業（ものづくり）', '製造業（食品メーカー・その他）', 'IT・通信', '金融・保険', '小売・流通', 'サービス業', '建設・不動産', '医療・福祉', '飲食・宿泊', '運輸・物流', 'マスコミ・広告', 'コンサルティング', '商社・卸売', 'その他'].map(ind => (
+                      {/* v80: 基本情報の業種と同じ一覧＋マスターにある業種（旧: 医療・福祉（資格職含む）・介護・福祉が無かった） */}
+                      {[...new Set([...INDUSTRY_LIST.map(i => i.label), ...Object.keys((questionMaster && questionMaster.industry) || {})])].map(ind => (
                         <option key={ind} value={ind}>{ind}</option>
                       ))}
                     </select>
@@ -14925,7 +15080,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                           <div>
                             <label className="block text-gray-500 mb-0.5">軸</label>
                             <select
-                              value={q.axisKey || ''}
+                              value={toAxisKey(q.axisKey)}
                               disabled={!q.axisType}
                               onChange={(e) => {
                                 setQuestionMaster(prev => {
@@ -14956,30 +15111,23 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                               className={`w-full px-1 py-1 border border-gray-200 rounded text-xs ${!q.axisType ? 'bg-gray-100 text-gray-400' : ''}`}
                             >
                               <option value="">-</option>
-                              {(q.axisType === 'mindset' || q.axisType?.includes('マインドセット')) ? (
-                                <>
-                                  <option value="planning">計画力</option>
-                                  <option value="structure">体制力</option>
-                                  <option value="marketUnderstanding">市場理解</option>
-                                  <option value="management">管理力</option>
-                                  <option value="ownership">当事者意識</option>
-                                </>
-                              ) : q.axisType === 'evaluation' ? (
-                                <>
-                                  <option value="recognition">認知度</option>
-                                  <option value="specificity">具体性</option>
-                                  <option value="differentiation">差別化力</option>
-                                  <option value="visionEmpathy">共感・ビジョン</option>
-                                  <option value="selectionUX">選考UX</option>
-                                  <option value="dialogue">対話力</option>
-                                </>
+                              {/* v78: 名前は結果画面と同じ（MINDSET_AXES / EVALUATION_AXES） */}
+                              {isMindsetAxisType(q.axisType) ? (
+                                Object.entries(MINDSET_AXES).map(([key, axis]) => (
+                                  <option key={key} value={key}>{axis.name}</option>
+                                ))
+                              ) : (q.axisType && !isDepthAxisType(q.axisType)) ? (
+                                Object.entries(EVALUATION_AXES).map(([key, axis]) => (
+                                  <option key={key} value={key}>{axis.name}</option>
+                                ))
                               ) : null}
                             </select>
                           </div>
                           <div>
-                            <label className="block text-gray-500 mb-0.5">注力タイプ</label>
+                            <label className="block text-gray-500 mb-0.5">注力タイプ{questionEditSection === 'depth' ? '（区分で決まる）' : ''}</label>
                             <select
-                              value={q.depthKey || ''}
+                              value={questionEditSection === 'depth' ? questionEditDepth : (q.depthKey || '')}
+                              disabled={questionEditSection === 'depth'} /* v80: 注力タイプ別区分は区分の値で保存される */
                               onChange={(e) => {
                                 setQuestionMaster(prev => {
                                   const newMaster = JSON.parse(JSON.stringify(prev));
@@ -15158,20 +15306,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                 </div>
               </div>
               
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => {
-                    if (confirm('質問マスターをデフォルトに戻しますか？\n（localStorageのデータもクリアされます）')) {
-                      localStorage.removeItem('gakusapo_question_master');
-                      setQuestionMaster(DEFAULT_QUESTION_MASTER);
-                      alert('質問マスターをデフォルトに戻しました。');
-                    }
-                  }}
-                  className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition"
-                >
-                  デフォルトに戻す
-                </button>
-              </div>
+              {/* v78: 「デフォルトに戻す」は削除（空のマスター→保存で全質問が消えるため） */}
             </div>
           )}
           
@@ -15429,9 +15564,15 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                         alert('キーと表示名は必須です');
                         return;
                       }
+                      // v80: 新規追加で既存のキーと重なれば止める（旧: 黙って上書き）
+                      if (!editingMethodKey && methodMaster[newMethodData.key]) {
+                        alert('キー「' + newMethodData.key + '」はすでにあります。別のキーにしてください。');
+                        return;
+                      }
                       setMethodMaster(prev => ({
                         ...prev,
                         [newMethodData.key]: {
+                          ...(prev[newMethodData.key] || {}), // v80: 中途／新卒の区分など、画面に無い項目を残す
                           name: newMethodData.name,
                           category: newMethodData.category,
                           targetLayers: newMethodData.targetLayers,
@@ -16545,7 +16686,7 @@ function fullSyncCustomers(customers) {
               <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl">
                 <div className="text-sm font-medium text-purple-800 mb-1">AI基本プロンプト</div>
                 <div className="text-xs text-purple-600">
-                  AI診断全体で使用される共通のプロンプト設定です。システムプロンプト（AIの役割）とユーザープロンプト（出力フォーマット）を編集できます。
+                  AIの役割（システムプロンプト）を設定します。口調で「カスタム」を選ぶと編集できます。本文が空のときは標準の口調で生成します。
                 </div>
               </div>
               
@@ -16567,25 +16708,11 @@ function fullSyncCustomers(customers) {
                 />
               </div>
               
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-gray-700">ユーザープロンプト（出力フォーマット）</label>
-                  <button
-                    onClick={() => setLocalSettings(prev => ({ ...prev, userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE }))}
-                    className="text-xs text-purple-600 hover:text-purple-700"
-                  >
-                    デフォルトに戻す
-                  </button>
-                </div>
-                <textarea
-                  value={localSettings.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, userPromptTemplate: e.target.value }))}
-                  className="w-full h-64 px-4 py-3 border border-gray-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
-                  placeholder="ユーザープロンプトテンプレートを入力..."
-                />
-                <p className="mt-2 text-xs text-gray-500">
-                  {'{companyName}'}, {'{industry}'}, {'{rank}'}, {'{remarks}'} などの変数が使用できます
-                </p>
+              {/* v80: 「ユーザープロンプト（出力フォーマット）」欄は撤去（本番の診断では使われていなかった）。
+                   出力の指示は「診断ボタン設定」の各ボタンのプロンプトで編集する */}
+              <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700">
+                出力の内容と形式（ユーザープロンプト）は、「診断ボタン設定」の各ボタンのプロンプトで編集します。
+                {'{companyName}'}, {'{industry}'}, {'{rank}'}, {'{remarks}'} などの変数が使えます。
               </div>
             </div>
           )}
@@ -16600,6 +16727,21 @@ function fullSyncCustomers(customers) {
                 </div>
               </div>
               
+              {/* v80: 本番と同じプロンプトで試すため、診断ボタンを選ぶ */}
+              <div>
+                <label htmlFor="ai-test-button" className="block text-sm font-medium text-gray-700 mb-2">試す診断ボタン（本番と同じプロンプトで生成します）</label>
+                <select
+                  id="ai-test-button"
+                  value={testButtonId}
+                  onChange={(e) => setTestButtonId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                >
+                  {(localSettings.sideButtons || DEFAULT_SIDE_BUTTONS).map(b => (
+                    <option key={b.id} value={b.id}>{b.label}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="p-4 bg-gray-50 rounded-xl">
                 <div className="text-sm font-medium text-gray-700 mb-2">テスト用サンプルデータ</div>
                 <div className="text-xs text-gray-600 space-y-1">
@@ -17170,6 +17312,9 @@ const App = () => {
   const handleLogout = async () => {
     await LoginManager.logout();
     setIsLoggedIn(false);
+    setGoogleAuthed(false); // v80: Google のログイン画面に戻す（旧: 抜けられないパスワード画面に入った）
+    // v80: 開いていた診断などを残さないよう読み直す（同じタブで別の人がログインして前の人の診断を上書きしないため）
+    window.location.reload();
   };
   
   // ログイン画面表示（ログインが必要な場合）
@@ -17245,7 +17390,7 @@ const App = () => {
         aiResult: currentData.aiResult || (aiAdvice ? JSON.stringify(aiAdvice) : ''),
         savedQuestionMaster: (() => {
           // v45-fix: 空のDEFAULT_QUESTION_MASTERを保存しない（問診マスター未読込時のガード）
-          const qm = currentData.savedQuestionMaster || getQuestionMasterFromStorage();
+          const qm = currentData.savedQuestionMaster || GASDataManager.getDbQuestionMaster(); // v78: 端末の控えからは写さない
           if (!qm || !qm.base) return null;
           const hasAnyQuestions = Object.values(qm.base).some(sizeObj =>
             sizeObj && typeof sizeObj === 'object' && Object.values(sizeObj).some(arr => Array.isArray(arr) && arr.length > 0)
@@ -17505,6 +17650,12 @@ const App = () => {
         // 既存回答が{}で上書き消去されていた。中身のあるオブジェクトのみ採用
         const pick = (obj, fallback) =>
           (obj && typeof obj === 'object' && Object.keys(obj).length > 0) ? obj : fallback;
+        // v78: 回答は質問ごとに足し合わせる（顧客が答えた質問だけ上書き。業種別などBB側だけの回答は残す）
+        const mergeAnswers = (pre, cur) => {
+          const out = { ...(cur || {}) };
+          Object.entries(pre || {}).forEach(([k, v]) => { if (v) out[k] = v; });
+          return out;
+        };
         return {
           ...prev,
           // ターゲット学生
@@ -17512,8 +17663,8 @@ const App = () => {
           // 採用手法（優先順位込み）
           recruitmentMethods: mergedMethods,
           // 問診回答
-          staffAnswers: pick(preInput.staffAnswers, prev.staffAnswers),
-          executiveAnswers: pick(preInput.executiveAnswers, prev.executiveAnswers),
+          staffAnswers: mergeAnswers(preInput.staffAnswers, prev.staffAnswers),
+          executiveAnswers: mergeAnswers(preInput.executiveAnswers, prev.executiveAnswers),
           // ファネル（BB診断形式で深くマージ）
           funnelData: mergedFunnel,
           // v51 fix: 課題フィールドのマッピング（事前問診→BB診断のフィールド名変換）
@@ -17525,13 +17676,28 @@ const App = () => {
           // 事前問診ステータス（表示用）
           _preInputStatus: status,
           _preInputImportedAt: new Date().toISOString(),
-          _preInputJobType: preInput.jobType
+          _preInputJobType: preInput.jobType,
+          // v79: 欄として取り込む（顧客が答えていなければBB側の値を残す）
+          jobType: preInput.jobType || prev.jobType || '',
+          jobTypeOther: preInput.jobTypeOther || prev.jobTypeOther || '',
+          midCareerStance: preInput.midCareerStance !== undefined ? (preInput.midCareerStance || '') : (prev.midCareerStance || '')
         };
       };
       
       // マージデータを構築してstateに反映
       const mergedData = buildMergedData(currentData);
       setCurrentData(mergedData);
+      // v78: この診断の版に無い質問への回答を数えて知らせる（版がずれていると画面にも点数にも出ない）
+      try {
+        const ids = collectQuestionIds(getEffectiveQuestionMaster(mergedData));
+        const answered = [...Object.keys(preInput.staffAnswers || {}), ...Object.keys(preInput.executiveAnswers || {})]
+          .filter(k => (preInput.staffAnswers || {})[k] || (preInput.executiveAnswers || {})[k]);
+        const outside = [...new Set(answered)].filter(k => !ids.has(k));
+        if (ids.size > 0 && outside.length > 0) {
+          toast('事前問診の回答のうち ' + outside.length + ' 問は、この診断の質問マスターの版に無いため表示・採点されません。', 'warning', 6000);
+          console.warn('[v78] 版に無い質問への回答:', outside);
+        }
+      } catch (e) { console.warn('[v78] 版の照合に失敗:', e && e.message); }
       
       toast('事前問診データを取り込みました。自動保存中...', 'success');
       
@@ -17544,7 +17710,7 @@ const App = () => {
             updatedAt: new Date().toISOString(),
             savedQuestionMaster: (() => {
               // v45-fix: 空のDEFAULT_QUESTION_MASTERを保存しない
-              const qm = mergedData.savedQuestionMaster || getQuestionMasterFromStorage();
+              const qm = mergedData.savedQuestionMaster || GASDataManager.getDbQuestionMaster(); // v78
               if (!qm || !qm.base) return null;
               const hasQ = Object.values(qm.base).some(s => s && typeof s === 'object' && Object.values(s).some(a => Array.isArray(a) && a.length > 0));
               return hasQ ? qm : null;
@@ -17801,10 +17967,7 @@ const App = () => {
       const { diagnosisDataForAI } = buildDiagnosisDataForAI(currentData, effectiveData, rank, typeDef);
       
       // プロンプトを構築
-      const currentPreset = AI_TONE_PRESETS[aiSettings.selectedPreset] || AI_TONE_PRESETS.standard;
-      const systemPrompt = aiSettings.selectedPreset === 'custom' 
-        ? (aiSettings.customSystemPrompt || currentPreset.systemPrompt)
-        : currentPreset.systemPrompt;
+      const systemPrompt = resolveSystemPrompt(aiSettings); // v80: カスタムで本文が空なら標準（テストと同じ）
       
       // ベースのプロンプトを使用し、追加情報を付加
       let userPrompt = buildUserPrompt(baseButtonConfig.prompt, diagnosisDataForAI);
@@ -17829,8 +17992,9 @@ const App = () => {
           companyName: currentData.companyName,
           diagnosisType: `再診断（${baseButtonConfig.label}ベース）`,
           prescription: parsedResult.prescription,
-          forStaff: parsedResult.forStaff,
-          forExecutive: parsedResult.forExecutive,
+          forStaff: parsedResult.forRecruiter ?? parsedResult.forStaff, // v80: AIの結果は forRecruiter / forManagement
+          forExecutive: parsedResult.forManagement ?? parsedResult.forExecutive,
+          result: aiResultJson, // v80: ai_result には診断結果そのものを保存（画面が読む形と同じ）
           organizationIssue: parsedResult.organizationIssue,
           additionalInfo: reDiagnosisAdditionalInfo.trim()
         }).catch(e => {
@@ -17874,10 +18038,7 @@ const App = () => {
       const { diagnosisDataForAI } = buildDiagnosisDataForAI(currentData, effectiveData, rank, typeDef);
       
       // プロンプトを構築（口調プリセットはシステムプロンプトに使用）
-      const currentPreset = AI_TONE_PRESETS[aiSettings.selectedPreset] || AI_TONE_PRESETS.standard;
-      const systemPrompt = aiSettings.selectedPreset === 'custom' 
-        ? (aiSettings.customSystemPrompt || currentPreset.systemPrompt)
-        : currentPreset.systemPrompt;
+      const systemPrompt = resolveSystemPrompt(aiSettings); // v80: カスタムで本文が空なら標準（テストと同じ）
       
       // ボタン専用のプロンプトを使用
       const userPrompt = buildUserPrompt(buttonConfig.prompt, diagnosisDataForAI);
@@ -17903,8 +18064,9 @@ const App = () => {
           companyName: currentData.companyName,
           diagnosisType: buttonConfig.label,
           prescription: parsedResult.prescription,
-          forStaff: parsedResult.forStaff,
-          forExecutive: parsedResult.forExecutive,
+          forStaff: parsedResult.forRecruiter ?? parsedResult.forStaff, // v80: AIの結果は forRecruiter / forManagement
+          forExecutive: parsedResult.forManagement ?? parsedResult.forExecutive,
+          result: aiResultJson, // v80: ai_result には診断結果そのものを保存（画面が読む形と同じ）
           organizationIssue: parsedResult.organizationIssue,
           additionalInfo: ''
         }).catch(e => {
@@ -18287,7 +18449,7 @@ const App = () => {
             {/* 設定（管理者用） - GASモードではadmin権限のみ、スタンドアロンでは常に表示 */}
             {(!isGasMode || (isGasMode && window.GAS_CONFIG?.permissions?.includes('admin'))) && (
               <button
-                onClick={() => setShowAISettingsAuth(true)}
+                onClick={() => setShowAISettings(true) /* v80: 設定画面のパスワードは撤去（管理者だけにボタンが出る） */}
                 className="p-2.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
                 title="設定"
               >
@@ -18478,9 +18640,11 @@ const App = () => {
       {showAISettings && (
         <AISettingsModal
           settings={aiSettings}
-          onSave={(newSettings) => {
+          onSave={async (newSettings) => {
+            // v80: AI設定の保存結果を待つ。失敗したら画面の設定も変えずに結果を返す（設定画面が知らせて閉じない）
+            const aiRes = await AISettingsManager.saveSettings(newSettings);
+            if (!aiRes || !aiRes.success) return aiRes || { success: false };
             setAiSettings(newSettings);
-            AISettingsManager.saveSettings(newSettings);
             // マスターデータが更新された可能性があるので、currentDataを更新
             const updatedYieldMaster = GASDataManager.getYieldMaster();
             const updatedMethodMaster = GASDataManager.getMethodMaster();
@@ -18492,6 +18656,7 @@ const App = () => {
               methodMaster: updatedMethodMaster || prev.methodMaster,
               layerMediaUsage: updatedLayerMediaUsage || prev.layerMediaUsage
             }));
+            return aiRes;
           }}
           onClose={() => setShowAISettings(false)}
         />
