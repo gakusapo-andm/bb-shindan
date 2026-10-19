@@ -117,9 +117,21 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
 // v2.1: getQuestionMasterPublic/getRecruitmentMethodsPublic にフラット→ネスト変換追加（v50 SUPA_HANDLERS同等）
 // v3: URLトークン認証(?tk=), 企業規模URL指定(?size=), 担当者/上層部URL分離(?role=exec), 課題・挑戦ステップ追加
 // v3.1: バグ修正4件 + 運用改善5件 + hotfix(upsert, UNIQUE CONSTRAINT, 選考ステップ数, 課題マッピング)
+// v3.9 (2026-10-19): ターゲット層を新しい5区分（A 文系／B 理系／C 専門学校（介護系・建築系）／D 高卒／E その他（中途・第二新卒））に変更。
+//   割合は聞かず、いちばん採りたい層を1つ選ぶ。文系・理系は「主に狙う大学（上位校／中堅校／地元の大学・その他）」を聞く。
+//   採用職種で「中途も検討」と答えた人は E を最初に選んでおく（外せる）。保存は targetLayers に新しいキー（bunkei 等）＋ layerModel: 2。
+//   旧 A〜H のキーは画面で触った時点で捨てる。DB 変更なし（BB診断 v82・DBパッチ16 とセット）
+// v3.8b (2026-10-19): 本番のカテゴリ名（「1.ナビサイト」「求人」「業界特化型」等）でも決めた並びで出るように、表示用に名前をそろえる（DB変更なし）
+// v3.8 (2026-10-19): 採用手法の画面（BB診断 v81 とセット・DB変更なし）
+//   [並び] カテゴリを ナビサイト→求人サイト→合同説明会→大学連携→インターンシップ→ダイレクトリクルーティング→
+//     口コミ・情報サイト→SNS・動画→地域特化→業界特化 の順に固定（旧: 名前順で SNS・動画 や その他 が先頭に来た）。
+//     「実習受け入れ」は大学連携の中に表示（マスターのカテゴリは変えない）。選択肢は2列
+//   [外す] 「先輩・友人紹介」「自社説明会・オープンカンパニー」は選択肢に出さない（マスターには残す。選択済みの古いデータだけは表示）
+//   [優先順位] 画面の下に常に出る帯（1段・横にスクロール、左ほど注力）。「並べ替える」で縦1列の一覧を開いて▲▼で並べ替え
+//   [文言] 中途の質問を「上記で選択された職種は、中途（若手中途）採用もご検討はされていますか？」に
 // v3.7 (2026-10-19): 並びと問診のしかたを変更（BB診断 v79・DBパッチ14 とセット）
 //   [並び] 担当者用: 企業規模(URLに無いとき) → 採用職種 → ターゲット学生 → 採用手法 → 課題・挑戦 → ファネル数値 → 担当者問診（最後）
-//   [中途] 採用職種の手順に「上記で選択された職種は、中途（若手中途）採用の方もご検討はされていますか？」（任意・midCareerStance）
+//   [中途] 採用職種の手順に「上記で選択された職種は、中途採用の方もご検討はされていますか？」（任意・midCareerStance）
 //   [ファネル] 一番注力している手法（採用手法の優先順位1位）だけを聞く。卒年の選択は残す
 //   [問診] 時間制限をなくし「目安20分」の経過メーターに。1問ごとに自動保存し、開き直すと続きの問いから。
 //     「回答を終える」は未回答数を見せて確かめてから送信（最後の手順なのでそのまま送信）。
@@ -131,6 +143,8 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
 //     ・送信の保存に失敗したら完了画面にしない
 //     ・取込済みの判定は DB の時計同士（取込時刻と最後の送信の記録）で比べる（端末の時計がずれると誤判定した）
 //     ・ファネルの合計は選んだ手法すべての値で出す（BB診断の表示と合わせる。入力欄は1位の手法だけ）
+//     ・問診を中断した（または始めていない）まま画面下の「送信する」を押したときも、未回答数を見せて確かめる
+//       （旧: 確認なしで途中の回答のまま送信された）
 // v3.6 (2026-10-19): 質問はその診断の版（BB診断が初回保存時に写した質問マスター）を出す。要 DBパッチ13・BB診断 v78
 //   症状: 顧客は「開いた時点の最新マスター」、BB診断は「保存時の写し」で、マスターを変えると
 //         ・新しい質問への回答が取り込んでも表示・採点されない ・回答済みでURLを開き直すと回答が消える（下記の巻き戻し）
@@ -175,7 +189,7 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
     window.SUPABASE_CONFIG.url,
     window.SUPABASE_CONFIG.anonKey
   );
-  console.log('[事前問診 v3.7] Supabase接続完了');
+  console.log('[事前問診 v3.9] Supabase接続完了');
 </script>
 </head>
 <body>
@@ -357,7 +371,7 @@ const FUNNEL_PHASES = [
 const STEP_DEFS = {
   companySize: { id: 'companySize', label: '企業規模', icon: 'building' },
   jobType: { id: 'jobType', label: '採用職種', icon: 'briefcase' },
-  target: { id: 'target', label: 'ターゲット学生', icon: 'graduationCap' },
+  target: { id: 'target', label: 'ターゲット層', icon: 'graduationCap' },
   method: { id: 'method', label: '採用手法', icon: 'signal' },
   challenges: { id: 'challenges', label: '課題・挑戦', icon: 'lightBulb' },
   staff: { id: 'staff', label: '担当者問診', icon: 'user' },
@@ -862,7 +876,7 @@ const StepJobType = ({ data, onChange }) => (
     )}
     {/* v3.7: 中途採用の考え（任意） */}
     <div style={{ marginTop:28, paddingTop:24, borderTop:'1px solid var(--rule)' }}>
-      <h3 style={{ margin:0, fontSize:18, fontWeight:700, color:'var(--ink)' }}>上記で選択された職種は、中途採用の方もご検討はされていますか？</h3>
+      <h3 style={{ margin:0, fontSize:18, fontWeight:700, color:'var(--ink)' }}>上記で選択された職種は、中途（若手中途）採用もご検討はされていますか？</h3>
       <p style={{ margin:'6px 0 14px', fontSize:13, color:'var(--sub)' }}>いちばん近いものを1つ選んでください。分からない場合は選ばずに次へ進めます。</p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {MID_CAREER_STANCES.map(op => {
@@ -882,6 +896,26 @@ const StepJobType = ({ data, onChange }) => (
   </div>
 );
 
+// v3.8: 採用手法の表示の並び（BB診断 v81 の METHOD_CATEGORY_ORDER と同じ）
+const METHOD_CATEGORY_ORDER = ['ナビサイト', '求人サイト', '合同説明会', '大学連携', 'インターンシップ', 'ダイレクトリクルーティング', '口コミ・情報サイト', 'SNS・動画', '地域特化', '業界特化'];
+const HIDDEN_METHOD_KEYS = ['referral', 'company_briefing']; // 選択肢に出さない（マスターには残す）
+// v3.8b: 本番のカテゴリ名は「1.ナビサイト」「求人」「業界特化型」のように番号や言い方が違うため、表示用にそろえる
+const CATEGORY_ALIASES = { '求人': '求人サイト', '業界特化型': '業界特化', '地域特化型': '地域特化', 'ダイレクト': 'ダイレクトリクルーティング' };
+const normalizeCategory = (c) => { const t = String(c || '').replace(/^\s*\d+\s*[.．、:：)）]\s*/, '').trim(); return CATEGORY_ALIASES[t] || t || 'その他'; };
+const displayCategoryOf = (key, m) => key === 'practical_training' ? '大学連携' : normalizeCategory(m && m.category);
+// 表示用にカテゴリごとにまとめる。外した手法は「選択済みのときだけ」出す
+const groupMethodsForDisplay = (methods, selected) => {
+  const groups = {};
+  Object.entries(methods || {}).forEach(([key, m]) => {
+    if (HIDDEN_METHOD_KEYS.includes(key) && !(selected && selected[key] && selected[key].active)) return;
+    const cat = displayCategoryOf(key, m);
+    (groups[cat] = groups[cat] || []).push([key, m]);
+  });
+  const known = METHOD_CATEGORY_ORDER.filter(c => groups[c]);
+  const rest = Object.keys(groups).filter(c => !METHOD_CATEGORY_ORDER.includes(c)).sort();
+  return [...known, ...rest].map(c => [c, groups[c]]);
+};
+
 // v3.7: 中途採用の考え（BB診断の MID_CAREER_STANCES と同じキー）
 const MID_CAREER_STANCES = [
   { key: 'newgrad', label: '新卒にこだわりたい', desc: 'この職種は新卒で採用したい' },
@@ -889,93 +923,127 @@ const MID_CAREER_STANCES = [
   { key: 'active', label: '中途も積極的に採りたい', desc: 'この職種ですでに中途採用もしている' }
 ];
 
+// v3.9: 新しいターゲット層（BB診断 v82 の TARGET_LAYERS_V2 と同じキー）。旧 A〜H 層は使わない
+const TARGET_LAYERS_V2 = [
+  { key: 'bunkei', letter: 'A', name: '文系（大学）', hasLevel: true },
+  { key: 'rikei', letter: 'B', name: '理系（大学）', hasLevel: true },
+  { key: 'senmon', letter: 'C', name: '専門学校（介護系・建築系）' },
+  { key: 'kousotsu', letter: 'D', name: '高卒' },
+  { key: 'chuto', letter: 'E', name: 'その他（中途・第二新卒）' }
+];
+const TARGET_LEVELS = [
+  { key: 'top', label: '上位校' },
+  { key: 'mid', label: '中堅校' },
+  { key: 'local', label: '地元の大学・その他' }
+];
+const V2_LAYER_KEYS = TARGET_LAYERS_V2.map(l => l.key);
+// 旧 A〜H のキーを捨て、新しい5区分だけを残す
+const pickV2Layers = (tl) => {
+  const out = {};
+  V2_LAYER_KEYS.forEach(k => { if (tl && tl[k]) out[k] = tl[k]; });
+  return out;
+};
+// いちばん採りたい層が無ければ、選ばれている最初の層にする
+const ensureMainLayer = (tl) => {
+  const enabled = V2_LAYER_KEYS.filter(k => tl[k]?.enabled);
+  if (enabled.length === 0) return tl;
+  if (enabled.some(k => tl[k].main)) return tl;
+  const out = { ...tl };
+  out[enabled[0]] = { ...out[enabled[0]], main: true };
+  return out;
+};
+
 // ========================================
-// Step 2: ターゲット学生
+// Step 2: ターゲット層（v3.9）
 // ========================================
 const StepTarget = ({ data, onChange }) => {
   const jobLabels = data.jobType ? (JOB_TYPES.find(j => j.key === data.jobType)?.label || data.jobType) : '';
-  
+  const layers = pickV2Layers(data.targetLayers);
+
+  // 採用職種で「中途も検討」と答えた人は、E を最初の1回だけ選んでおく（外せる）
+  useEffect(() => {
+    if (data.chutoAutoApplied) return;
+    if (data.midCareerStance !== 'open' && data.midCareerStance !== 'active') return;
+    if (layers.chuto?.enabled) return;
+    const next = { ...layers, chuto: { ...layers.chuto, enabled: true, main: false } }; // 自動で選んだ E は「いちばん」にしない
+    onChange({ ...data, layerModel: 2, chutoAutoApplied: true, targetLayers: next });
+  }, []);
+
+  const save = (next) => onChange({ ...data, layerModel: 2, targetLayers: ensureMainLayer(next) });
+  const toggle = (key, on) => {
+    const next = { ...layers, [key]: { ...layers[key], enabled: on } };
+    if (!on && next[key].main) next[key] = { ...next[key], main: false };
+    save(next);
+  };
+  const setMain = (key) => {
+    const next = {};
+    Object.entries(layers).forEach(([k, v]) => { next[k] = { ...v, main: k === key }; });
+    next[key] = { ...next[key], enabled: true, main: true };
+    save(next);
+  };
+  const setLevel = (key, level) => save({ ...layers, [key]: { ...layers[key], enabled: true, level } });
+  const enabledCount = V2_LAYER_KEYS.filter(k => layers[k]?.enabled).length;
+
   return (
     <div className="glass-card rounded-2xl p-6 animate-in">
-      <h2 className="text-xl font-bold text-gray-800 mb-2">ターゲット学生層の選択</h2>
+      <h2 className="text-xl font-bold text-gray-800 mb-2">ターゲット層の選択</h2>
       <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl mb-4">
         <p className="text-sm text-amber-800">
           <span className="font-bold">採用職種：</span>{jobLabels || '未選択'}
-          <br />上記の職種に対して、ターゲットとする学生層を選択し、おおよその比率を入力してください。
+          <br />上記の職種で採用したい層をすべて選んでください。そのうち、いちばん採りたい層を1つ決めてください。
         </p>
       </div>
-      
-      <p className="text-sm text-gray-500 mb-4">合計が100%になるように調整してください</p>
-      
+
       <div className="space-y-2">
-        {Object.entries(STUDENT_MATRIX).map(([key, layer]) => {
-          const enabled = data.targetLayers?.[key]?.enabled || false;
-          const ratio = data.targetLayers?.[key]?.ratio || 0;
+        {TARGET_LAYERS_V2.map(layer => {
+          const conf = layers[layer.key] || {};
+          const on = !!conf.enabled;
+          const isMain = on && !!conf.main;
           return (
-            <div key={key} className={`flex items-center gap-4 p-3 rounded-xl transition ${
-              enabled ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 hover:bg-gray-100'
-            }`}>
-              <label className="flex items-center gap-3 cursor-pointer flex-1">
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={e => onChange({
-                    ...data,
-                    targetLayers: {
-                      ...data.targetLayers,
-                      [key]: { ...data.targetLayers?.[key], enabled: e.target.checked }
-                    }
-                  })}
-                  className="w-5 h-5 rounded border-gray-300 text-blue-600"
-                />
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg"
-                  style={{ backgroundColor: layer.color }}>
-                  {key}
-                </div>
-                <div className="flex-1">
-                  <div className="font-bold text-gray-800">{layer.name}</div>
-                  <div className="text-xs text-gray-500">{layer.description}</div>
-                </div>
-              </label>
-              {enabled && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={ratio || ''}
-                    onChange={e => onChange({
-                      ...data,
-                      targetLayers: {
-                        ...data.targetLayers,
-                        [key]: { ...data.targetLayers?.[key], enabled: true, ratio: parseInt(e.target.value) || 0 }
-                      }
+            <div key={layer.key} style={{ borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12,
+                 border: on ? '2px solid var(--acc)' : '1px solid var(--line)', background: on ? 'var(--accSoft)' : 'var(--surf)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, flexGrow: 1, cursor: 'pointer', fontSize: 15, fontWeight: on ? 700 : 500, color: 'var(--ink)' }}>
+                  <input type="checkbox" checked={on} onChange={e => toggle(layer.key, e.target.checked)} className="w-5 h-5 rounded border-gray-300" />
+                  <span style={{ width: 26, height: 26, borderRadius: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700,
+                       background: on ? 'var(--acc)' : 'transparent', color: on ? '#FFFFFF' : 'var(--sub)', border: on ? 'none' : '1px solid var(--line)' }}>{layer.letter}</span>
+                  {layer.name}
+                </label>
+                {on && enabledCount > 1 && (
+                  <button type="button" aria-pressed={isMain} onClick={() => setMain(layer.key)}
+                    style={{ height: 36, padding: '0 14px', borderRadius: 18, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                             border: isMain ? 'none' : '1px solid var(--acc)', background: isMain ? 'var(--acc)' : '#FFFFFF', color: isMain ? '#FFFFFF' : 'var(--acc)' }}>
+                    いちばん採りたい
+                  </button>
+                )}
+              </div>
+              {on && layer.hasLevel && (
+                <div style={{ marginLeft: 32, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{layer.key === 'bunkei' ? '文系' : '理系'}で、主に狙う大学は？</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {TARGET_LEVELS.map(lv => {
+                      const sel = conf.level === lv.key;
+                      return (
+                        <button key={lv.key} type="button" aria-pressed={sel} onClick={() => setLevel(layer.key, lv.key)}
+                          style={{ height: 44, borderRadius: 8, fontSize: 14, cursor: 'pointer', color: 'var(--ink)', background: '#FFFFFF',
+                                   fontWeight: sel ? 700 : 400, border: sel ? '2px solid var(--acc)' : '1px solid var(--line)' }}>
+                          {lv.label}
+                        </button>
+                      );
                     })}
-                    className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center font-bold"
-                  />
-                  <span className="text-gray-500">%</span>
+                  </div>
                 </div>
+              )}
+              {on && layer.key === 'chuto' && data.chutoAutoApplied && (
+                <span style={{ marginLeft: 32, fontSize: 12, color: 'var(--acc)' }}>採用職種で「中途も検討したい」と答えていただいたため、選んであります。外すこともできます。</span>
               )}
             </div>
           );
         })}
       </div>
-      
-      {/* 合計表示 */}
-      {(() => {
-        const total = Object.values(data.targetLayers || {})
-          .filter(v => v?.enabled)
-          .reduce((sum, v) => sum + (v?.ratio || 0), 0);
-        return (
-          <div className={`mt-4 p-3 rounded-xl text-center font-bold ${
-            total === 100 ? 'bg-green-50 text-green-700 border border-green-200' :
-            total > 0 ? 'bg-orange-50 text-orange-700 border border-orange-200' :
-            'bg-gray-50 text-gray-500'
-          }`}>
-            合計: {total}% {total === 100 ? <SolidIcon name="checkCircle" className="w-4 h-4 inline text-green-600" /> : total > 0 ? '（100%にしてください）' : ''}
-          </div>
-        );
-      })()}
+      {['bunkei', 'rikei'].some(k => layers[k]?.enabled && !layers[k]?.level) && (
+        <p className="mt-3 text-sm text-orange-700">「主に狙う大学」を選ぶと次へ進めます。</p>
+      )}
     </div>
   );
 };
@@ -985,30 +1053,26 @@ const StepTarget = ({ data, onChange }) => {
 // ========================================
 const StepMethod = ({ data, onChange, methodMaster }) => {
   const methods = methodMaster && Object.keys(methodMaster).length > 0 ? methodMaster : DEFAULT_RECRUITMENT_METHODS;
-  const categories = [...new Set(Object.values(methods).map(m => m.category))].sort();
-  
+  const groups = groupMethodsForDisplay(methods, data.recruitmentMethods); // v3.8: 決まった並び
+  const [sorting, setSorting] = useState(false); // v3.8: 並べ替えの一覧を開いているか
+
   // 選択済み手法を優先順位順にソート
   const activeMethods = Object.entries(data.recruitmentMethods || {})
     .filter(([_, m]) => m?.active)
     .sort((a, b) => (a[1].priority || 999) - (b[1].priority || 999));
-  
+
   const movePriority = (key, direction) => {
-    const current = [...activeMethods];
-    const idx = current.findIndex(([k]) => k === key);
-    if (idx < 0) return;
+    const current = activeMethods.map(([k]) => k);
+    const idx = current.indexOf(key);
     const swapIdx = idx + direction;
-    if (swapIdx < 0 || swapIdx >= current.length) return;
-    
-    // swap priorities
+    if (idx < 0 || swapIdx < 0 || swapIdx >= current.length) return;
+    [current[idx], current[swapIdx]] = [current[swapIdx], current[idx]];
     const updated = { ...data.recruitmentMethods };
-    const pA = updated[current[idx][0]].priority || (idx + 1);
-    const pB = updated[current[swapIdx][0]].priority || (swapIdx + 1);
-    updated[current[idx][0]] = { ...updated[current[idx][0]], priority: pB };
-    updated[current[swapIdx][0]] = { ...updated[current[swapIdx][0]], priority: pA };
+    current.forEach((k, i) => { updated[k] = { ...updated[k], priority: i + 1 }; }); // 1から振り直す
     onChange({ ...data, recruitmentMethods: updated });
   };
-  
-  // チェック時に自動で優先順位を付与
+
+  // チェック時に自動で優先順位を付与（最後尾）
   const toggleMethod = (key, checked) => {
     const updated = { ...data.recruitmentMethods };
     if (checked) {
@@ -1016,99 +1080,77 @@ const StepMethod = ({ data, onChange, methodMaster }) => {
       updated[key] = { ...updated[key], active: true, priority: maxPriority + 1 };
     } else {
       updated[key] = { ...updated[key], active: false, priority: undefined };
-      // 残りの優先順位を詰める
       const remaining = Object.entries(updated).filter(([_, m]) => m?.active).sort((a, b) => (a[1].priority || 999) - (b[1].priority || 999));
       remaining.forEach(([k], i) => { updated[k] = { ...updated[k], priority: i + 1 }; });
     }
     onChange({ ...data, recruitmentMethods: updated });
   };
-  
+
+  const nameOf = (key) => (methods[key] && methods[key].name) || key;
+
   return (
-    <div className="glass-card rounded-2xl p-6 animate-in">
-      <h2 className="text-xl font-bold text-gray-800 mb-2">利用中の採用手法を選択</h2>
-      <p className="text-sm text-gray-500 mb-6">現在利用している、または利用を検討している手法をすべてチェックしてください</p>
-      
-      {categories.map(category => {
-        const catMethods = Object.entries(methods).filter(([_, m]) => m.category === category);
-        if (catMethods.length === 0) return null;
-        
-        return (
-          <div key={category} className="mb-5">
-            <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
-              {category}
-            </h4>
-            <div className="space-y-1">
+    <div className="animate-in" style={{ display:'flex', flexDirection:'column', gap:0 }}>
+      <div className="glass-card rounded-2xl p-6">
+        <h2 className="text-xl font-bold text-gray-800 mb-2">利用中の採用手法を選択</h2>
+        <p className="text-sm text-gray-500 mb-6">現在利用している、または利用を検討している手法をすべてチェックしてください。選んだ順に、下の「注力度の優先順位」に入ります。</p>
+        {groups.map(([category, catMethods], gi) => (
+          <div key={category} style={{ marginBottom:20 }}>
+            <h4 style={{ margin:'0 0 8px', fontSize:13, fontWeight:700, color:'var(--ink)' }}>{gi + 1}　{category}</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap:8 }}>
               {catMethods.map(([key, method]) => {
                 const active = data.recruitmentMethods?.[key]?.active || false;
                 return (
-                  <label key={key} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition ${
-                    active ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={active}
-                      onChange={e => toggleMethod(key, e.target.checked)}
-                      className="w-5 h-5 rounded border-gray-300 text-blue-600"
-                    />
-                    <span className={`font-medium ${active ? 'text-blue-800' : 'text-gray-600'}`}>
-                      {method.name}
-                    </span>
+                  <label key={key} style={{ display:'flex', alignItems:'center', gap:10, minHeight:44, padding:'0 14px', borderRadius:8, cursor:'pointer',
+                    border: active ? '2px solid var(--acc)' : '1px solid var(--line)', background: active ? 'var(--accSoft)' : 'var(--surf)' }}>
+                    <input type="checkbox" checked={active} onChange={e => toggleMethod(key, e.target.checked)}
+                      style={{ width:18, height:18, accentColor:'var(--acc)', flexShrink:0 }} />
+                    <span style={{ fontSize:14, fontWeight: active ? 600 : 400, color:'var(--ink)' }}>{method.name}</span>
                   </label>
                 );
               })}
             </div>
           </div>
-        );
-      })}
-      
-      {/* 優先順位の並び替え */}
-      {activeMethods.length > 0 && (
-        <div className="mt-6 pt-6 border-t border-gray-200">
-          <h3 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-            <SolidIcon name="chartBar" className="w-4 h-4 text-indigo-500" />
-            注力度の優先順位
-          </h3>
-          <p className="text-xs text-gray-500 mb-3">上にあるほど優先度が高くなります。矢印ボタンで並べ替えてください。</p>
-          <div className="space-y-1.5">
-            {activeMethods.map(([key, methodData], idx) => {
-              const methodDef = methods[key] || {};
-              return (
-                <div key={key} className="flex items-center gap-2 p-2.5 bg-white border border-gray-200 rounded-xl">
-                  <span className="w-7 h-7 flex items-center justify-center bg-indigo-100 text-indigo-700 text-xs font-bold rounded-full flex-shrink-0">
-                    {idx + 1}
-                  </span>
-                  <span className="flex-1 text-sm font-medium text-gray-800 truncate">{methodDef.name || key}</span>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => movePriority(key, -1)}
-                      disabled={idx === 0}
-                      className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs transition ${
-                        idx === 0 ? 'text-gray-300' : 'text-gray-500 hover:bg-gray-100'
-                      }`}
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => movePriority(key, 1)}
-                      disabled={idx === activeMethods.length - 1}
-                      className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs transition ${
-                        idx === activeMethods.length - 1 ? 'text-gray-300' : 'text-gray-500 hover:bg-gray-100'
-                      }`}
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        ))}
+      </div>
+
+      {/* v3.8: 注力度の優先順位（画面の下に常に出る帯。1段で横にスクロール） */}
+      <div style={{ position:'sticky', bottom:0, zIndex:20, marginTop:16, background:'var(--surf)', border:'1px solid var(--line)', borderRadius:10,
+                    boxShadow:'0 -4px 12px rgba(20,24,31,0.08)', padding:'12px 16px 14px', display:'flex', flexDirection:'column', gap:10 }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
+          <span style={{ fontSize:14, fontWeight:700 }}>注力度の優先順位{activeMethods.length ? `（${activeMethods.length}件）` : ''}</span>
+          <span style={{ fontSize:12, color:'var(--sub)' }}>{activeMethods.length ? '左ほど注力しています' : '上で手法を選ぶと、ここに並びます'}</span>
+          {activeMethods.length > 1 && (
+            <button type="button" className="pi-btn" onClick={() => setSorting(v => !v)} style={{ marginLeft:'auto', height:32, padding:'0 12px', fontSize:13 }}>
+              {sorting ? '閉じる' : '並べ替える'}
+            </button>
+          )}
         </div>
-      )}
+        {sorting ? (
+          <ol style={{ margin:0, padding:0, listStyle:'none', display:'flex', flexDirection:'column', gap:6, maxHeight:'45vh', overflowY:'auto' }}>
+            {activeMethods.map(([key], idx) => (
+              <li key={key} style={{ display:'flex', alignItems:'center', gap:10, minHeight:44, padding:'0 8px 0 12px', border:'1px solid var(--line)', borderRadius:8 }}>
+                <span className="mono" style={{ width:24, height:24, borderRadius:'50%', background: idx === 0 ? 'var(--acc)' : 'var(--sub)', color:'#FFFFFF', fontSize:12,
+                  display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{idx + 1}</span>
+                <span style={{ flex:1, fontSize:14 }}>{nameOf(key)}</span>
+                <button type="button" aria-label={nameOf(key) + 'を上げる'} onClick={() => movePriority(key, -1)} disabled={idx === 0}
+                  style={{ width:40, height:36, border:'none', background:'transparent', color: idx === 0 ? 'var(--line)' : 'var(--sub)', cursor: idx === 0 ? 'default' : 'pointer' }}>▲</button>
+                <button type="button" aria-label={nameOf(key) + 'を下げる'} onClick={() => movePriority(key, 1)} disabled={idx === activeMethods.length - 1}
+                  style={{ width:40, height:36, border:'none', background:'transparent', color: idx === activeMethods.length - 1 ? 'var(--line)' : 'var(--sub)', cursor: idx === activeMethods.length - 1 ? 'default' : 'pointer' }}>▼</button>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:2 }}>
+            {activeMethods.map(([key], idx) => (
+              <span key={key} style={{ flexShrink:0, display:'inline-flex', alignItems:'center', gap:6, height:34, padding:'0 12px 0 6px', border:'1px solid var(--line)', borderRadius:17, fontSize:13, whiteSpace:'nowrap' }}>
+                <span className="mono" style={{ width:22, height:22, borderRadius:'50%', background: idx === 0 ? 'var(--acc)' : 'var(--sub)', color:'#FFFFFF', fontSize:11,
+                  display:'inline-flex', alignItems:'center', justifyContent:'center' }}>{idx + 1}</span>
+                {nameOf(key)}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1758,6 +1800,7 @@ const App = () => {
   const [navigating, setNavigating] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [locked, setLocked] = useState(false); // v3.7: BB診断に取り込み済み（この役割の回答は見るだけ）
+  const [askSubmit, setAskSubmit] = useState(false); // v3.7: 未回答のまま「送信する」を押したときの確認
   const [error, setError] = useState('');
   const [privacyAgreed, setPrivacyAgreed] = useState(false);
   const [started, setStarted] = useState(false);
@@ -1778,7 +1821,7 @@ const App = () => {
           setError('問い合わせ番号が指定されていません。\nURLに ?id=XXXXX&tk=YYYYY の形式でアクセスしてください。');
           setLoading(false); return;
         }
-        console.log('[事前問診 v3.7] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
+        console.log('[事前問診 v3.9] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
         const pingRes = await gasGet('ping');
         if (!pingRes.success) throw new Error('サーバーに接続できません。');
         
@@ -1847,7 +1890,7 @@ const App = () => {
         if (qs && qs.length > 0) { questions = [...qs]; break; }
       }
     }
-    Object.keys(data.targetLayers || {}).filter(k => data.targetLayers[k]?.enabled).forEach(layer => {
+    Object.keys(pickV2Layers(data.targetLayers)).filter(k => data.targetLayers[k]?.enabled).forEach(layer => { // v3.9: 新しい5区分だけ
       questions = [...questions, ...(questionMaster.targetLayer?.[layer]?.[roleKey] || [])];
     });
     ['surface','middle','deep'].forEach(d => {
@@ -1906,6 +1949,9 @@ const App = () => {
 
   const goNext = async () => {
     if (navigating) return;
+    // v3.7: 最後の手順（問診）で未回答が残っていれば、送る前に確かめる
+    if (currentStep >= steps.length - 1 && quizUnanswered > 0 && !askSubmit) { setAskSubmit(true); return; }
+    setAskSubmit(false);
     setNavigating(true);
     try {
       window.scrollTo(0, 0);
@@ -1920,7 +1966,7 @@ const App = () => {
     } finally { setNavigating(false); }
   };
   const goPrev = () => {
-    if (navigating) return; setNavigating(true);
+    if (navigating) return; setNavigating(true); setAskSubmit(false);
     window.scrollTo(0, 0); setCurrentStep(prev => Math.max(0, prev - 1));
     setTimeout(() => setNavigating(false), 300);
   };
@@ -1930,11 +1976,11 @@ const App = () => {
     if (sid === 'companySize') return !!data.companySize;
     if (sid === 'jobType') return !!data.jobType;
     if (sid === 'target') {
-      const hasEnabled = Object.values(data.targetLayers || {}).some(v => v?.enabled);
-      if (!hasEnabled) return false;
-      // v3.1 fix#6: 比率入力がある場合は100%チェック
-      const total = Object.values(data.targetLayers || {}).filter(v => v?.enabled).reduce((s, v) => s + (v?.ratio || 0), 0);
-      if (total > 0 && total !== 100) return false;
+      // v3.9: 新しい5区分のどれかを選び、文系・理系は「主に狙う大学」も選ぶ（割合は聞かない）
+      const tl = pickV2Layers(data.targetLayers);
+      const on = V2_LAYER_KEYS.filter(k => tl[k]?.enabled);
+      if (on.length === 0) return false;
+      if (on.some(k => (k === 'bunkei' || k === 'rikei') && !tl[k].level)) return false;
       return true;
     }
     if (sid === 'method') return Object.values(data.recruitmentMethods || {}).some(v => v?.active);
@@ -2004,6 +2050,11 @@ const App = () => {
   
   const currentStepDef = steps[currentStep];
   const nextDisabled = !canProceed || navigating;
+  // v3.7: いまの手順の問診で未回答の数（「送信する」の確認に使う）
+  const quizStepId = steps[currentStep]?.id;
+  const quizQs = quizStepId === 'staff' ? staffQuestions : quizStepId === 'executive' ? executiveQuestions : [];
+  const quizAns = data[(quizStepId === 'executive' ? 'executive' : 'staff') + 'Answers'] || {};
+  const quizUnanswered = quizQs.filter(q => !quizAns[q.id]).length;
   const isLastStep = currentStep >= steps.length - 1;
   const sizeLabel = ({ small:'100名以下', medium:'101〜300名', large:'301名以上' })[determinedSize] || '';
   const saveStatus = saving
@@ -2063,6 +2114,17 @@ const App = () => {
           {currentStepDef?.id === 'executive' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="executive" questions={executiveQuestions} title="上層部問診" onQuizActive={setQuizActive} onComplete={onQuizComplete} />}
           {currentStepDef?.id === 'funnel' && <StepFunnel data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
           {!quizActive && (
+            askSubmit ? (
+              /* v3.7: 未回答のまま送信する前の確認 */
+              <div style={{ display:'flex', flexDirection:'column', gap:12, marginTop:24, paddingTop:20, borderTop:'1px solid var(--rule)' }}>
+                <p style={{ margin:0, fontSize:16, fontWeight:600 }}>問診が {quizUnanswered}問 未回答です（全{quizQs.length}問）。このまま送信しますか？</p>
+                <p style={{ margin:0, fontSize:13, color:'var(--sub)' }}>答えられない問いは飛ばして構いません。送信した後も、担当者が受け取るまでは同じURLから見直せます。</p>
+                <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                  <button type="button" className="pi-btn" onClick={() => setAskSubmit(false)}>問診に戻る</button>
+                  <button type="button" className="pi-btn primary" onClick={goNext} disabled={navigating}>{navigating ? '送信しています…' : 'このまま送信する'}</button>
+                </div>
+              </div>
+            ) :
             <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:24, paddingTop:20, borderTop:'1px solid var(--rule)' }}>
               <button type="button" className="pi-btn" onClick={goPrev} disabled={currentStep === 0 || navigating}>戻る</button>
               {!canProceed && <span style={{ fontSize:13, color:'var(--sub)' }}>この手順の入力が済むと進めます</span>}
