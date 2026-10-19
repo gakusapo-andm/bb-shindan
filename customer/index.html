@@ -117,6 +117,27 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
 // v2.1: getQuestionMasterPublic/getRecruitmentMethodsPublic にフラット→ネスト変換追加（v50 SUPA_HANDLERS同等）
 // v3: URLトークン認証(?tk=), 企業規模URL指定(?size=), 担当者/上層部URL分離(?role=exec), 課題・挑戦ステップ追加
 // v3.1: バグ修正4件 + 運用改善5件 + hotfix(upsert, UNIQUE CONSTRAINT, 選考ステップ数, 課題マッピング)
+// v3.7 (2026-10-19): 並びと問診のしかたを変更（BB診断 v79・DBパッチ14 とセット）
+//   [並び] 担当者用: 企業規模(URLに無いとき) → 採用職種 → ターゲット学生 → 採用手法 → 課題・挑戦 → ファネル数値 → 担当者問診（最後）
+//   [中途] 採用職種の手順に「上記で選択された職種は、中途採用の方もご検討はされていますか？」（任意・midCareerStance）
+//   [ファネル] 一番注力している手法（採用手法の優先順位1位）だけを聞く。卒年の選択は残す
+//   [問診] 時間制限をなくし「目安20分」の経過メーターに。1問ごとに自動保存し、開き直すと続きの問いから。
+//     「回答を終える」は未回答数を見せて確かめてから送信（最後の手順なのでそのまま送信）。
+//     送信後も、担当者が取り込むまでは同じURLから見直せる。取り込んだ後は見るだけ（preinput_status・DBパッチ14）
+//   旧: 15分で自動締切・途中保存なし・終えたらやり直し不可（間違えて終えると答え直せなかった）
+//   [再チェック修正 2026-10-19]
+//     ・保存を1本の列に並べて順に送る（送信中の自動保存が後から着いて「完了」を消すことがあった）
+//     ・「回答を見直す」で完了の印を外さない（見ただけで閉じると完了が取り消されていた）
+//     ・送信の保存に失敗したら完了画面にしない
+//     ・取込済みの判定は DB の時計同士（取込時刻と最後の送信の記録）で比べる（端末の時計がずれると誤判定した）
+//     ・ファネルの合計は選んだ手法すべての値で出す（BB診断の表示と合わせる。入力欄は1位の手法だけ）
+// v3.6 (2026-10-19): 質問はその診断の版（BB診断が初回保存時に写した質問マスター）を出す。要 DBパッチ13・BB診断 v78
+//   症状: 顧客は「開いた時点の最新マスター」、BB診断は「保存時の写し」で、マスターを変えると
+//         ・新しい質問への回答が取り込んでも表示・採点されない ・回答済みでURLを開き直すと回答が消える（下記の巻き戻し）
+//   直し: preinput_question_master(問診番号, token) でその診断の写しを読む。写しが無い（未保存の古い診断）
+//         ・関数が無い（パッチ13 未適用）ときだけ従来どおり最新の questions を出す。
+//         回答済みの質問IDが今の質問に無いと回答を空に戻していた処理を削除（版が一致するので不要。消えるより残す）
+//   版の名前は顧客の画面には出さない
 // v3.5 (2026-09-25): 出来事の記録（DBパッチ09）。開いた・開始・手順・問診の開始/終了・送信・保存失敗を
 //   preinput_log で記録する（時刻はDBの時計）。記録の失敗は回答の邪魔をしない（黙って捨てる）。
 //   パッチ09 未適用の環境では関数が無いので、何もしない。
@@ -154,7 +175,7 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
     window.SUPABASE_CONFIG.url,
     window.SUPABASE_CONFIG.anonKey
   );
-  console.log('[事前問診 v3.5] Supabase接続完了');
+  console.log('[事前問診 v3.7] Supabase接続完了');
 </script>
 </head>
 <body>
@@ -353,7 +374,7 @@ function buildSteps(role, hasUrlSize) {
     if (!hasUrlSize) steps.push(STEP_DEFS.companySize);
     steps.push(STEP_DEFS.jobType, STEP_DEFS.target, STEP_DEFS.method);
     steps.push(STEP_DEFS.challenges);
-    steps.push(STEP_DEFS.staff, STEP_DEFS.funnel);
+    steps.push(STEP_DEFS.funnel, STEP_DEFS.staff); // v3.7: ファネル数値を先に・担当者問診を最後に
   }
   return steps.map((s, i) => ({ ...s, num: i + 1 }));
 }
@@ -407,6 +428,44 @@ const gasGet = async (action, params = {}) => {
         return { success: true, data: data || null };
       },
       
+      // v3.7: BB診断に取り込み済みか（取り込んだ後は見るだけ）。関数が無い環境では「未取込」扱い
+      getPreInputStatus: async () => {
+        const id = params.id;
+        if (!id) return { success: true, data: { importedAt: null } };
+        const { data, error } = await sb.rpc('preinput_status', { p_id: id, p_token: window.GAS_CONFIG.token || '', p_role: params.role || 'staff' });
+        if (error) {
+          const msg = String(error.message || '') + ' ' + String(error.code || '');
+          if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) return { success: true, data: { importedAt: null, lastSubmitAt: null } };
+          throw error;
+        }
+        return { success: true, data: { importedAt: (data && data.importedAt) || null, lastSubmitAt: (data && data.lastSubmitAt) || null } };
+      },
+
+      // v3.6: その診断の版の質問（BB診断の写し）。token の照合は DB の関数の中で行う
+      getQuestionMasterForPreInput: async () => {
+        const id = params.id;
+        if (id) {
+          const { data, error } = await sb.rpc('preinput_question_master', { p_id: id, p_token: window.GAS_CONFIG.token || '' });
+          if (!error && data && typeof data === 'object' && data.base) {
+            const hasAny = Object.values(data.base).some(sz => sz && typeof sz === 'object'
+              && Object.values(sz).some(a => Array.isArray(a) && a.length > 0));
+            if (hasAny) {
+              if (!data.recruitmentMethod) data.recruitmentMethod = {};
+              console.log('[事前問診 v3.6] 診断の版の質問を使用');
+              return { success: true, data, source: 'snapshot' };
+            }
+          }
+          if (error) {
+            const msg = String(error.message || '') + ' ' + String(error.code || '');
+            if (msg.includes('invalid_token')) return { success: false, error: 'invalid_token' };
+            if (!/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) throw error;
+            console.warn('[事前問診 v3.6] preinput_question_master が未作成のため最新の質問を使用（DBパッチ13 適用前）');
+          }
+        }
+        // 写しが無い／関数が無い → 従来どおり最新
+        return handlers.getQuestionMasterPublic();
+      },
+
       getQuestionMasterPublic: async () => {
         const { data, error } = await sb.from('questions').select('*').order('sort_order');
         if (error) throw error;
@@ -575,13 +634,23 @@ const API = {
   async loadPreInput() {
     return gasGet('getCustomerPreInput', { id: this.customerId });
   },
+
+  async loadStatus() {
+    return gasGet('getPreInputStatus', { id: this.customerId, role: window.GAS_CONFIG.role === 'exec' ? 'exec' : 'staff' }); // v3.7
+  },
   
-  async savePreInput(preInputData) {
-    return gasPost('saveCustomerPreInput', { id: this.customerId, preInputData });
+  // v3.7: 保存は1本の列に並べて順に送る（後から送った保存が必ず後に着く）
+  _saveChain: Promise.resolve(),
+  savePreInput(preInputData) {
+    const snapshot = JSON.parse(JSON.stringify(preInputData || {}));
+    const run = () => gasPost('saveCustomerPreInput', { id: this.customerId, preInputData: snapshot });
+    const p = this._saveChain.then(run, run);
+    this._saveChain = p.catch(() => {});
+    return p;
   },
   
   async loadQuestionMaster() {
-    return gasGet('getQuestionMasterPublic');
+    return gasGet('getQuestionMasterForPreInput', { id: this.customerId }); // v3.6: その診断の版の質問
   },
   
   async loadRecruitmentMethods() {
@@ -791,8 +860,34 @@ const StepJobType = ({ data, onChange }) => (
         />
       </div>
     )}
+    {/* v3.7: 中途採用の考え（任意） */}
+    <div style={{ marginTop:28, paddingTop:24, borderTop:'1px solid var(--rule)' }}>
+      <h3 style={{ margin:0, fontSize:18, fontWeight:700, color:'var(--ink)' }}>上記で選択された職種は、中途採用の方もご検討はされていますか？</h3>
+      <p style={{ margin:'6px 0 14px', fontSize:13, color:'var(--sub)' }}>いちばん近いものを1つ選んでください。分からない場合は選ばずに次へ進めます。</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {MID_CAREER_STANCES.map(op => {
+          const on = data.midCareerStance === op.key;
+          return (
+            <button key={op.key} type="button" aria-pressed={on}
+              onClick={() => onChange({ ...data, midCareerStance: on ? '' : op.key })}
+              style={{ minHeight:72, padding:'14px 16px', borderRadius:8, textAlign:'left', display:'flex', flexDirection:'column', gap:4, cursor:'pointer',
+                       border: on ? '2px solid var(--acc)' : '1px solid var(--line)', background: on ? 'var(--accSoft)' : 'var(--surf)' }}>
+              <span style={{ fontSize:15, fontWeight:600, color:'var(--ink)' }}>{op.label}</span>
+              <span style={{ fontSize:12, color:'var(--sub)' }}>{op.desc}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   </div>
 );
+
+// v3.7: 中途採用の考え（BB診断の MID_CAREER_STANCES と同じキー）
+const MID_CAREER_STANCES = [
+  { key: 'newgrad', label: '新卒にこだわりたい', desc: 'この職種は新卒で採用したい' },
+  { key: 'open', label: '良い方がいれば中途も検討したい', desc: '新卒が中心だが、中途も選択肢にある' },
+  { key: 'active', label: '中途も積極的に採りたい', desc: 'この職種ですでに中途採用もしている' }
+];
 
 // ========================================
 // Step 2: ターゲット学生
@@ -1028,30 +1123,59 @@ const StepMethod = ({ data, onChange, methodMaster }) => {
 // 「回答できない場合は飛ばしてよい」を明示し、無回答もデータとして扱う（無回答率も診断指標）。
 // 担当者問診と上層部問診は同じコンポーネントを roleKey='staff'/'executive' で切り替え。
 // 両者の回答を照合して「組織内認識ギャップ」をBB診断で可視化するのが最終目的。
-const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSeconds = 900, onQuizActive, onComplete, optional = false, optionalNote = '' }) => {
+const QUIZ_GUIDE_MIN = 20; // v3.7: 目安の時間（分）。締め切りはしない
+
+// v3.7: 経過メーター（目安20分。過ぎても締め切らない）
+const ElapsedMeter = ({ startedAt }) => {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const sec = Math.max(0, Math.floor((now - (startedAt || now)) / 1000));
+  const guide = QUIZ_GUIDE_MIN * 60;
+  const pct = Math.min(100, (sec / guide) * 100);
+  const over = sec > guide;
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+      <div style={{ display:'flex', alignItems:'baseline', gap:8, fontSize:12, color:'var(--sub)' }}>
+        <span>経過 <span className="mono" style={{ color:'var(--ink)' }}>{String(Math.floor(sec / 60)).padStart(2,'0')}:{String(sec % 60).padStart(2,'0')}</span></span>
+        <span>／ 目安 {QUIZ_GUIDE_MIN}分</span>
+      </div>
+      <div style={{ height:4, background:'var(--rule2)', borderRadius:2, overflow:'hidden' }}>
+        <div style={{ width: pct + '%', height:4, background:'var(--acc)' }} />
+      </div>
+      {over && <span style={{ fontSize:12, color:'var(--sub)' }}>目安を過ぎていますが、そのまま続けて大丈夫です</span>}
+    </div>
+  );
+};
+
+// v3.7: 問診（担当者／上層部共通）。時間制限なし・1問ごとに自動保存・終える前に確認・送信後も取り込まれるまで見直せる
+const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, onQuizActive, onComplete, optional = false, optionalNote = '' }) => {
   const [timerStarted, setTimerStarted] = useState(false);
-  const [timeUp, setTimeUp] = useState(false);
   const [quizFinished, setQuizFinished] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [askFinish, setAskFinish] = useState(false);
   const [skipping, setSkipping] = useState(false);
+  const [autoSavedAt, setAutoSavedAt] = useState('');
+  const [autoSaveErr, setAutoSaveErr] = useState(false);
   const completedKey = `${roleKey}Completed`;
   const skippedKey = `${roleKey}Skipped`;
   const answersKey = `${roleKey}Answers`;
   const answers = data[answersKey] || {};
-  const answeredCount = Object.keys(answers).filter(k => answers[k]).length;
-  // v3.4: 問診は1問ずつ表示する（直感で答えてもらうため）。qi = いま表示している問い
+  const answeredCount = (questions || []).filter(q => answers[q.id]).length;
+  const unansweredCount = (questions || []).length - answeredCount;
   const [qi, setQi] = useState(0);
-  const quizStartRef = useRef(null);   // v3.5: 問診の開始時刻（所要時間の参考値。正式な時刻はDB側）
-  const quizLive = timerStarted && !timeUp && !quizFinished;
+  const quizStartRef = useRef(null);
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const quizLive = timerStarted && !quizFinished;
+  const firstUnanswered = () => { const i = (questions || []).findIndex(q => !answers[q.id]); return i < 0 ? 0 : i; };
   const choose = (q, v) => {
     const cur = (data[answersKey] || {})[q.id];
     onChange({ ...data, [answersKey]: { ...(data[answersKey] || {}), [q.id]: cur === v ? undefined : v } });
-    // 選んだら少し置いて次の問いへ（取り消しのときは進まない）
     if (cur !== v) setTimeout(() => setQi(i => Math.min(i + 1, (questions || []).length - 1)), 220);
   };
   // キーボードの A・B（問診中だけ）
   useEffect(() => {
-    if (!quizLive || !questions || !questions.length) return;
+    if (!quizLive || askFinish || !questions || !questions.length) return;
     const h = (e) => {
       if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
       const k = e.key.toLowerCase();
@@ -1063,168 +1187,133 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [quizLive, qi, questions, data]);
-  
-  // v3.1 fix#8: 問診中のブラウザ閉じ・リロード防止
+  }, [quizLive, askFinish, qi, questions, data]);
+
+  // v3.7: 1問ごとの自動保存（答えが変わって1.2秒後に保存。閉じても続きから再開できる）
+  const answersSig = JSON.stringify(answers);
+  const pendingRef = useRef(false);
   useEffect(() => {
-    if (!timerStarted || timeUp || quizFinished) return;
-    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    if (!quizLive) return;
+    pendingRef.current = true;
+    const t = setTimeout(async () => {
+      try {
+        const res = await API.savePreInput(dataRef.current);
+        if (res && res.success === false) setAutoSaveErr(true);
+        else { setAutoSaveErr(false); setAutoSavedAt(new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })); }
+      } catch (e) { setAutoSaveErr(true); }
+      finally { pendingRef.current = false; }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [answersSig, quizLive]);
+  // 保存待ちのときだけ、閉じる前に知らせる
+  useEffect(() => {
+    if (!quizLive) return;
+    const handler = (e) => { if (pendingRef.current) { e.preventDefault(); e.returnValue = ''; } };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [timerStarted, timeUp, quizFinished]);
-  
-  // 完了判定: フラグ + 実際に回答がある場合のみ「回答済み」とする
+  }, [quizLive]);
+
   const isAlreadyCompleted = data[completedKey] === true && answeredCount > 0;
-  
-  // タイムアップまたは全問回答 → 自動確定（条件付きreturnの前に配置必須）
+
+  // 全問終了（確かめた後）→ 親が保存・送信する
   useEffect(() => {
-    if (!(timeUp || quizFinished) || confirming) return;
+    if (!quizFinished || confirming) return;
     setConfirming(true);
-    const newData = { ...data, [completedKey]: true };
-    onChange(newData);
-    // v3.5: 問診の終了を記録（回答数・理由・画面で測った経過秒）
+    const newData = { ...data, [completedKey]: true, [roleKey + 'CompletedAt']: new Date().toISOString() };
     {
       const ans = newData[answersKey] || {};
       logEvent('quiz_end', roleKey, {
         answered: Object.keys(ans).filter(k => ans[k]).length,
         total: (questions || []).length,
-        reason: timeUp ? 'timeup' : 'finished',
+        reason: 'finished',
         elapsed_sec: quizStartRef.current ? Math.round((Date.now() - quizStartRef.current) / 1000) : null
       });
     }
-    // v3.1 fix#4: 問診完了時に即座にDB保存（ブラウザ閉じ対策）
-    (async () => {
-      try { await API.savePreInput(newData); }
-      catch(e) { console.error('[問診完了保存エラー]', e); }
-    })();
     if (onQuizActive) onQuizActive(false);
-    if (onComplete) onComplete(newData);
-  }, [timeUp, quizFinished]);
-  
-  // 質問が0件の場合
+    if (onComplete) {
+      Promise.resolve(onComplete(newData)).then(ok => {
+        if (ok === false) { setQuizFinished(false); setConfirming(false); setTimerStarted(false); } // 送信失敗 → 回答済みの画面と「送信する」に戻る
+      });
+    }
+    else { onChange(newData); API.savePreInput(newData).catch(e => console.error('[問診完了保存エラー]', e)); }
+  }, [quizFinished]);
+
+  const startQuiz = (fromIndex) => {
+    setQi(fromIndex);
+    setTimerStarted(true);
+    quizStartRef.current = Date.now();
+    logEvent('quiz_start', roleKey);
+    if (onQuizActive) onQuizActive(true);
+  };
+  const pauseQuiz = async () => {
+    try { await API.savePreInput(dataRef.current); } catch (e) {}
+    setTimerStarted(false);
+    if (onQuizActive) onQuizActive(false);
+  };
+
   if (!questions || questions.length === 0) {
     return (
       <div className="glass-card rounded-2xl p-6 animate-in text-center">
         <div className="flex justify-center mb-4"><SolidIcon name="warning" className="w-16 h-16 text-amber-400" /></div>
         <h2 className="text-xl font-bold text-gray-800 mb-2">{title}</h2>
-        <p className="text-gray-600 mb-2">
-          問診の設問が読み込まれていません。
-        </p>
-        <p className="text-sm text-gray-400">
-          「次へ」を押してスキップしてください。<br />
-          お打ち合わせ当日に問診を実施します。
-        </p>
+        <p className="text-gray-600 mb-2">問診の設問が読み込まれていません。</p>
+        <p className="text-sm text-gray-400">「送信する」を押してください。<br />お打ち合わせ当日に問診を実施します。</p>
       </div>
     );
   }
-  
-  // 既に回答完了済みの場合
-  if (isAlreadyCompleted) {
+
+  // 回答済み（この画面からも見直せる）
+  if (isAlreadyCompleted && !timerStarted) {
     return (
       <div className="glass-card rounded-2xl p-6 animate-in text-center">
         <div className="flex justify-center mb-4"><SolidIcon name="checkCircle" className="w-16 h-16 text-green-500" /></div>
         <h2 className="text-xl font-bold text-gray-800 mb-2">{title} — 回答済み</h2>
-        <p className="text-gray-600 mb-2">
-          この問診は既に回答が完了しています。（{answeredCount}/{questions.length}問回答）
-        </p>
-        <p className="text-sm text-gray-400">
-          回答内容の変更はできません。「次へ」を押して進んでください。
-        </p>
+        <p className="text-gray-600 mb-4">{answeredCount}/{questions.length}問に回答いただいています。</p>
+        <button type="button" className="pi-btn" onClick={() => startQuiz(0)}>回答を見直す</button>
       </div>
     );
   }
-  
-  // スキップ済みの場合（任意問診のみ）
+
   if (optional && data[skippedKey]) {
     return (
       <div className="glass-card rounded-2xl p-6 animate-in text-center">
         <div className="flex justify-center mb-4"><SolidIcon name="info" className="w-16 h-16 text-gray-400" /></div>
         <h2 className="text-xl font-bold text-gray-800 mb-2">{title} — スキップ済み</h2>
-        <p className="text-gray-600 mb-2">
-          この問診はスキップされました。
-        </p>
-        <p className="text-sm text-gray-400 mb-4">
-          「次へ」を押して進んでください。回答する場合は下のボタンを押してください。
-        </p>
-        <button
-          onClick={() => onChange({ ...data, [skippedKey]: false })}
-          className="text-xs px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition font-medium"
-        >
-          やっぱり回答する
-        </button>
+        <p className="text-gray-600 mb-2">この問診はスキップされました。</p>
+        <button onClick={() => onChange({ ...data, [skippedKey]: false })}
+          className="text-xs px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition font-medium">やっぱり回答する</button>
       </div>
     );
   }
-  
-  // 開始前の説明画面
+
+  // 開始前（途中まで答えていれば「続きから」）
   if (!timerStarted) {
+    const resuming = answeredCount > 0;
     return (
       <div className="glass-card rounded-2xl p-6 animate-in">
         <h2 className="text-xl font-bold text-gray-800 mb-4">{title}</h2>
-        
-        {/* 任意問診の説明 */}
         {optional && optionalNote && (
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl mb-4 space-y-2">
-            <p className="text-sm text-blue-800 font-bold flex items-center gap-1.5">
-              <SolidIcon name="info" className="w-4 h-4" />この問診は任意です
-            </p>
+            <p className="text-sm text-blue-800 font-bold flex items-center gap-1.5"><SolidIcon name="info" className="w-4 h-4" />この問診は任意です</p>
             <p className="text-sm text-blue-700">{optionalNote}</p>
           </div>
         )}
-        
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl mb-4 space-y-2">
-          <p className="text-sm text-amber-800 font-bold flex items-center gap-1.5"><SolidIcon name="clock" className="w-4 h-4" />制限時間: {timerSeconds / 60}分</p>
-          <p className="text-sm text-amber-700">制限時間を過ぎると自動的に回答が締め切られます。</p>
-          <p className="text-sm text-amber-700">
-            <span className="font-bold inline-flex items-center gap-1"><SolidIcon name="lightbulb" className="w-4 h-4" />回答のヒント：</span>
-            直感で「こちらに近い」と思う方を選択してください。
-            <span className="font-bold text-amber-900">どちらにも回答できない場合は、選択せずに飛ばして構いません。</span>
-          </p>
+        <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl mb-6 space-y-2">
+          <p className="text-sm text-gray-800 font-bold flex items-center gap-1.5"><SolidIcon name="clock" className="w-4 h-4" />目安：{QUIZ_GUIDE_MIN}分（時間制限はありません）</p>
+          <p className="text-sm text-gray-700">直感で「こちらに近い」と思う方を選択してください。<span className="font-bold">どちらにも回答できない場合は、選択せずに飛ばして構いません。</span></p>
+          <p className="text-sm text-gray-700">1問ごとに自動で保存されます。途中で閉じても、同じURLを開くと続きから答えられます。</p>
+          <p className="text-sm text-gray-700">送信した後も、担当者が受け取るまでは同じURLから見直せます。</p>
         </div>
-        
-        <div className="p-4 bg-red-50 border border-red-200 rounded-xl mb-6 space-y-2">
-          <p className="text-sm text-red-800 font-bold flex items-center gap-1.5"><SolidIcon name="warning" className="w-4 h-4" />以下の点にご注意ください</p>
-          <ul className="text-sm text-red-700 space-y-1">
-            <li className="flex items-start gap-2">
-              <SolidIcon name="prohibited" className="w-4 h-4 mt-0.5 text-red-500 flex-shrink-0" />
-              <span><span className="font-bold">途中保存はできません。</span>開始したら最後まで続けてください。</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <SolidIcon name="prohibited" className="w-4 h-4 mt-0.5 text-red-500 flex-shrink-0" />
-              <span><span className="font-bold">前のステップに戻ることはできません。</span>問診中は他の画面に移動できません。</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <SolidIcon name="prohibited" className="w-4 h-4 mt-0.5 text-red-500 flex-shrink-0" />
-              <span><span className="font-bold">回答完了後のやり直しはできません。</span>一度提出した回答は変更できません。</span>
-            </li>
-          </ul>
-        </div>
-        
         <div className="text-center">
-          <p className="text-gray-600 mb-4">全{questions.length}問の問診です</p>
-          <button
-            onClick={() => {
-              setTimerStarted(true);
-              quizStartRef.current = Date.now();
-              logEvent('quiz_start', roleKey);
-              if (onQuizActive) onQuizActive(true);
-            }}
-            className="btn-ripple px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-lg rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition shadow-lg hover:shadow-xl"
-          >
-            問診を開始する
+          <p className="text-gray-600 mb-4">全{questions.length}問の問診です{resuming ? `（${answeredCount}問 回答済み）` : ''}</p>
+          <button onClick={() => startQuiz(resuming ? firstUnanswered() : 0)}
+            className="btn-ripple px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-lg rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition shadow-lg hover:shadow-xl">
+            {resuming ? '続きから回答する' : '問診を開始する'}
           </button>
           {optional && (
-            <button
-              disabled={skipping}
-              onClick={() => {
-                if (skipping) return;
-                setSkipping(true);
-                const newData = { ...data, [skippedKey]: true };
-                onChange(newData);
-                if (onComplete) onComplete(newData);
-              }}
-              className="block mx-auto mt-4 text-sm px-6 py-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
-            >
+            <button disabled={skipping}
+              onClick={() => { if (skipping) return; setSkipping(true); const nd = { ...data, [skippedKey]: true }; onChange(nd); if (onComplete) onComplete(nd); }}
+              className="block mx-auto mt-4 text-sm px-6 py-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition">
               {skipping ? '保存中...' : 'この問診をスキップする →'}
             </button>
           )}
@@ -1232,23 +1321,16 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
       </div>
     );
   }
-  
-  // タイムアップまたは全問回答完了
-  if (timeUp || quizFinished) {
+
+  if (quizFinished) {
     return (
       <div className="glass-card rounded-2xl p-6 animate-in text-center">
-        <div className="flex justify-center mb-4">
-          <svg className="w-12 h-12 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-            <circle cx="12" cy="12" r="10" className="opacity-25" />
-            <path d="M4 12a8 8 0 018-8" className="opacity-75" />
-          </svg>
-        </div>
-        <p className="text-gray-600 font-bold">回答を保存中...</p>
+        <p className="text-gray-600 font-bold">回答を送信しています...</p>
       </div>
     );
   }
-  
-  // 問診回答画面（v3.4: 1問ずつ）
+
+  // 問診（1問ずつ）
   const q = questions[Math.min(qi, questions.length - 1)];
   const cur = answers[q.id];
   const isLast = qi >= questions.length - 1;
@@ -1269,34 +1351,54 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
       <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
         <h2 style={{ margin:0, fontSize:18, fontWeight:600 }}>{title}</h2>
         <span className="mono" style={{ fontSize:13, color:'var(--sub)' }}>回答 {answeredCount} / {questions.length}</span>
+        <span style={{ fontSize:12, color: autoSaveErr ? '#B42318' : 'var(--sub)' }}>
+          {autoSaveErr ? '保存できませんでした（通信を確かめてください）' : autoSavedAt ? `自動保存 ${autoSavedAt}` : ''}
+        </span>
         <div style={{ marginLeft:'auto', minWidth:220, flex:'0 1 320px' }}>
-          <CountdownTimer totalSeconds={timerSeconds} isRunning={true} onTimeUp={() => setTimeUp(true)} />
+          <ElapsedMeter startedAt={quizStartRef.current} />
         </div>
       </div>
       <div style={{ height:3, background:'var(--rule2)', borderRadius:2, overflow:'hidden' }}>
         <div style={{ width: `${((qi + 1) / questions.length) * 100}%`, height:3, background:'var(--acc)', transition:'width 0.2s' }} />
       </div>
-      <section className="glass-card" style={{ padding:'32px 32px 28px', display:'flex', flexDirection:'column', gap:24 }}>
-        <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
-          <span className="mono" style={{ fontSize:14, color:'var(--sub)' }}>Q {qi + 1} / {questions.length}</span>
-          <span style={{ fontSize:13, color:'var(--sub)' }}>直感で、近いほうを選んでください</span>
+      {askFinish ? (
+        <section className="glass-card" style={{ padding:'28px 32px', display:'flex', flexDirection:'column', gap:16 }}>
+          <p style={{ margin:0, fontSize:18, fontWeight:600 }}>回答を終えて送信しますか？</p>
+          <p style={{ margin:0, fontSize:14, color:'var(--sub)', lineHeight:1.8 }}>
+            {unansweredCount > 0 ? <>未回答が <span style={{ fontWeight:700, color:'var(--ink)' }}>{unansweredCount}問</span> あります（答えられない問いは飛ばして構いません）。<br /></> : null}
+            送信した後も、担当者が受け取るまでは同じURLから見直せます。
+          </p>
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+            <button type="button" className="pi-btn" onClick={() => { setAskFinish(false); if (unansweredCount > 0) setQi(firstUnanswered()); }}>
+              {unansweredCount > 0 ? '未回答の問いに戻る' : '問いに戻る'}
+            </button>
+            <button type="button" className="pi-btn primary" onClick={() => { setAskFinish(false); setQuizFinished(true); }}>終えて送信する</button>
+          </div>
+        </section>
+      ) : (
+        <section className="glass-card" style={{ padding:'32px 32px 28px', display:'flex', flexDirection:'column', gap:24 }}>
+          <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
+            <span className="mono" style={{ fontSize:14, color:'var(--sub)' }}>Q {qi + 1} / {questions.length}</span>
+            <span style={{ fontSize:13, color:'var(--sub)' }}>直感で、近いほうを選んでください</span>
+          </div>
+          <p style={{ margin:0, fontSize:22, fontWeight:600, lineHeight:1.7, whiteSpace:'pre-line' }}>{q.question}</p>
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            {choiceBtn('A', q.choiceA)}
+            {choiceBtn('B', q.choiceB)}
+          </div>
+        </section>
+      )}
+      {!askFinish && (
+        <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+          <button type="button" className="pi-btn" onClick={() => setQi(i => Math.max(i - 1, 0))} disabled={qi === 0}>前の問い</button>
+          <button type="button" className="pi-btn" onClick={pauseQuiz}>いったん中断する</button>
+          <span style={{ fontSize:12, color:'var(--sub)' }}>キーボードの A・B でも選べます。答えられない問いは飛ばして構いません</span>
+          <span style={{ marginLeft:'auto', display:'flex', gap:8 }}>
+            {!isLast && <button type="button" className="pi-btn" onClick={() => setQi(i => Math.min(i + 1, questions.length - 1))}>{cur ? '次の問い' : '答えずに次へ'}</button>}
+            <button type="button" className={isLast ? 'pi-btn primary' : 'pi-btn'} onClick={() => setAskFinish(true)} disabled={quizFinished || confirming}>回答を終える</button>
+          </span>
         </div>
-        <p style={{ margin:0, fontSize:22, fontWeight:600, lineHeight:1.7, whiteSpace:'pre-line' }}>{q.question}</p>
-        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-          {choiceBtn('A', q.choiceA)}
-          {choiceBtn('B', q.choiceB)}
-        </div>
-      </section>
-      <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-        <button type="button" className="pi-btn" onClick={() => setQi(i => Math.max(i - 1, 0))} disabled={qi === 0}>前の問い</button>
-        <span style={{ fontSize:12, color:'var(--sub)' }}>キーボードの A・B でも選べます。答えられない問いは飛ばして構いません</span>
-        <span style={{ marginLeft:'auto', display:'flex', gap:8 }}>
-          {!isLast && <button type="button" className="pi-btn" onClick={() => setQi(i => Math.min(i + 1, questions.length - 1))}>{cur ? '次の問い' : '答えずに次へ'}</button>}
-          <button type="button" className={isLast ? 'pi-btn primary' : 'pi-btn'} onClick={() => setQuizFinished(true)} disabled={quizFinished || confirming}>
-            {quizFinished || confirming ? '保存しています…' : '回答を終える'}
-          </button>
-        </span>
-      </div>
+      )}
     </div>
   );
 };
@@ -1307,7 +1409,7 @@ const StepQuestionnaire = ({ data, onChange, roleKey, questions, title, timerSec
 const StepFunnel = ({ data, onChange, methodMaster }) => {
   const methods = methodMaster && Object.keys(methodMaster).length > 0 ? methodMaster : DEFAULT_RECRUITMENT_METHODS;
   const jobLabels = data.jobType ? (JOB_TYPES.find(j => j.key === data.jobType)?.label || data.jobType) : '';
-  const activeChannels = Object.entries(data.recruitmentMethods || {})
+  const allActiveChannels = Object.entries(data.recruitmentMethods || {})
     .filter(([_, m]) => m?.active)
     .sort((a, b) => (a[1].priority || 999) - (b[1].priority || 999))
     .map(([key, m], idx) => ({
@@ -1316,7 +1418,11 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
       shortName: (methods[key]?.name || key).split('（')[0].substring(0, 8),
       category: methods[key]?.category || DEFAULT_RECRUITMENT_METHODS[key]?.category || '',
       priority: m.priority || (idx + 1)
-    }));
+    }))
+;
+  // v3.7: 入力欄は一番注力している手法（優先順位1位）だけ。量が多いと未記入で終わるため。
+  //   合計は選んだ手法すべての値で出す（以前入れた他の手法の値も含めて BB診断の表示と同じ合計にする）
+  const activeChannels = allActiveChannels.slice(0, 1);
   
   const funnelData = data.funnelData || {};
   const availableYears = funnelData.availableYears || ['25卒', '26卒', '27卒', '28卒', '29卒', '30卒'];
@@ -1363,7 +1469,7 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
     };
     
     // BB診断と同じキーで合計を再計算
-    const calcTotalInner = (pk, si) => activeChannels.reduce((sum, ch) => {
+    const calcTotalInner = (pk, si) => allActiveChannels.reduce((sum, ch) => {
       const k = si !== undefined ? `${pk}_${si}_${ch.key}` : `${pk}_${ch.key}`;
       const v = newChannelData[k];
       return sum + (parseInt(v) || 0);
@@ -1396,7 +1502,7 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
     });
   };
   
-  const calcTotal = (phaseKey, subIdx) => activeChannels.reduce((sum, ch) => {
+  const calcTotal = (phaseKey, subIdx) => allActiveChannels.reduce((sum, ch) => {
     const k = subIdx !== undefined ? `${phaseKey}_${subIdx}_${ch.key}` : `${phaseKey}_${ch.key}`;
     const v = yearData.channelData?.[k] ?? '';
     return sum + (parseInt(v) || 0);
@@ -1542,101 +1648,34 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
           </div>
         </div>
       ) : (
-        /* チャネル選択時：BB診断と同じテーブル形式 */
+        /* v3.7: 一番注力している手法だけ（縦に1列） */
         <div>
-          <h3 className="text-sm font-bold text-gray-700 mb-1">採用手法別ファネル数値</h3>
-          <p className="text-xs text-gray-500 mb-4">各手法の数値を入力すると、合計が自動計算されます。不明な項目は空欄で構いません。</p>
-          
-          <div className="overflow-x-auto -mx-2 px-2">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="border border-gray-200 px-2 py-2 text-left font-bold text-gray-700 w-20 sticky left-0 bg-gray-50 z-10">フェーズ</th>
-                  <th className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-700 bg-blue-50 w-16">合計</th>
-                  {activeChannels.map(ch => (
-                    <th key={ch.key} className="border border-gray-200 px-1 py-2 text-center font-medium text-gray-600" style={{minWidth: '90px'}}>
-                      <div className="truncate text-xs" title={ch.name}>
-                        <span className="text-[10px] text-purple-500 mr-0.5">{ch.priority}位</span>
-                        {ch.shortName}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {phases.map(phase => {
-                  // 選考展開: subLabelsがある場合は複数行レンダリング
-                  if (phase.subLabels && phase.subLabels.length > 1) {
-                    return phase.subLabels.map((subLabel, subIdx) => (
-                      <tr key={`${phase.key}_${subIdx}`}>
-                        {subIdx === 0 && (
-                          <td rowSpan={phase.rowSpan} className="border border-gray-200 px-2 py-2 font-bold text-gray-800 bg-gray-50 text-xs sticky left-0 z-10">
-                            {phase.label}
-                          </td>
-                        )}
-                        <td className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-600 bg-blue-50">
-                          <div className="text-[10px] text-gray-400">{subLabel}</div>
-                          {calcTotal(phase.key, subIdx) || ''}
-                        </td>
-                        {activeChannels.map(ch => (
-                          <td key={ch.key} className="border border-gray-200 px-1 py-1">
-                            <input
-                              type="number"
-                              min="0"
-                              value={getChannelValue(phase.key, ch.key, subIdx)}
-                              onChange={e => setChannelValue(phase.key, ch.key, e.target.value, subIdx)}
-                              placeholder={subLabel || getPlaceholder(phase.key, ch.key)}
-                              className="w-full px-1 py-1.5 border border-gray-200 rounded text-center text-xs focus:ring-2 focus:ring-blue-500 placeholder-gray-300"
-                            />
-                          </td>
-                        ))}
-                      </tr>
-                    ));
-                  }
-                  // 通常行（展開なし）
-                  return (
-                    <tr key={phase.key}>
-                      <td className="border border-gray-200 px-2 py-2 font-bold text-gray-800 bg-gray-50 text-xs sticky left-0 z-10">
-                        {phase.label}
-                      </td>
-                      <td className="border border-gray-200 px-2 py-2 text-center font-bold text-blue-600 bg-blue-50">
-                        {calcTotal(phase.key) || ''}
-                      </td>
-                      {activeChannels.map(ch => (
-                        <td key={ch.key} className="border border-gray-200 px-1 py-1">
-                          <input
-                            type="number"
-                            min="0"
-                            value={getChannelValue(phase.key, ch.key)}
-                            onChange={e => setChannelValue(phase.key, ch.key, e.target.value)}
-                            placeholder={getPlaceholder(phase.key, ch.key)}
-                            className="w-full px-1 py-1.5 border border-gray-200 rounded text-center text-xs focus:ring-2 focus:ring-blue-500 placeholder-gray-300"
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          
-          {/* 合計サマリー */}
-          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
-            <div className="grid grid-cols-6 gap-2 text-center">
-              {phases.map(phase => {
-                // screening展開時は1次面接の値をサマリーに表示
-                const total = (phase.subLabels && phase.subLabels.length > 1) 
-                  ? calcTotal(phase.key, 0) 
-                  : calcTotal(phase.key);
+          <h3 className="text-sm font-bold text-gray-700 mb-1">
+            一番注力している手法「{activeChannels[0].name}」の数値を教えてください
+          </h3>
+          <p className="text-xs text-gray-500 mb-4">分かる項目だけで構いません。不明な項目は空欄のまま進めます。</p>
+          <div style={{ display:'flex', flexDirection:'column', gap:10, maxWidth:520 }}>
+            {phases.flatMap(phase => {
+              const ch = activeChannels[0];
+              const subs = (phase.subLabels && phase.subLabels.length > 1) ? phase.subLabels.map((sl, i) => ({ sl, i })) : [{ sl: '', i: undefined }];
+              return subs.map(({ sl, i }) => {
+                const id = 'fn_' + phase.key + (i !== undefined ? '_' + i : '');
                 return (
-                  <div key={phase.key}>
-                    <div className="text-[10px] text-gray-500">{phase.label}{phase.subLabels?.length > 1 ? '(1次)' : ''}</div>
-                    <div className="text-sm font-bold text-blue-700">{total || '-'}</div>
+                  <div key={id} style={{ display:'flex', alignItems:'center', gap:12 }}>
+                    <label htmlFor={id} style={{ width:140, flexShrink:0, fontSize:14, fontWeight:600, color:'var(--ink)' }}>
+                      {phase.label}{sl ? <span style={{ fontWeight:400, color:'var(--sub)', marginLeft:6 }}>{sl}</span> : null}
+                    </label>
+                    <input id={id} type="number" min="0" inputMode="numeric"
+                      value={getChannelValue(phase.key, ch.key, i)}
+                      onChange={e => setChannelValue(phase.key, ch.key, e.target.value, i)}
+                      placeholder={sl || getPlaceholder(phase.key, ch.key)}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 placeholder-gray-300"
+                      style={{ width:160 }} />
+                    <span style={{ fontSize:13, color:'var(--sub)' }}>人</span>
                   </div>
                 );
-              })}
-            </div>
+              });
+            })}
           </div>
         </div>
       )}
@@ -1647,7 +1686,9 @@ const StepFunnel = ({ data, onChange, methodMaster }) => {
 // ========================================
 // 送信完了画面
 // ========================================
-const CompletionScreen = () => (
+const CompletionScreen = ({ locked, onReview, reviewList }) => {
+  const [showAnswers, setShowAnswers] = useState(false);
+  return (
   <div className="glass-card rounded-2xl p-8 text-center animate-in max-w-lg mx-auto">
     <div className="flex justify-center mb-6"><SolidIcon name="checkCircle" className="w-20 h-20 text-blue-500" /></div>
     <h2 className="text-2xl font-bold text-gray-800 mb-3">事前問診が完了しました！</h2>
@@ -1655,6 +1696,28 @@ const CompletionScreen = () => (
       ご回答いただきありがとうございます。<br />
       お打ち合わせ当日、この内容をもとに診断いたします。
     </p>
+    {locked ? (
+      <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl mb-4">
+        <p className="text-sm text-gray-700">回答は担当者が受け取りました。<br />変更したい場合は、担当者にご連絡ください。</p>
+      </div>
+    ) : (
+      <div className="mb-4">
+        <button type="button" className="pi-btn" onClick={onReview}>回答を見直す・続きから答える</button>
+        <p className="text-xs text-gray-500 mt-2">担当者が受け取るまでは、同じURLから見直せます。</p>
+      </div>
+    )}
+    {locked && reviewList && reviewList.length > 0 && (
+      <div className="text-left mb-4">
+        <button type="button" className="pi-btn" onClick={() => setShowAnswers(v => !v)}>{showAnswers ? '回答を閉じる' : '回答を見る'}</button>
+        {showAnswers && (
+          <ol style={{ marginTop:12, paddingLeft:20, display:'flex', flexDirection:'column', gap:8, fontSize:13, color:'var(--ink)' }}>
+            {reviewList.map(r => (
+              <li key={r.id}><div>{r.question}</div><div style={{ color:'var(--sub)' }}>回答：{r.answerText || '（未回答）'}</div></li>
+            ))}
+          </ol>
+        )}
+      </div>
+    )}
     <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
       <p className="text-sm text-blue-800">
         このページを閉じていただいて問題ありません。<br />
@@ -1662,7 +1725,8 @@ const CompletionScreen = () => (
       </p>
     </div>
   </div>
-);
+  );
+};
 
 // ========================================
 // メインApp (v3.1: バグ修正4件 + 運用改善5件)
@@ -1693,6 +1757,7 @@ const App = () => {
   const [saving, setSaving] = useState(false);
   const [navigating, setNavigating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [locked, setLocked] = useState(false); // v3.7: BB診断に取り込み済み（この役割の回答は見るだけ）
   const [error, setError] = useState('');
   const [privacyAgreed, setPrivacyAgreed] = useState(false);
   const [started, setStarted] = useState(false);
@@ -1713,7 +1778,7 @@ const App = () => {
           setError('問い合わせ番号が指定されていません。\nURLに ?id=XXXXX&tk=YYYYY の形式でアクセスしてください。');
           setLoading(false); return;
         }
-        console.log('[事前問診 v3.5] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
+        console.log('[事前問診 v3.7] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
         const pingRes = await gasGet('ping');
         if (!pingRes.success) throw new Error('サーバーに接続できません。');
         
@@ -1733,6 +1798,14 @@ const App = () => {
           setData(prev => ({ ...prev, ...ld }));
           if (isExec && ld.executiveCompleted) setCompleted(true);
           else if (!isExec && ld.status === '完了') setCompleted(true);
+          // v3.7: 送信の後に取り込まれていれば見るだけ（送信した時刻より後に取り込まれたか）
+          try {
+            const st = await API.loadStatus();
+            const impAt = st && st.success && st.data && st.data.importedAt;
+            const doneFlag = isExec ? !!ld.executiveCompleted : ld.status === '完了';
+            const doneAt = st && st.data && st.data.lastSubmitAt; // DB の時計（最後の送信の記録）。無ければ取込済みで見るだけ
+            if (impAt && doneFlag && (!doneAt || new Date(impAt).getTime() >= new Date(doneAt).getTime())) setLocked(true);
+          } catch (e) { console.warn('[事前問診 v3.7] 取込状態の確認に失敗（見直し可として続行）', e && e.message); }
           // v3.1 fix#5: exec URLにsize指定なし＆担当者も未入力の場合は警告
           if (isExec && !urlSize && !ld.companySize) {
             console.warn('[事前問診 v3.5] 上層部アクセスだが企業規模が不明。フォールバック適用。');
@@ -1799,13 +1872,38 @@ const App = () => {
     try {
       const res = await API.savePreInput(nd || data);
       // v3.4: 失敗を成功と見せない（関数は success:false を返すことがある）
-      if (res && res.success === false) { toast('保存できませんでした。通信を確かめて、もう一度お試しください。', 'error', 5000); logEvent('save_error', steps[currentStep]?.id || '', { message: String(res.error || '').slice(0, 200) }); }
-      else setSavedAt(new Date().toTimeString().slice(0, 5));
+      if (res && res.success === false) { toast('保存できませんでした。通信を確かめて、もう一度お試しください。', 'error', 5000); logEvent('save_error', steps[currentStep]?.id || '', { message: String(res.error || '').slice(0, 200) }); return false; }
+      setSavedAt(new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }));
+      return true;
     }
-    catch (e) { toast('保存できませんでした。通信を確かめて、もう一度お試しください。', 'error', 5000); }
+    catch (e) { toast('保存できませんでした。通信を確かめて、もう一度お試しください。', 'error', 5000); return false; }
     finally { setSaving(false); }
   }, [data]);
   
+  // v3.7: 送信（最後の手順。問診を終えたときもここを通る）
+  const submitAll = async (base) => {
+    const now = new Date().toISOString();
+    const hasStaffAns = Object.values(base.staffAnswers || {}).some(Boolean);
+    const finalData = isExec ? { ...base, executiveCompleted: true, executiveCompletedAt: now }
+                             : { ...base, status: '完了', staffCompleted: hasStaffAns, staffCompletedAt: now };
+    setData(finalData);
+    const ok = await saveProgress(finalData);
+    if (!ok) return false;   // 保存できなければ完了画面にしない（もう一度「送信する」で送り直せる）
+    setCompleted(true);
+    logEvent('submit', steps[currentStep]?.id || '');
+    return true;
+  };
+  // v3.7: 問診を終えたとき。最後の手順ならそのまま送信、そうでなければ保存だけ
+  const onQuizComplete = async (nd) => {
+    if (currentStep >= steps.length - 1) { setNavigating(true); try { return await submitAll(nd); } finally { setNavigating(false); } }
+    setData(nd); return await saveProgress(nd);
+  };
+  // v3.7: 送信後の見直し（取り込まれる前だけ）
+  const reviewAgain = () => {
+    setCompleted(false); setStarted(true); setCurrentStep(0);
+    logEvent('review', isExec ? 'executive' : 'staff');
+  };
+
   const goNext = async () => {
     if (navigating) return;
     setNavigating(true);
@@ -1813,9 +1911,7 @@ const App = () => {
       window.scrollTo(0, 0);
       if (currentStep >= steps.length - 1) {
         // v3.1 fix#3: 最終ステップはfinalDataのみ保存（二重保存防止）
-        const finalData = isExec ? { ...data, executiveCompleted: true } : { ...data, status: '完了' };
-        setData(finalData); await saveProgress(finalData); setCompleted(true);
-        logEvent('submit', steps[currentStep]?.id || '');
+        await submitAll(data);
       } else {
         await saveProgress(data);
         logEvent('step', steps[currentStep + 1]?.id || '', { from: steps[currentStep]?.id || '' });
@@ -1848,22 +1944,18 @@ const App = () => {
   const staffQuestions = useMemo(() => getQuestions('staff'), [getQuestions]);
   const executiveQuestions = useMemo(() => getQuestions('executive'), [getQuestions]);
   
-  useEffect(() => {
-    if (!questionMaster || !started) return;
-    const chk = (rk, qs) => {
-      if (!data[rk+'Completed']) return;
-      const ans = data[rk+'Answers'] || {};
-      const aIds = new Set(Object.keys(ans).filter(k => ans[k]));
-      const cIds = new Set(qs.map(q => q.id));
-      if ([...aIds].some(id => !cIds.has(id))) setData(p => ({ ...p, [rk+'Completed']: false, [rk+'Answers']: {} }));
-    };
-    if (!isExec) chk('staff', staffQuestions);
-    if (isExec) chk('executive', executiveQuestions);
-  }, [staffQuestions, executiveQuestions, questionMaster, started]);
+  // v3.6: 「回答済みの質問IDが今の質問に無ければ回答を空に戻す」処理は削除（開き直しで回答が消えていた）
   
   if (loading) return (<div className="min-h-screen flex items-center justify-center"><div className="text-center"><div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div><p className="text-gray-600">読み込み中...</p></div></div>);
   if (error) return (<div className="min-h-screen flex items-center justify-center p-4"><div className="glass-card rounded-2xl p-8 text-center max-w-md"><div className="flex justify-center mb-4"><SolidIcon name="warning" className="w-14 h-14 text-amber-500" /></div><p className="text-red-600 font-bold mb-4 whitespace-pre-line">{error}</p><button onClick={() => window.location.reload()} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold">再読み込み</button></div></div>);
-  if (completed) return (<div className="min-h-screen flex items-center justify-center p-4"><CompletionScreen /></div>);
+  if (completed) {
+    // v3.7: 取り込み後は回答を見るだけ（問いと選んだ答え）
+    const rk = isExec ? 'executive' : 'staff';
+    const qs = isExec ? executiveQuestions : staffQuestions;
+    const ans = data[rk + 'Answers'] || {};
+    const reviewList = locked ? qs.map(q => ({ id: q.id, question: q.question, answerText: ans[q.id] === 'A' ? q.choiceA : ans[q.id] === 'B' ? q.choiceB : '' })) : null;
+    return (<div className="min-h-screen flex items-center justify-center p-4"><CompletionScreen locked={locked} onReview={reviewAgain} reviewList={reviewList} /></div>);
+  }
   
   if (!started) {
     return (
@@ -1948,7 +2040,7 @@ const App = () => {
           })}
         </nav>
         <div style={{ marginTop:'auto', fontSize:12, color:'var(--sub)', lineHeight:1.8 }}>
-          回答は次へ進むたびに保存されます。途中で閉じても、同じURLから続きを始められます（問診の途中を除く）。<br />
+          回答は次へ進むたび（問診は1問ごと）に保存されます。途中で閉じても、同じURLから続きを始められます。<br />
           ご不明点は、担当者までお問い合わせください。
         </div>
       </aside>
@@ -1967,8 +2059,8 @@ const App = () => {
           {currentStepDef?.id === 'target' && <StepTarget data={data} onChange={d => setData(d)} />}
           {currentStepDef?.id === 'method' && <StepMethod data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
           {currentStepDef?.id === 'challenges' && <StepChallenges data={data} onChange={d => setData(d)} />}
-          {currentStepDef?.id === 'staff' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="staff" questions={staffQuestions} title="担当者問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, staffCompleted: true}))} />}
-          {currentStepDef?.id === 'executive' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="executive" questions={executiveQuestions} title="上層部問診" timerSeconds={900} onQuizActive={setQuizActive} onComplete={() => setData(p => ({...p, executiveCompleted: true}))} />}
+          {currentStepDef?.id === 'staff' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="staff" questions={staffQuestions} title="担当者問診" onQuizActive={setQuizActive} onComplete={onQuizComplete} />}
+          {currentStepDef?.id === 'executive' && <StepQuestionnaire data={data} onChange={d => setData(d)} roleKey="executive" questions={executiveQuestions} title="上層部問診" onQuizActive={setQuizActive} onComplete={onQuizComplete} />}
           {currentStepDef?.id === 'funnel' && <StepFunnel data={data} onChange={d => setData(d)} methodMaster={methodMaster} />}
           {!quizActive && (
             <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:24, paddingTop:20, borderTop:'1px solid var(--rule)' }}>
