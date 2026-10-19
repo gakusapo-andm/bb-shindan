@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -111,6 +110,10 @@
        表示のみ・計算無変更 -->
   <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
        DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v83: 入力画面の見た目をそろえる（2026-10-19・画面の見た目だけ。データ・計算は変更なし）
+       文字は 20/16/14/12px の4段階（10・11pxをなくす）、入力欄は白・灰色の枠・角丸8・高さ40以上・文字16。
+       色は従来の青をベースに、オレンジ（診断開始ボタン・未入力・注意の箱）をやめる: 診断開始は青、未入力はくすんだ赤の細い枠と文字、
+       飾りの色の箱（緑・紫・ピンク・グラデーション・黄）は薄い灰色、A〜Eの印は選んだ層だけ青。結果画面・PDFは触らない -->
   <!-- v82c: 手法名を大きく（text-sm→text-base・太字）、説明を10px→12px。採用手法タブの「予算」「順位」「開始」の見出しを入力欄の左に（枠の上→左。行が低くなり見やすく）（2026-10-19） -->
   <!-- v82b: タブ名「ターゲット学生」→「ターゲット」。採用手法タブ: 使っている手法の行を青枠で強調し、予算・順位・開始時期の欄を大きく、未入力はオレンジ、
        上に「選んだ手法／未入力の件数」のまとめを表示（入れ忘れ防止）。使っていない手法の入力欄は隠す（2026-10-19） -->
@@ -472,7 +475,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v82c] Supabase接続完了');
+    console.log('[BB診断 v83] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -1219,7 +1222,45 @@ button:not(:disabled):active {
 }
 .toast-enter { animation: toastSlideIn 0.3s ease; }
 .toast-exit { animation: toastSlideOut 0.3s ease forwards; }
-  </style>
+  
+  /* ===== v83: 入力画面（.glass-card の中）の見た目をそろえる。色は従来の青をベースに、オレンジはやめる ===== */
+  /* 文字: 大見出し20 / 区切り見出し16 / 項目名・本文14 / 補足12（10・11pxは使わない） */
+  .glass-card h3 { font-size: 20px !important; line-height: 1.4 !important; font-weight: 700 !important; color: #111827 !important; }
+  .glass-card h4 { font-size: 16px !important; line-height: 1.5 !important; font-weight: 700 !important; color: #111827 !important; }
+  .glass-card .text-\[10px\], .glass-card .text-\[11px\] { font-size: 12px !important; line-height: 1.5 !important; }
+  .glass-card label.block, .glass-card .block.text-sm, .glass-card .block.text-xs { font-size: 14px !important; font-weight: 600 !important; color: #374151 !important; }
+  /* 入力欄: 白・灰色の枠・角丸8・高さ40以上・文字16 */
+  .glass-card input[type="text"], .glass-card input[type="number"], .glass-card input[type="date"], .glass-card input[type="email"], .glass-card input[type="tel"], .glass-card input:not([type]),
+  .glass-card select, .glass-card textarea {
+    background-color: #ffffff; border: 1px solid #d1d5db !important; border-radius: 8px !important; font-size: 16px !important; min-height: 40px;
+  }
+  .glass-card input:disabled, .glass-card select:disabled { background-color: #f3f4f6 !important; color: #9ca3af !important; }
+  .glass-card input:focus, .glass-card select:focus, .glass-card textarea:focus { outline: 2px solid #2563eb !important; outline-offset: 0; border-color: #2563eb !important; }
+  .glass-card input[type="checkbox"], .glass-card input[type="radio"] { accent-color: #2563eb; }
+  /* 未入力（入れてほしい欄）: くすんだ赤の細い枠と文字だけ */
+  .glass-card input.bb-missing, .glass-card select.bb-missing, .glass-card .bb-missing { border: 1px solid #B42318 !important; background-color: #ffffff !important; }
+  .bb-missing-text { color: #B42318 !important; font-weight: 700 !important; }
+  /* 飾りの色付きの箱（グラデーション・緑・紫・ピンク・藍・黄・オレンジ）は、薄い灰色＋灰色の枠に */
+  .glass-card div.bg-gradient-to-r, .glass-card div.bg-gradient-to-br, .glass-card div.bg-green-50, .glass-card div.bg-purple-50, .glass-card div.bg-pink-50,
+  .glass-card div.bg-indigo-50, .glass-card div.bg-amber-50, .glass-card div.bg-orange-50 {
+    background-image: none !important; background-color: #f9fafb !important; border-color: #e5e7eb !important;
+  }
+  .glass-card .bg-orange-100, .glass-card .bg-amber-100 { background-color: #f3f4f6 !important; }
+  .glass-card .border-orange-200, .glass-card .border-amber-200, .glass-card .border-amber-300 { border-color: #e5e7eb !important; }
+  .glass-card .text-green-800, .glass-card .text-green-700, .glass-card .text-purple-700, .glass-card .text-purple-800, .glass-card .text-indigo-700,
+  .glass-card .text-orange-400, .glass-card .text-orange-500, .glass-card .text-orange-600, .glass-card .text-orange-700 { color: #374151 !important; }
+  /* 注意書き（黄色だったもの）は、くすんだ赤の文字 */
+  .glass-card .text-amber-700, .glass-card .text-amber-800 { color: #B42318 !important; }
+  /* 大事な数字は青1色（合計が合わないときの赤は残す） */
+  .glass-card .font-black { color: #1d4ed8 !important; }
+  .glass-card .text-red-500.font-black { color: #dc2626 !important; }
+  /* A〜E の印: 選んだ層は青、選んでいない層は灰色（5色の色分けをやめる） */
+  .glass-card .w-9.h-9[style] { background-color: #9ca3af !important; }
+  .glass-card .border-blue-400 .w-9.h-9[style] { background-color: #2563eb !important; }
+  .glass-card .w-6.h-6[style] { background-color: #2563eb !important; }
+  .glass-card span.rounded[style*="background-color"] { background-color: #2563eb !important; }
+
+</style>
 </head>
 <body>
   <div id="root"></div>
@@ -9732,7 +9773,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
 const methodInputCls = (m, field) => {
   const v = m ? m[field] : undefined;
   const empty = field === 'priority' ? !v : (v === undefined || v === '' || v === null);
-  return 'w-20 px-2 py-2 border rounded-lg text-center text-base ' + (empty ? 'border-orange-400 bg-orange-50' : 'border-gray-300 bg-white font-bold');
+  return 'w-20 px-2 py-2 border rounded-lg text-center text-base ' + (empty ? 'bb-missing' : 'border-gray-300 bg-white font-bold');
 };
 
 // ========================================
@@ -9791,7 +9832,7 @@ const TargetLayersV2Editor = ({ data, onChange }) => {
                 {on && layer.hasLevel && (
                   <select value={conf.level || ''} onChange={(e) => setLevel(key, e.target.value)}
                     aria-label={`${layer.short}で主に狙う大学`}
-                    className={`w-full px-2 py-1.5 border rounded-lg text-sm ${conf.level ? 'border-gray-200' : 'border-orange-400 bg-orange-50'}`}>
+                    className={`w-full px-2 py-1.5 border rounded-lg text-sm ${conf.level ? 'border-gray-200' : 'bb-missing'}`}>
                     <option value="">主に狙う大学（未選択）</option>
                     {Object.entries(TARGET_LEVELS).map(([lk, ll]) => <option key={lk} value={lk}>主に狙う大学：{ll}</option>)}
                   </select>
@@ -9902,7 +9943,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
         <button
           onClick={onStartDiagnosis}
           disabled={!data.companyName}
-          className="px-4 py-2.5 text-sm bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl font-medium shadow-lg transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          className="px-4 py-2.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
@@ -10554,12 +10595,12 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                   const noStart = showStart ? act.filter(([k, m]) => !m.startMonth && !isMidCareerOnlyMethod(k, segMaster)).length : 0;
                   const ok = act.length > 0 && noBudget + noPrio + noStart === 0;
                   return (
-                    <div className={`mb-5 p-3 rounded-xl border-2 flex flex-wrap items-center gap-x-5 gap-y-1 ${ok ? 'border-green-300 bg-green-50' : 'border-orange-300 bg-orange-50'}`}>
+                    <div className={`mb-5 p-3 rounded-xl border-2 flex flex-wrap items-center gap-x-5 gap-y-1 ${ok ? 'border-gray-200 bg-white' : 'border-gray-200 bg-white'}`}>
                       <span className="text-sm font-bold text-gray-800">選んだ手法 {act.length}件</span>
-                      <span className={`text-sm ${noBudget ? 'font-bold text-orange-700' : 'text-gray-600'}`}>投資予算額 未入力 {noBudget}件</span>
-                      <span className={`text-sm ${noPrio ? 'font-bold text-orange-700' : 'text-gray-600'}`}>注力順位 未入力 {noPrio}件</span>
-                      {showStart && <span className={`text-sm ${noStart ? 'font-bold text-orange-700' : 'text-gray-600'}`}>開始時期 未入力 {noStart}件</span>}
-                      <span className="text-xs text-gray-500">使っている手法にチェックを入れると、入力欄が出ます（未入力はオレンジ）</span>
+                      <span className={`text-sm ${noBudget ? 'bb-missing-text' : 'text-gray-600'}`}>投資予算額 未入力 {noBudget}件</span>
+                      <span className={`text-sm ${noPrio ? 'bb-missing-text' : 'text-gray-600'}`}>注力順位 未入力 {noPrio}件</span>
+                      {showStart && <span className={`text-sm ${noStart ? 'bb-missing-text' : 'text-gray-600'}`}>開始時期 未入力 {noStart}件</span>}
+                      <span className="text-xs text-gray-500">使っている手法にチェックを入れると、入力欄が出ます（未入力は赤い枠）</span>
                     </div>
                   );
                 })()}
@@ -10657,7 +10698,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                                     [key]: { ...data.recruitmentMethods?.[key], startMonth: e.target.value === '' ? '' : parseInt(e.target.value, 10) }
                                   }
                                 })}
-                                className={`flex-1 min-w-0 px-2 py-2 border rounded-lg text-base ${data.recruitmentMethods?.[key]?.startMonth ? 'border-gray-300 bg-white font-bold' : 'border-orange-400 bg-orange-50'}`}
+                                className={`flex-1 min-w-0 px-2 py-2 border rounded-lg text-base ${data.recruitmentMethods?.[key]?.startMonth ? 'border-gray-300 bg-white font-bold' : 'bb-missing'}`}
                               >
                                 <option value="">未入力</option>
                                 {Array.from({ length: 24 }, (_, i) => <option key={i + 1} value={i + 1}>{startMonthLabel(i + 1, tlV2)}</option>)}
