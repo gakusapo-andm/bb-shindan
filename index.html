@@ -110,6 +110,18 @@
        表示のみ・計算無変更 -->
   <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
        DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v85: 設定画面を新しいターゲット層に合わせる（2026-10-21・DB変更なし。⑤はDBパッチ17の newgrad_text を使う）
+       ①「ターゲット層の相性・時期」を足す（相性＝手法×9区分、動く時期＝24か月、話し方の文。保存は「設定を保存」で save_target_segment_master）
+       ② 採用手法詳細設定: 旧A〜H層の選択をやめ、9区分の相性を入れる欄に。一覧に相性の数・未設定の印
+       ③ 媒体利用率設定はメニューから外す（旧A〜H層の診断の計算には今までどおり DB の値を使う）
+       ④ AI基本プロンプトを口調プリセットの中にまとめる（メニューを1つ減らす）
+       ⑤ 質問項目設定: 質問ごとに「採用全般版｜新卒版」を切り替えて言い方を直せる（新卒版の空欄は採用全般版と同じ） -->
+  <!-- v84b: 設定画面の不具合直し（2026-10-21）。回答数の丸い表示が設定画面などの上に重なる（z-index 9999→40）、質問項目設定の採用手法別で最初のカテゴリが本番に無い「ナビサイト」になり一覧0件・追加先が迷子になる、
+       傾向の質問のバッジが「伝達力」・軸の選択肢が伝達力8軸になる、媒体利用率設定・採用手法詳細設定のカテゴリが「1.ナビサイト」のまま・媒体利用率の合計にマスターに無い手法の値が混ざる（例 102%） -->
+  <!-- v84: 問診の版（2026-10-21）。質問マスターの各質問に newgrad_text（新卒版の言い方）を持たせ、基本情報の「新卒／中途の考え」が「新卒にこだわりたい」の診断だけ新卒版の言い方、
+       それ以外（未回答を含む）は採用全般版（本体）の言い方で出す（getEffectiveQuestionMaster で当てる。質問ID・正解・配点は両方同じ）。
+       診断の写し（savedQuestionMaster）は両方の言い方を持ったまま写すので、あとで「新卒／中途の考え」を変えても回答は消えない。旧の写し（newgrad_text なし）は今までどおり。
+       軸タイプ tendency（傾向を見る質問）は点数・正解の表示・減点合計・AIへの✓✗から外す。要 DBパッチ17 -->
   <!-- v83: 入力画面の見た目をそろえる（2026-10-19・画面の見た目だけ。データ・計算は変更なし）
        文字は 20/16/14/12px の4段階（10・11pxをなくす）、入力欄は白・灰色の枠・角丸8・高さ40以上・文字16。
        色は従来の青をベースに、オレンジ（診断開始ボタン・未入力・注意の箱）をやめる: 診断開始は青、未入力はくすんだ赤の細い枠と文字、
@@ -475,7 +487,7 @@
       window.SUPABASE_CONFIG.url,
       window.SUPABASE_CONFIG.anonKey
     );
-    console.log('[BB診断 v83] Supabase接続完了');
+    console.log('[BB診断 v84] Supabase接続完了');
   </script>
   
   <!-- v59-sec: 全CDNを完全バージョン固定＋SRI付与（v55 Babel8自動更新障害と同構造の再発防止）。
@@ -2460,6 +2472,7 @@ const isDepthAxisType = (t) => t === 'depth' || (typeof t === 'string' && t.incl
 const axisBadgeText = (q) => {
   if (isMindsetAxisType(q.axisType)) { const k = toAxisKey(q.axisKey); return '基礎力: ' + (MINDSET_AXES[k]?.name || k || '-'); }
   if (isDepthAxisType(q.axisType)) return '注力タイプ: ' + (DEPTH_PHASES[q.depthKey]?.name || q.depthKey || '-');
+  if (String(q.axisType || '').toLowerCase() === 'tendency') { const k = toAxisKey(q.axisKey); return '傾向（点数なし）: ' + (MINDSET_AXES[k]?.name || k || '-'); } // v84b
   const k = toAxisKey(q.axisKey); return '伝達力: ' + (EVALUATION_AXES[k]?.name || k || '-');
 };
 // v78: 質問マスターの版の表示（営業側の画面だけで使う。顧客の事前問診には出さない）
@@ -2519,7 +2532,50 @@ const getQuestionMasterFromStorage = () => {
  * 顧客データに保存時のマスタースナップショットがあればそれを使用、
  * なければ現在のマスターにフォールバック
  */
-const getEffectiveQuestionMaster = (data) => {
+// v84: 問診の版。「新卒にこだわりたい」だけ新卒版、それ以外（未回答を含む）は採用全般版（本体の言い方）
+const QUESTION_SET_LABELS = { new_grad: '新卒版', general: '採用全般版' };
+const questionSetOf = (data) => (data && data.midCareerStance === 'newgrad') ? 'new_grad' : 'general';
+const NEWGRAD_TEXT_KEYS = ['question', 'choiceA', 'choiceB', 'studentQuestion', 'studentChoiceA', 'studentChoiceB'];
+// マスターに新卒版の言い方が1つでもあるか（旧の写しは false）
+const masterHasQuestionSets = (master) => {
+  let found = false;
+  const walk = (o) => {
+    if (found || !o || typeof o !== 'object') return;
+    if (Array.isArray(o)) { o.forEach(q => { if (q && q.newGradText) found = true; else walk(q); }); return; }
+    Object.keys(o).forEach(k => { if (k !== '_version') walk(o[k]); });
+  };
+  walk(master);
+  return found;
+};
+const _questionSetCache = new WeakMap();
+// 新卒版なら newGradText の言い方を上書きした写しを返す（元のマスターは変えない）
+const applyQuestionSet = (master, set) => {
+  if (!master || typeof master !== 'object' || set !== 'new_grad') return master;
+  const hit = _questionSetCache.get(master);
+  if (hit) return hit;
+  let changed = false;
+  const walk = (o) => {
+    if (Array.isArray(o)) return o.map(q => {
+      if (q && typeof q === 'object' && q.newGradText && typeof q.newGradText === 'object') {
+        const out = { ...q };
+        NEWGRAD_TEXT_KEYS.forEach(k => { const v = q.newGradText[k]; if (typeof v === 'string' && v !== '') { out[k] = v; changed = true; } });
+        return out;
+      }
+      return q;
+    });
+    if (o && typeof o === 'object') { const r = {}; Object.keys(o).forEach(k => { r[k] = k === '_version' ? o[k] : walk(o[k]); }); return r; }
+    return o;
+  };
+  const res = walk(master);
+  const out = changed ? res : master;
+  _questionSetCache.set(master, out);
+  return out;
+};
+// v84: 傾向を見る質問（点数なし・正解なし）
+const isTendencyQuestion = (q) => !!q && String(q.axisType || '').toLowerCase() === 'tendency';
+
+const getEffectiveQuestionMaster = (data) => applyQuestionSet(getEffectiveQuestionMasterBase(data), questionSetOf(data));
+const getEffectiveQuestionMasterBase = (data) => {
   if (data && data.savedQuestionMaster && typeof data.savedQuestionMaster === 'object') {
     const saved = data.savedQuestionMaster;
     // v45-fix: base構造の存在だけでなく、実際に質問が存在するかチェック
@@ -3720,7 +3776,8 @@ const SUPA_HANDLERS = {
         axisType: row.axis_type || '',
         axisKey: row.axis_key || '',
         gapCheck: row.gap_check || false,
-        depthKey: row.depth_phase || null
+        depthKey: row.depth_phase || null,
+        newGradText: (row.newgrad_text && typeof row.newgrad_text === 'object') ? row.newgrad_text : null // v84: 新卒版の言い方（無ければ null）
       };
 
       var section = row.section || 'base';
@@ -3794,7 +3851,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q, idx) {
                 flatRows.push({
-                  recruit_type: q.recruitType || 'new_grad',
+                  recruit_type: q.recruitType || 'new_grad', newgrad_text: q.newGradText || null, // v84
                   section: 'base', company_size: size, role: role,
                   industry: null, target_layer: null, depth_phase: q.depthKey || null, method_category: null,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3814,7 +3871,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q) {
                 flatRows.push({
-                  recruit_type: q.recruitType || 'new_grad',
+                  recruit_type: q.recruitType || 'new_grad', newgrad_text: q.newGradText || null, // v84
                   section: 'recruitmentMethod', company_size: null, role: role,
                   industry: null, target_layer: null, depth_phase: q.depthKey || null, method_category: cat,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3836,7 +3893,7 @@ const SUPA_HANDLERS = {
                 var role = roleEntry[0]; var questions = roleEntry[1];
                 (questions || []).forEach(function(q) {
                   flatRows.push({
-                    recruit_type: q.recruitType || 'new_grad',
+                    recruit_type: q.recruitType || 'new_grad', newgrad_text: q.newGradText || null, // v84
                     section: 'industry', company_size: size, role: role,
                     industry: ind, target_layer: null, depth_phase: q.depthKey || null, method_category: null,
                     question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3857,7 +3914,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q) {
                 flatRows.push({
-                  recruit_type: q.recruitType || 'new_grad',
+                  recruit_type: q.recruitType || 'new_grad', newgrad_text: q.newGradText || null, // v84
                   section: 'targetLayer', company_size: null, role: role,
                   industry: null, target_layer: layer, depth_phase: q.depthKey || null, method_category: null,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -3877,7 +3934,7 @@ const SUPA_HANDLERS = {
               var role = roleEntry[0]; var questions = roleEntry[1];
               (questions || []).forEach(function(q) {
                 flatRows.push({
-                  recruit_type: q.recruitType || 'new_grad',
+                  recruit_type: q.recruitType || 'new_grad', newgrad_text: q.newGradText || null, // v84
                   section: 'depth', company_size: null, role: role,
                   industry: null, target_layer: null, depth_phase: phase, method_category: null,
                   question_id: q.id, question_text: q.question, choice_a: q.choiceA, choice_b: q.choiceB,
@@ -4095,6 +4152,26 @@ const SUPA_HANDLERS = {
     (r2.data || []).forEach(function(r) { (out.fit[r.method_key] = out.fit[r.method_key] || {})[r.segment] = r.fit; });
     (r3.data || []).forEach(function(r) { (out.timing[r.segment] = out.timing[r.segment] || {})[r.month_no] = r.mark; });
     return { success: true, data: out };
+  },
+
+  // v85: ターゲット層の表を保存（DBパッチ16 の save_target_segment_master。相性・時期は置き換え、区分の文は上書き）
+  saveTargetSegmentMaster: async function(sb, data) {
+    var m = (data && data.master) || {};
+    var segments = Object.keys(m.segments || {}).map(function(k) {
+      var x = m.segments[k] || {};
+      return { key: k, label: x.label || '', approach: x.approach || '', gap_message: x.gap_message || '', timing_note: x.timing_note || '' };
+    });
+    var fit = [];
+    Object.keys(m.fit || {}).forEach(function(mk) {
+      Object.keys(m.fit[mk] || {}).forEach(function(sk) { var f = m.fit[mk][sk]; if (f) fit.push({ method_key: mk, segment: sk, fit: f }); });
+    });
+    var timing = [];
+    Object.keys(m.timing || {}).forEach(function(sk) {
+      Object.keys(m.timing[sk] || {}).forEach(function(n) { var t = m.timing[sk][n]; if (t) timing.push({ segment: sk, month_no: Number(n), mark: t }); });
+    });
+    var res = await sb.rpc('save_target_segment_master', { p_data: { segments: segments, fit: fit, timing: timing } });
+    if (res.error) throw new Error('ターゲット層の表の保存に失敗: ' + res.error.message);
+    return { success: true, data: res.data };
   },
 
   // ── 媒体利用率マスター保存（v54: RPC replace_media_usage_rates でアトミック置換）──
@@ -5660,6 +5737,7 @@ let _gasQuestionMasterFromDb = false; // v78: true のときだけ診断の写�
 let _gasMethodMaster = null;
 let _gasMediaUsageMaster = null;
 let _gasSegmentMaster = null; // v82: ターゲット層の表
+let _gasSegmentFromDb = false; // v85: DB から読めたか（端末の控えだけのときは設定画面から保存しない）
 let _gasAISettings = null;
 let _gasMasterDataLoaded = false;
 
@@ -6160,7 +6238,7 @@ const GASDataManager = {
     try {
       const r = await authFetch('getTargetSegmentMaster');
       if (r && r.success && r.data && Object.keys(r.data.fit || {}).length > 0) {
-        _gasSegmentMaster = r.data;
+        _gasSegmentMaster = r.data; _gasSegmentFromDb = true;
         try { localStorage.setItem('gakusapo_segment_master', JSON.stringify(r.data)); } catch (e) {}
         return r.data;
       }
@@ -6173,6 +6251,20 @@ const GASDataManager = {
         if (cached) { _gasSegmentMaster = JSON.parse(cached); return _gasSegmentMaster; }
       } catch (e) {}
       return null;
+    }
+  },
+  // v85: 設定画面で使う（DB から読めたときだけ。控えだけでは編集・保存させない）
+  getLoadedSegmentMaster: () => (_gasSegmentFromDb ? _gasSegmentMaster : null),
+  saveSegmentMaster: async (master) => {
+    try {
+      const r = await authPost('saveTargetSegmentMaster', { master: master });
+      if (r && r.success) {
+        _gasSegmentMaster = JSON.parse(JSON.stringify(master)); _gasSegmentFromDb = true;
+        try { localStorage.setItem('gakusapo_segment_master', JSON.stringify(_gasSegmentMaster)); } catch (e) {}
+      }
+      return r;
+    } catch (err) {
+      return { success: false, error: err.message };
     }
   },
   getSegmentMaster: () => {
@@ -8857,7 +8949,7 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
           if (answers[q.id]) {
             const isCorrect = answers[q.id] === q.correctAnswer;
             summary.push(`Q: ${q.question}`);
-            summary.push(`A: ${answers[q.id] === 'A' ? q.choiceA : q.choiceB} ${isCorrect ? '✓' : '✗(-' + (q.points || q.penaltyPoints || 2) + '点)'}`);
+            summary.push(`A: ${answers[q.id] === 'A' ? q.choiceA : q.choiceB} ${isTendencyQuestion(q) ? '（傾向を見る質問・点数なし）' : (isCorrect ? '✓' : '✗(-' + (q.points || q.penaltyPoints || 2) + '点)')}`);
           }
         });
         
@@ -8873,7 +8965,7 @@ const AIDiagnosisModal = ({ data, onClose, onComplete }) => {
           if (answers[q.id]) {
             const isCorrect = answers[q.id] === q.correctAnswer;
             summary.push(`Q: ${q.question}`);
-            summary.push(`A: ${answers[q.id] === 'A' ? q.choiceA : q.choiceB} ${isCorrect ? '✓' : '✗(-' + (q.points || q.penaltyPoints || 2) + '点)'}`);
+            summary.push(`A: ${answers[q.id] === 'A' ? q.choiceA : q.choiceB} ${isTendencyQuestion(q) ? '（傾向を見る質問・点数なし）' : (isCorrect ? '✓' : '✗(-' + (q.points || q.penaltyPoints || 2) + '点)')}`);
           }
         });
         
@@ -9619,6 +9711,7 @@ const QuestionMasterModal = ({ onClose, questionMaster, onSave }) => {
                     >
                       <option value="mindset">土台（5軸）</option>
                       <option value="evaluation">伝達力（8軸）</option>
+                      <option value="tendency">傾向を見る（点数なし）</option>
                     </select>
                   </div>
                   <div>
@@ -10763,9 +10856,13 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
           {(() => {
             const snap = data.savedQuestionMaster && data.savedQuestionMaster.base ? data.savedQuestionMaster : null;
             const cur = GASDataManager.getQuestionMaster();
-            const text = snap
+            const text0 = snap
               ? (questionMasterVersionText(snap._version) || 'v78より前に固定した版')
               : ((questionMasterVersionText(cur?._version) || '最新') + '・初回保存でこの版に固定');
+            // v84: 新旧の別と、新の問診なら新卒版／採用全般版
+            const text = masterHasQuestionSets(snap || cur)
+              ? `${text0}・${QUESTION_SET_LABELS[questionSetOf(data)]}（「新卒／中途の考え」で切り替わります）`
+              : (snap ? `${text0}・旧の問診` : text0);
             return (
               <div className="mb-2 text-[11px] text-gray-400">質問マスター：{text}</div>
             );
@@ -11008,8 +11105,8 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                 {allQuestions.map((q, idx) => {
                   const answersKey = `${activeTab}Answers`;
                   const currentAnswer = data[answersKey]?.[q.id];
-                  const isCorrect = currentAnswer === q.correctAnswer;
-                  const isWrong = currentAnswer && !isCorrect;
+                  const isCorrect = !isTendencyQuestion(q) && currentAnswer === q.correctAnswer; // v84: 傾向の質問は正解なし
+                  const isWrong = !isTendencyQuestion(q) && currentAnswer && !isCorrect;
                   
                   return (
                     <div key={q.id} className={`p-4 rounded-xl border-2 transition ${
@@ -11102,7 +11199,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                           }}
                           className={`p-3 rounded-lg text-sm text-left transition border-2 ${
                             currentAnswer === 'A'
-                              ? showCorrectAnswer
+                              ? (showCorrectAnswer && !isTendencyQuestion(q))
                                 ? (q.correctAnswer === 'A'
                                     ? 'border-green-500 bg-green-100 text-green-800'
                                     : 'border-red-500 bg-red-100 text-red-800')
@@ -11132,7 +11229,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                           }}
                           className={`p-3 rounded-lg text-sm text-left transition border-2 ${
                             currentAnswer === 'B'
-                              ? showCorrectAnswer
+                              ? (showCorrectAnswer && !isTendencyQuestion(q))
                                 ? (q.correctAnswer === 'B'
                                     ? 'border-green-500 bg-green-100 text-green-800'
                                     : 'border-red-500 bg-red-100 text-red-800')
@@ -11162,7 +11259,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                       </div>
                       <div>
                         <div className="text-2xl font-black text-green-600">
-                          {allQuestions.filter(q => data[`${activeTab}Answers`]?.[q.id] === q.correctAnswer).length}
+                          {allQuestions.filter(q => !isTendencyQuestion(q) && data[`${activeTab}Answers`]?.[q.id] === q.correctAnswer).length}
                         </div>
                         <div className="text-xs text-gray-500">正解</div>
                       </div>
@@ -11170,7 +11267,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
                         <div className="text-2xl font-black text-red-600">
                           -{allQuestions.reduce((sum, q) => {
                             const ans = data[`${activeTab}Answers`]?.[q.id];
-                            return sum + (ans && ans !== q.correctAnswer ? (q.points || q.penaltyPoints || 2) : 0);
+                            return sum + (ans && !isTendencyQuestion(q) && ans !== q.correctAnswer ? (q.points || q.penaltyPoints || 2) : 0);
                           }, 0)}
                       </div>
                       <div className="text-xs text-gray-500">減点合計</div>
@@ -11249,7 +11346,7 @@ const InputForm = ({ data, onChange, onStartDiagnosis, onImportPreInput }) => {
               position: 'fixed', 
               top: '100px', 
               right: '20px', 
-              zIndex: 9999 
+              zIndex: 40 // v84b: 設定画面など（z-50）の上に重ならないように（旧 9999）
             }}
           >
             <div className={`px-5 py-3 rounded-full shadow-lg border-2 transition-all duration-300 ${
@@ -14608,6 +14705,174 @@ const HandoverPanel = () => {
 // AI設定画面モーダル
 // ========================================
 
+
+// ========================================
+// v85: 設定画面「ターゲット層の相性・時期」
+//   target_segments / target_segment_fit / target_segment_timing を、相性（手法×9区分）・動く時期（24か月）・話し方の文の3つのタブで直す。
+//   保存は「設定を保存」でまとめて（save_target_segment_master）。過去の診断は診断ごとの写し（savedSegmentMaster）を使うので変わらない
+// ========================================
+const SEG_FIT_CYCLE = ['◎', '○', '△', '×', ''];
+const SEG_SHORT = { bunkei_top: '文系上位', bunkei_mid: '文系中堅', bunkei_local: '文系地元', rikei_top: '理系上位', rikei_mid: '理系中堅', rikei_local: '理系地元', senmon: '専門', kousotsu: '高卒', chuto: '中途' };
+const segmentListOf = (m) => Object.entries((m && m.segments) || {})
+  .map(([key, s]) => ({ key, ...s }))
+  .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+const segYearsOf = (s) => (s && TARGET_LAYERS_V2[s.category] && TARGET_LAYERS_V2[s.category].years) || ['前の年度', '入社の年度'];
+const groupAllMethods = (methods) => {
+  const groups = {};
+  Object.entries(methods || {}).forEach(([key, m]) => { const c = displayCategoryOf(key, m); (groups[c] = groups[c] || []).push([key, m]); });
+  const known = METHOD_CATEGORY_ORDER.filter(c => groups[c]);
+  const rest = Object.keys(groups).filter(c => !METHOD_CATEGORY_ORDER.includes(c)).sort();
+  return [...known, ...rest].map(c => [c, groups[c]]);
+};
+const fitCellClass = (v) => v === '◎' ? 'bg-green-50 border-green-500 text-green-700 font-bold'
+  : v === '○' ? 'bg-blue-50 border-blue-500 text-blue-700'
+  : v === '△' ? 'bg-white border-gray-300 text-amber-700'
+  : v === '×' ? 'bg-white border-gray-300 text-gray-400'
+  : 'bg-white border-dashed border-red-300 text-red-400';
+
+const TargetSegmentSettings = ({ segMaster, setSegMaster, methodMaster }) => {
+  const [tab, setTab] = useState('fit');
+  const segs = segmentListOf(segMaster);
+  const [segKey, setSegKey] = useState(segs[0] ? segs[0].key : '');
+  if (!segMaster || segs.length === 0) {
+    return (
+      <div className="p-4 border border-red-200 bg-white rounded-xl text-sm text-red-700">
+        ターゲット層の表（DB）が読み込めていません。DBパッチ16 が反映されているか確認し、画面を開き直してください。
+      </div>
+    );
+  }
+  const cur = segs.find(s => s.key === segKey) || segs[0];
+  const fit = segMaster.fit || {};
+  const timing = segMaster.timing || {};
+  const groups = groupAllMethods(methodMaster);
+  const missing = Object.keys(methodMaster || {}).filter(k => !fit[k] || Object.keys(fit[k]).length === 0);
+  const setFit = (mk, sk) => setSegMaster(prev => {
+    const f = { ...((prev.fit || {})[mk] || {}) };
+    const nx = SEG_FIT_CYCLE[(SEG_FIT_CYCLE.indexOf(f[sk] || '') + 1) % SEG_FIT_CYCLE.length];
+    if (nx) f[sk] = nx; else delete f[sk];
+    const all = { ...(prev.fit || {}) };
+    if (Object.keys(f).length) all[mk] = f; else delete all[mk];
+    return { ...prev, fit: all };
+  });
+  const setMonth = (sk, n) => setSegMaster(prev => {
+    const t = { ...((prev.timing || {})[sk] || {}) };
+    const nx = { '': '○', '○': '●', '●': '' }[t[n] || ''];
+    if (nx) t[n] = nx; else delete t[n];
+    return { ...prev, timing: { ...(prev.timing || {}), [sk]: t } };
+  });
+  const setText = (sk, field, v) => setSegMaster(prev => ({ ...prev, segments: { ...prev.segments, [sk]: { ...prev.segments[sk], [field]: v } } }));
+  const tabBtn = (id, label) => (
+    <button type="button" key={id} onClick={() => setTab(id)} aria-pressed={tab === id}
+      className={`px-3 py-1.5 text-sm rounded-lg border transition ${tab === id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}>{label}</button>
+  );
+  const segChips = (
+    <div className="flex flex-wrap gap-1.5">
+      {segs.map(s => (
+        <button type="button" key={s.key} onClick={() => setSegKey(s.key)} aria-pressed={cur.key === s.key}
+          className={`px-2.5 py-1 text-xs rounded-lg border transition ${cur.key === s.key ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}>{s.label}</button>
+      ))}
+    </div>
+  );
+  return (
+    <div className="space-y-4">
+      <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+        <div className="text-sm font-medium text-blue-800 mb-1">ターゲット層の相性・時期</div>
+        <div className="text-xs text-blue-700">
+          新しいターゲット層（A〜E・9区分）の診断で、結果の「動き方」に使う表です。直したら「設定を保存」を押してください。
+          保存済みの診断は、診断したときの表のまま変わりません。
+        </div>
+      </div>
+      {missing.length > 0 && (
+        <div className="p-3 border border-red-200 bg-white rounded-lg text-xs text-red-700">
+          相性が未設定の手法：{missing.map(k => (methodMaster[k] && methodMaster[k].name) || k).join('、')}（「動き方」で「－」になります）
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">{tabBtn('fit', '相性（手法×区分）')}{tabBtn('tim', '動く時期')}{tabBtn('txt', '話し方の文')}</div>
+
+      {tab === 'fit' && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500">マスを押すと ◎→○→△→×→未設定 の順に変わります。◎3点・○2点・△1点・×0点で「動き方」の点数になります。</p>
+          <div className="overflow-auto border border-gray-200 rounded-lg" style={{ maxHeight: '28rem' }}>
+            <table className="text-xs border-collapse w-full">
+              <thead>
+                <tr>
+                  <th className="sticky top-0 left-0 z-20 bg-gray-50 border-b border-gray-200 px-2 py-2 text-left">手法</th>
+                  {segs.map(s => <th key={s.key} scope="col" className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200 px-1 py-2 whitespace-nowrap">{SEG_SHORT[s.key] || s.label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map(([cat, list]) => (
+                  <React.Fragment key={cat}>
+                    <tr><td colSpan={segs.length + 1} className="bg-gray-50 px-2 py-1 text-xs font-bold text-gray-500">{cat}</td></tr>
+                    {list.map(([mk, m]) => {
+                      const none = !fit[mk] || Object.keys(fit[mk]).length === 0;
+                      return (
+                        <tr key={mk} className="border-b border-gray-100">
+                          <td className={`sticky left-0 bg-white px-2 py-1 text-sm whitespace-nowrap ${none ? 'text-red-600' : 'text-gray-800'}`}>
+                            {m.name}{none && <span className="ml-1 text-xs text-red-600 border border-red-300 rounded px-1">未設定</span>}
+                          </td>
+                          {segs.map(s => {
+                            const v = (fit[mk] || {})[s.key] || '';
+                            return (
+                              <td key={s.key} className="px-1 py-1 text-center">
+                                <button type="button" onClick={() => setFit(mk, s.key)}
+                                  aria-label={`${m.name}と${s.label}の相性 ${v || '未設定'}`}
+                                  className={`w-8 h-7 rounded border text-sm ${fitCellClass(v)}`}>{v || '－'}</button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'tim' && (
+        <div className="space-y-3">
+          {segChips}
+          <p className="text-xs text-gray-500">月を押すと 空き→○（動く）→●（山場）の順に変わります。左の年が前の年度、右の年が卒業・入社の年度です。</p>
+          {[0, 1].map(yi => (
+            <div key={yi} className="space-y-1">
+              <div className="text-xs font-bold text-gray-500">{segYearsOf(cur)[yi]}</div>
+              <div className="grid grid-cols-12 gap-1">
+                {START_MONTHS.map((mm, i) => {
+                  const n = yi * 12 + i + 1;
+                  const v = ((timing[cur.key] || {})[n]) || '';
+                  return (
+                    <button type="button" key={n} onClick={() => setMonth(cur.key, n)} aria-label={`${segYearsOf(cur)[yi]}・${mm}月 ${v || '空き'}`}
+                      className={`flex flex-col items-center py-1 rounded border text-xs ${v === '●' ? 'bg-green-50 border-green-500' : v === '○' ? 'bg-blue-50 border-blue-500' : 'bg-white border-gray-200'}`}>
+                      <span className="text-gray-500">{mm}月</span>
+                      <span className="text-sm font-bold text-gray-800 h-5">{v}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'txt' && (
+        <div className="space-y-3">
+          {segChips}
+          {[['approach', '動き方のポイント（結果の「動き方」に出る）'], ['gap_message', 'ずれの指摘の文（注力の上位がこの区分に合わないときに出る）'], ['timing_note', '時期のメモ']].map(([f, label]) => (
+            <div key={f}>
+              <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor={`seg-${f}`}>{label}</label>
+              <textarea id={`seg-${f}`} value={(segMaster.segments[cur.key] || {})[f] || ''} onChange={(e) => setText(cur.key, f, e.target.value)}
+                rows={3} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AISettingsModal = ({ settings, onSave, onClose }) => {
   const [localSettings, setLocalSettings] = useState(() => {
     const masterConfig = MasterDataSpreadsheetManager.getConfig();
@@ -14616,7 +14881,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
       masterSpreadsheetUrl: settings.masterSpreadsheetUrl || masterConfig.scriptUrl || ''
     };
   });
-  const [activeSection, setActiveSection] = useState('layermedia');
+  const [activeSection, setActiveSection] = useState('segments'); // v85: 媒体利用率はメニューから外した
   const [testResult, setTestResult] = useState(null);
   const [isTesting, setIsTesting] = useState(false);
   const [testButtonId, setTestButtonId] = useState('btn1'); // v80: AIテストで使う診断ボタン（本番と同じプロンプト）
@@ -14713,6 +14978,24 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
     }
   });
   
+  // v85: ターゲット層の相性・時期（DB から読めたときだけ編集できる。保存は「設定を保存」）
+  const [segMaster, setSegMaster] = useState(() => { const m = GASDataManager.getLoadedSegmentMaster(); return m ? JSON.parse(JSON.stringify(m)) : null; });
+  // v85: 質問項目設定で新卒版の言い方を直している質問（質問ID → true）
+  const [ngEditIds, setNgEditIds] = useState({});
+  const qText = (q, f) => ngEditIds[q.id] ? ((q.newGradText && q.newGradText[f]) || '') : (q[f] || '');
+  const applyQText = (item, f, v, id) => {
+    if (!ngEditIds[id]) { item[f] = v; return; }
+    const t = { ...(item.newGradText || {}) };
+    if (v) t[f] = v; else delete t[f];
+    item.newGradText = Object.keys(t).length ? t : null;
+  };
+
+  // v84b: 質問項目設定の採用手法別カテゴリが、マスターに無い値（初期値「ナビサイト」）のままにならないように
+  useEffect(() => {
+    const cats = [...new Set(Object.values(methodMaster || DEFAULT_RECRUITMENT_METHODS).map(m => m && m.category).filter(Boolean))].sort();
+    if (cats.length > 0 && !cats.includes(questionEditMethod)) setQuestionEditMethod(cats[0]);
+  }, [methodMaster, questionEditMethod]);
+
   const [editingMethodKey, setEditingMethodKey] = useState(null);
   const [newMethodData, setNewMethodData] = useState({
     key: '',
@@ -14907,6 +15190,16 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
       }
     }
 
+    // v85: ターゲット層の相性・時期（DB から読めていて、変わったときだけ）
+    if (isAdmin && segMaster && GASDataManager.getLoadedSegmentMaster()
+        && JSON.stringify(segMaster) !== JSON.stringify(GASDataManager.getLoadedSegmentMaster())) {
+      const sr = await GASDataManager.saveSegmentMaster(segMaster);
+      if (!sr || !sr.success) {
+        alert('ターゲット層の相性・時期を保存できませんでした。\n' + ((sr && sr.error) || '') + '\n\n変更は画面に残っています。もう一度「設定を保存」を押してください。');
+        return;
+      }
+    }
+
     // v79: マスターの保存の後に反映する（開いている診断にも新しいマスターが届く）
     // v80: AI設定の保存結果を待つ。失敗したら知らせて閉じない。
     //   スプレッドシート連携・ログイン設定は撤去したので保存しない
@@ -15025,7 +15318,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
               {/* 問診票 */}
               <div className="px-4 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider">問診票</div>
               {[
-                { id: 'layermedia', icon: 'chart', label: '媒体利用率設定' },
+                { id: 'segments', icon: 'chart', label: 'ターゲット層の相性・時期' }, // v85（旧「媒体利用率設定」は旧A〜H層の診断用のため外した）
                 { id: 'method', icon: 'clipboard', label: '採用手法詳細設定' },
                 { id: 'question', icon: 'question', label: '質問項目設定' }
                 // v80: 「顧客データ保存設定」（スプレッドシート連携）は撤去。Supabase 移行後は使われていなかった
@@ -15070,7 +15363,6 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
               {[
                 { id: 'sidebuttons', icon: 'pin', label: '診断ボタン設定' },
                 { id: 'tone', icon: 'chat', label: '口調プリセット' },
-                { id: 'prompt', icon: 'document', label: 'AI基本プロンプト' },
                 { id: 'test', icon: 'beaker', label: 'AIテスト実行' }
               ].map(tab => (
                 <button
@@ -15541,9 +15833,17 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                           </button>
                         </div>
                         
+                        {/* v85: 言い方の切り替え（新卒版＝「新卒にこだわりたい」の会社に出す言い方。空欄は採用全般版と同じ） */}
+                        <div className="flex flex-wrap items-center gap-1 mb-1 text-xs">
+                          <button type="button" onClick={() => setNgEditIds(p => ({ ...p, [q.id]: false }))} aria-pressed={!ngEditIds[q.id]}
+                            className={`px-2 py-0.5 rounded border ${!ngEditIds[q.id] ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-600'}`}>採用全般版</button>
+                          <button type="button" onClick={() => setNgEditIds(p => ({ ...p, [q.id]: true }))} aria-pressed={!!ngEditIds[q.id]}
+                            className={`px-2 py-0.5 rounded border ${ngEditIds[q.id] ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-600'}`}>新卒版{q.newGradText ? '（言い方あり）' : ''}</button>
+                          {ngEditIds[q.id] && <span className="text-gray-500 ml-1">空欄の項目は採用全般版と同じ言い方で出ます</span>}
+                        </div>
                         {/* 質問文 */}
                         <textarea
-                          value={q.question}
+                          value={qText(q, 'question')}
                           onChange={(e) => {
                             setQuestionMaster(prev => {
                               const newMaster = JSON.parse(JSON.stringify(prev));
@@ -15560,12 +15860,12 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                 targetArray = findMethodQuestionTargetArray(newMaster, questionEditMethod, methodMaster, questionEditRole, q.id);
                               }
                               const item = targetArray?.find(item => item.id === q.id);
-                              if (item) item.question = e.target.value;
+                              if (item) applyQText(item, 'question', e.target.value, q.id);
                               return newMaster;
                             });
                           }}
                           className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm mb-2 resize-none"
-                          placeholder="質問文（改行可）"
+                          placeholder={ngEditIds[q.id] ? ('空欄＝採用全般版と同じ：' + (q.question || '')) : "質問文（改行可）"}
                           rows={2}
                         />
                         
@@ -15573,7 +15873,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                         <div className="grid grid-cols-2 gap-2 mb-2">
                           <input
                             type="text"
-                            value={q.choiceA}
+                            value={qText(q, 'choiceA')}
                             onChange={(e) => {
                               setQuestionMaster(prev => {
                                 const newMaster = JSON.parse(JSON.stringify(prev));
@@ -15590,16 +15890,16 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                   targetArray = findMethodQuestionTargetArray(newMaster, questionEditMethod, methodMaster, questionEditRole, q.id);
                                 }
                                 const item = targetArray?.find(item => item.id === q.id);
-                                if (item) item.choiceA = e.target.value;
+                                if (item) applyQText(item, 'choiceA', e.target.value, q.id);
                                 return newMaster;
                               });
                             }}
                             className="px-2 py-1 border border-gray-200 rounded text-xs"
-                            placeholder="選択肢A"
+                            placeholder={ngEditIds[q.id] ? ('空欄＝採用全般版と同じ：' + (q.choiceA || '')) : "選択肢A"}
                           />
                           <input
                             type="text"
-                            value={q.choiceB}
+                            value={qText(q, 'choiceB')}
                             onChange={(e) => {
                               setQuestionMaster(prev => {
                                 const newMaster = JSON.parse(JSON.stringify(prev));
@@ -15616,12 +15916,12 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                   targetArray = findMethodQuestionTargetArray(newMaster, questionEditMethod, methodMaster, questionEditRole, q.id);
                                 }
                                 const item = targetArray?.find(item => item.id === q.id);
-                                if (item) item.choiceB = e.target.value;
+                                if (item) applyQText(item, 'choiceB', e.target.value, q.id);
                                 return newMaster;
                               });
                             }}
                             className="px-2 py-1 border border-gray-200 rounded text-xs"
-                            placeholder="選択肢B"
+                            placeholder={ngEditIds[q.id] ? ('空欄＝採用全般版と同じ：' + (q.choiceB || '')) : "選択肢B"}
                           />
                         </div>
                         
@@ -15727,6 +16027,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                               <option value="">なし</option>
                               <option value="mindset">基礎力</option>
                               <option value="evaluation">伝達力</option>
+                              <option value="tendency">傾向（点数なし）</option>
                             </select>
                           </div>
                           <div>
@@ -15764,7 +16065,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                             >
                               <option value="">-</option>
                               {/* v78: 名前は結果画面と同じ（MINDSET_AXES / EVALUATION_AXES） */}
-                              {isMindsetAxisType(q.axisType) ? (
+                              {(isMindsetAxisType(q.axisType) || q.axisType === 'tendency') ? ( /* v84b: 傾向は経営関与・計画性など基礎力の軸名 */
                                 Object.entries(MINDSET_AXES).map(([key, axis]) => (
                                   <option key={key} value={key}>{axis.name}</option>
                                 ))
@@ -15860,7 +16161,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                               <span className="text-orange-400 font-normal ml-1">（空欄なら企業向けをそのまま使用）</span>
                             </label>
                             <textarea
-                              value={q.studentQuestion || ''}
+                              value={qText(q, 'studentQuestion')}
                               onChange={(e) => {
                                 setQuestionMaster(prev => {
                                   const newMaster = JSON.parse(JSON.stringify(prev));
@@ -15877,7 +16178,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                     targetArray = findMethodQuestionTargetArray(newMaster, questionEditMethod, methodMaster, questionEditRole, q.id);
                                   }
                                   const item = targetArray?.find(item => item.id === q.id);
-                                  if (item) item.studentQuestion = e.target.value;
+                                  if (item) applyQText(item, 'studentQuestion', e.target.value, q.id);
                                   return newMaster;
                                 });
                               }}
@@ -15892,7 +16193,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                 <label className="text-[10px] text-orange-600 block mb-0.5">学生向け選択肢A</label>
                                 <input
                                   type="text"
-                                  value={q.studentChoiceA || ''}
+                                  value={qText(q, 'studentChoiceA')}
                                   onChange={(e) => {
                                     setQuestionMaster(prev => {
                                       const newMaster = JSON.parse(JSON.stringify(prev));
@@ -15909,7 +16210,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                         targetArray = findMethodQuestionTargetArray(newMaster, questionEditMethod, methodMaster, questionEditRole, q.id);
                                       }
                                       const item = targetArray?.find(item => item.id === q.id);
-                                      if (item) item.studentChoiceA = e.target.value;
+                                      if (item) applyQText(item, 'studentChoiceA', e.target.value, q.id);
                                       return newMaster;
                                     });
                                   }}
@@ -15921,7 +16222,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                 <label className="text-[10px] text-orange-600 block mb-0.5">学生向け選択肢B</label>
                                 <input
                                   type="text"
-                                  value={q.studentChoiceB || ''}
+                                  value={qText(q, 'studentChoiceB')}
                                   onChange={(e) => {
                                     setQuestionMaster(prev => {
                                       const newMaster = JSON.parse(JSON.stringify(prev));
@@ -15938,7 +16239,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                         targetArray = findMethodQuestionTargetArray(newMaster, questionEditMethod, methodMaster, questionEditRole, q.id);
                                       }
                                       const item = targetArray?.find(item => item.id === q.id);
-                                      if (item) item.studentChoiceB = e.target.value;
+                                      if (item) applyQText(item, 'studentChoiceB', e.target.value, q.id);
                                       return newMaster;
                                     });
                                   }}
@@ -15963,6 +16264,11 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
           )}
           
           {/* 採用手法詳細設定 */}
+          {/* v85: ターゲット層の相性・時期 */}
+          {activeSection === 'segments' && (
+            <TargetSegmentSettings segMaster={segMaster} setSegMaster={setSegMaster} methodMaster={methodMaster} />
+          )}
+
           {activeSection === 'method' && (
             <div className="space-y-6">
               <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
@@ -15987,7 +16293,13 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                         <div className="flex-1">
                           <div className="font-medium text-sm text-gray-800">{method.name}</div>
                           <div className="text-xs text-gray-500">
-                            {method.category} | {method.targetLayers?.join(', ')}層
+                            {displayCategoryOf(key, method)}
+                            {segMaster && (() => { // v85: 新しい層との相性の数
+                              const f = (segMaster.fit || {})[key] || {}; const vals = Object.values(f);
+                              if (vals.length === 0) return <span className="ml-2 px-1.5 py-0.5 rounded border border-red-300 text-red-600">相性 未設定</span>;
+                              const c = (m) => vals.filter(v => v === m).length;
+                              return <span className="ml-2 px-1.5 py-0.5 rounded border border-gray-300 text-gray-600">相性 ◎{c('◎')} ○{c('○')} △{c('△')} ×{c('×')}</span>;
+                            })()}
                             {method.phaseMapping && (
                               <span className="ml-2 text-gray-400">
                                 [表層:{method.phaseMapping.surface} 中層:{method.phaseMapping.middle} 深層:{method.phaseMapping.deep}]
@@ -16005,7 +16317,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                 category: method.category,
                                 targetLayers: method.targetLayers || [],
                                 description: method.description || '',
-                                phaseMapping: method.phaseMapping || { surface: 0.5, middle: 0.5, deep: 0.5 }
+                                phaseMapping: method.phaseMapping || { surface: 0.5, middle: 0.5, deep: 0.5 },
+                                fit: { ...((((segMaster || {}).fit) || {})[key] || {}) } // v85
                               });
                             }}
                             className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded transition"
@@ -16025,6 +16338,8 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                                   delete newMaster[key];
                                   return newMaster;
                                 });
+                                // v85: 消した手法の相性も外す（保存済みの診断は写しを使うので影響なし）
+                                setSegMaster(prev => { if (!prev || !prev.fit || !prev.fit[key]) return prev; const f = { ...prev.fit }; delete f[key]; return { ...prev, fit: f }; });
                               }
                             }}
                             className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded transition"
@@ -16103,32 +16418,27 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                       </select>
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">ターゲット層</label>
-                    <div className="flex flex-wrap gap-1">
-                      {Object.keys(STUDENT_MATRIX).map(layer => (
-                        <button
-                          key={layer}
-                          onClick={() => {
-                            setNewMethodData(prev => ({
-                              ...prev,
-                              targetLayers: prev.targetLayers.includes(layer)
-                                ? prev.targetLayers.filter(l => l !== layer)
-                                : [...prev.targetLayers, layer]
-                            }));
-                          }}
-                          className={`px-2 py-1 text-xs rounded ${
-                            newMethodData.targetLayers.includes(layer)
-                              ? 'bg-green-500 text-white'
-                              : 'bg-gray-200 text-gray-600'
-                          }`}
-                        >
-                          {layer}
-                        </button>
+                </div>
+                {/* v85: 新しい層との相性（「ターゲット層の相性・時期」の表と同じ中身。空欄は未設定） */}
+                {segMaster ? (
+                  <div className="mt-3">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">新しい層との相性（空欄は未設定。「動き方」で「－」になります）</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {segmentListOf(segMaster).map(sg => (
+                        <label key={sg.key} className="flex items-center gap-2 text-xs text-gray-600">
+                          <span className="w-24 flex-shrink-0">{sg.label}</span>
+                          <select value={(newMethodData.fit || {})[sg.key] || ''} aria-label={`${sg.label}との相性`}
+                            onChange={(e) => { const v = e.target.value; setNewMethodData(prev => { const f = { ...(prev.fit || {}) }; if (v) f[sg.key] = v; else delete f[sg.key]; return { ...prev, fit: f }; }); }}
+                            className="flex-1 px-2 py-1 border border-gray-200 rounded text-sm">
+                            <option value="">－</option><option value="◎">◎</option><option value="○">○</option><option value="△">△</option><option value="×">×</option>
+                          </select>
+                        </label>
                       ))}
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="mt-3 text-xs text-red-600">ターゲット層の表（DB）が読み込めていないため、相性は入れられません。</div>
+                )}
                 <div className="mt-3">
                   <label className="block text-xs font-medium text-gray-600 mb-1">説明</label>
                   <input
@@ -16203,7 +16513,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                     <button
                       onClick={() => {
                         setEditingMethodKey(null);
-                        setNewMethodData({ key: '', name: '', category: 'その他', targetLayers: [], description: '', phaseMapping: { surface: 0.5, middle: 0.5, deep: 0.5 } });
+                        setNewMethodData({ key: '', name: '', category: 'その他', targetLayers: [], description: '', phaseMapping: { surface: 0.5, middle: 0.5, deep: 0.5 }, fit: {} });
                       }}
                       className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition"
                     >
@@ -16232,8 +16542,13 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                           phaseMapping: newMethodData.phaseMapping || { surface: 0.5, middle: 0.5, deep: 0.5 }
                         }
                       }));
+                      // v85: 相性を「ターゲット層の相性・時期」の表へ（保存は「設定を保存」）
+                      if (segMaster) {
+                        const mk = newMethodData.key; const nf = { ...(newMethodData.fit || {}) };
+                        setSegMaster(prev => { const f = { ...(prev.fit || {}) }; if (Object.keys(nf).length) f[mk] = nf; else delete f[mk]; return { ...prev, fit: f }; });
+                      }
                       setEditingMethodKey(null);
-                      setNewMethodData({ key: '', name: '', category: 'その他', targetLayers: [], description: '', phaseMapping: { surface: 0.5, middle: 0.5, deep: 0.5 } });
+                      setNewMethodData({ key: '', name: '', category: 'その他', targetLayers: [], description: '', phaseMapping: { surface: 0.5, middle: 0.5, deep: 0.5 }, fit: {} });
                     }}
                     className="px-4 py-2 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition"
                   >
@@ -16318,10 +16633,10 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                   <div className="text-xs text-gray-500 mt-1">
                     現在の合計: 
                     <span className={`font-bold ml-1 ${
-                      Object.values(layerMediaUsage[selectedEditLayer] || {}).reduce((a, b) => a + b, 0) === 100
+                      Object.keys(methodMaster || DEFAULT_RECRUITMENT_METHODS).reduce((a, k) => a + (Number((layerMediaUsage[selectedEditLayer] || {})[k]) || 0), 0) === 100 /* v84b: マスターにある手法だけを足す */
                         ? 'text-green-600' : 'text-orange-500'
                     }`}>
-                      {Object.values(layerMediaUsage[selectedEditLayer] || {}).reduce((a, b) => a + b, 0)}%
+                      {Object.keys(methodMaster || DEFAULT_RECRUITMENT_METHODS).reduce((a, k) => a + (Number((layerMediaUsage[selectedEditLayer] || {})[k]) || 0), 0)}%
                     </span>
                   </div>
                 </div>
@@ -16331,7 +16646,7 @@ const AISettingsModal = ({ settings, onSave, onClose }) => {
                       <div key={methodKey} className="flex items-center gap-3">
                         <div className="flex-1">
                           <div className="text-sm font-medium text-gray-800">{method.name}</div>
-                          <div className="text-xs text-gray-500">{method.category}</div>
+                          <div className="text-xs text-gray-500">{displayCategoryOf(methodKey, method)}</div>
                         </div>
                         <div className="flex items-center gap-2">
                           <input
@@ -17261,14 +17576,24 @@ function fullSyncCustomers(customers) {
                 ))}
               </div>
               
-              {localSettings.selectedPreset !== 'custom' && (
-                <div className="mt-6 p-4 bg-gray-50 rounded-xl">
-                  <div className="text-sm font-medium text-gray-700 mb-2">プレビュー</div>
-                  <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
-                    {currentPreset.systemPrompt}
-                  </div>
+              {/* v85: AI基本プロンプト（システムプロンプト）をここにまとめた。「カスタム」のときだけ直せる */}
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-700" htmlFor="tone-system-prompt">AIへの基本の指示（システムプロンプト）</label>
+                  {localSettings.selectedPreset !== 'custom' && (
+                    <span className="text-xs text-gray-500">直すときは「カスタム」を選んでください</span>
+                  )}
                 </div>
-              )}
+                <textarea
+                  id="tone-system-prompt"
+                  value={localSettings.selectedPreset === 'custom' ? (localSettings.customSystemPrompt || '') : currentPreset.systemPrompt}
+                  onChange={(e) => setLocalSettings(prev => ({ ...prev, customSystemPrompt: e.target.value }))}
+                  readOnly={localSettings.selectedPreset !== 'custom'}
+                  className="w-full h-48 px-4 py-3 border border-gray-200 rounded-xl text-sm read-only:bg-gray-50 read-only:text-gray-600"
+                  placeholder="システムプロンプトを入力（空のときは標準の口調で生成します）"
+                />
+                <p className="mt-2 text-xs text-gray-500">出力の内容と形式は、「診断ボタン設定」の各ボタンのプロンプトで直します。</p>
+              </div>
             </div>
           )}
           
@@ -17332,42 +17657,7 @@ function fullSyncCustomers(customers) {
             </div>
           )}
           
-          {/* AI基本プロンプト */}
-          {activeSection === 'prompt' && (
-            <div className="space-y-6">
-              <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl">
-                <div className="text-sm font-medium text-purple-800 mb-1">AI基本プロンプト</div>
-                <div className="text-xs text-purple-600">
-                  AIの役割（システムプロンプト）を設定します。口調で「カスタム」を選ぶと編集できます。本文が空のときは標準の口調で生成します。
-                </div>
-              </div>
-              
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-gray-700">システムプロンプト（AIの役割設定）</label>
-                  {localSettings.selectedPreset !== 'custom' && (
-                    <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
-                      ※ 編集するには「カスタム」プリセットを選択してください
-                    </span>
-                  )}
-                </div>
-                <textarea
-                  value={localSettings.selectedPreset === 'custom' ? localSettings.customSystemPrompt : currentPreset.systemPrompt}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, customSystemPrompt: e.target.value }))}
-                  disabled={localSettings.selectedPreset !== 'custom'}
-                  className="w-full h-48 px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent transition disabled:bg-gray-50 disabled:text-gray-500"
-                  placeholder="システムプロンプトを入力..."
-                />
-              </div>
-              
-              {/* v80: 「ユーザープロンプト（出力フォーマット）」欄は撤去（本番の診断では使われていなかった）。
-                   出力の指示は「診断ボタン設定」の各ボタンのプロンプトで編集する */}
-              <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700">
-                出力の内容と形式（ユーザープロンプト）は、「診断ボタン設定」の各ボタンのプロンプトで編集します。
-                {'{companyName}'}, {'{industry}'}, {'{rank}'}, {'{remarks}'} などの変数が使えます。
-              </div>
-            </div>
-          )}
+          {/* v85: 「AI基本プロンプト」は口調プリセットの中にまとめた */}
           
           {/* テスト実行 */}
           {activeSection === 'test' && (
