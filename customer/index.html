@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -117,6 +118,8 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
 // v2.1: getQuestionMasterPublic/getRecruitmentMethodsPublic にフラット→ネスト変換追加（v50 SUPA_HANDLERS同等）
 // v3: URLトークン認証(?tk=), 企業規模URL指定(?size=), 担当者/上層部URL分離(?role=exec), 課題・挑戦ステップ追加
 // v3.1: バグ修正4件 + 運用改善5件 + hotfix(upsert, UNIQUE CONSTRAINT, 選考ステップ数, 課題マッピング)
+// v4.0 (2026-10-21): 問診の版（BB診断 v84・DBパッチ17 とセット）。採用職種の手順の「中途採用の考え」で「新卒にこだわりたい」を選んだ会社だけ
+//   新卒版の言い方（質問の newgrad_text）、それ以外（未回答を含む）は採用全般版（本体）の言い方で問診を出す。質問ID・回答は両方同じなので、選び直しても回答は消えない
 // v3.9 (2026-10-19): ターゲット層を新しい5区分（A 文系／B 理系／C 専門学校（介護系・建築系）／D 高卒／E その他（中途・第二新卒））に変更。
 //   割合は聞かず、いちばん採りたい層を1つ選ぶ。文系・理系は「主に狙う大学（上位校／中堅校／地元の大学・その他）」を聞く。
 //   採用職種で「中途も検討」と答えた人は E を最初に選んでおく（外せる）。保存は targetLayers に新しいキー（bunkei 等）＋ layerModel: 2。
@@ -189,7 +192,7 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
     window.SUPABASE_CONFIG.url,
     window.SUPABASE_CONFIG.anonKey
   );
-  console.log('[事前問診 v3.9] Supabase接続完了');
+  console.log('[事前問診 v4.0] Supabase接続完了');
 </script>
 </head>
 <body>
@@ -495,7 +498,8 @@ const gasGet = async (action, params = {}) => {
             studentChoiceA: row.student_choice_a || '', studentChoiceB: row.student_choice_b || '',
             correctAnswer: row.correct_answer || 'A', points: row.points || 2,
             axisType: row.axis_type || '', axisKey: row.axis_key || '',
-            gapCheck: row.gap_check || false, depthKey: row.depth_phase || null
+            gapCheck: row.gap_check || false, depthKey: row.depth_phase || null,
+            newGradText: (row.newgrad_text && typeof row.newgrad_text === 'object') ? row.newgrad_text : null // v4.0
           };
           const section = row.section || 'base';
           const role = row.role || 'staff';
@@ -916,6 +920,15 @@ const groupMethodsForDisplay = (methods, selected) => {
   return [...known, ...rest].map(c => [c, groups[c]]);
 };
 
+// v4.0: 新卒版の言い方を当てる（空の項目は採用全般版のまま）
+const applyNewGradText = (q) => {
+  const out = { ...q };
+  ['question', 'choiceA', 'choiceB', 'studentQuestion', 'studentChoiceA', 'studentChoiceB'].forEach(k => {
+    const v = q.newGradText[k];
+    if (typeof v === 'string' && v !== '') out[k] = v;
+  });
+  return out;
+};
 // v3.7: 中途採用の考え（BB診断の MID_CAREER_STANCES と同じキー）
 const MID_CAREER_STANCES = [
   { key: 'newgrad', label: '新卒にこだわりたい', desc: 'この職種は新卒で採用したい' },
@@ -1821,7 +1834,7 @@ const App = () => {
           setError('問い合わせ番号が指定されていません。\nURLに ?id=XXXXX&tk=YYYYY の形式でアクセスしてください。');
           setLoading(false); return;
         }
-        console.log('[事前問診 v3.9] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
+        console.log('[事前問診 v4.0] ロード role=' + urlRole + ' size=' + urlSize + ' id=' + customerId);
         const pingRes = await gasGet('ping');
         if (!pingRes.success) throw new Error('サーバーに接続できません。');
         
@@ -1906,8 +1919,10 @@ const App = () => {
       });
     });
     const seen = new Set();
-    return questions.filter(q => { if (seen.has(q.id)) return false; seen.add(q.id); return true; });
-  }, [questionMaster, data.targetLayers, data.recruitmentMethods, methodMaster, determinedSize]);
+    const useNewGrad = data.midCareerStance === 'newgrad'; // v4.0: 「新卒にこだわりたい」だけ新卒版の言い方
+    return questions.filter(q => { if (seen.has(q.id)) return false; seen.add(q.id); return true; })
+      .map(q => (useNewGrad && q.newGradText && typeof q.newGradText === 'object') ? applyNewGradText(q) : q);
+  }, [questionMaster, data.targetLayers, data.recruitmentMethods, methodMaster, determinedSize, data.midCareerStance]);
   
   const [savedAt, setSavedAt] = useState('');
   const saveProgress = useCallback(async (nd) => {
