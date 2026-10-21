@@ -110,6 +110,7 @@
        表示のみ・計算無変更 -->
   <!-- v76（旧・作業名 v64）: 事前問診URLの token を DB 発行の乱数に切替（2026-09-25）。preinput_access_token(問診番号) で取得し、担当者・上層部URLを作る。
        DBパッチ07が未適用の環境では、関数が無いことを検知して旧 token（画面のハッシュ）で作る（移行期間の保険）。要 DBパッチ07・事前問診 v3.4 -->
+  <!-- v85b: 結果の「動き方」タブで、ターゲット層が未選択のときの表示を他のタブと同じ高さ（650px）・中央寄せに。案内の文のタブ名を「ターゲット」に（2026-10-21） -->
   <!-- v85: 設定画面を新しいターゲット層に合わせる（2026-10-21・DB変更なし。⑤はDBパッチ17の newgrad_text を使う）
        ①「ターゲット層の相性・時期」を足す（相性＝手法×9区分、動く時期＝24か月、話し方の文。保存は「設定を保存」で save_target_segment_master）
        ② 採用手法詳細設定: 旧A〜H層の選択をやめ、9区分の相性を入れる欄に。一覧に相性の数・未設定の印
@@ -6575,7 +6576,7 @@ const INDUSTRY_CODES = {
 
 // 問い合わせ番号生成ユーティリティ
 // v65: 事前問診の回答の経過（DBパッチ09 の preinput_timeline）。関数が無い環境では何も出さない
-const STEP_LABEL_JA = { companySize:'企業規模', jobType:'採用職種', target:'ターゲット学生', method:'採用手法', challenges:'課題・挑戦', staff:'担当者問診', executive:'上層部問診', funnel:'ファネル数値' };
+const STEP_LABEL_JA = { companySize:'企業規模', jobType:'採用職種', target:'ターゲット層', method:'採用手法', challenges:'課題・挑戦', staff:'担当者問診', executive:'上層部問診', funnel:'ファネル数値' };
 const fmtJst = (v) => v ? new Intl.DateTimeFormat('ja-JP', { timeZone:'Asia/Tokyo', month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(v)) : '—';
 const fmtSec = (n) => (n === null || n === undefined) ? '—' : (n >= 3600 ? Math.floor(n/3600) + '時間' + Math.floor((n%3600)/60) + '分' : Math.floor(n/60) + '分' + String(n%60).padStart(2,'0') + '秒');
 const PreInputTimeline = ({ inquiryNo }) => {
@@ -12697,10 +12698,10 @@ const ScaledSheetContainer = ({ children }) => {
 const TargetMovePanel = ({ data }) => {
   if (!isLayerModelV2(data)) {
     return (
-      <div className="section-card p-8 text-center text-gray-500" style={{ minHeight: '400px' }}>
+      <div className="section-card p-8 flex flex-col items-center justify-center text-center text-gray-500" style={{ minHeight: '650px' }}>
         <div className="text-lg font-bold mb-2">動き方</div>
         <div className="text-sm">この診断は旧ターゲット層（A〜H）で入力されているため、「動き方」は出ません。</div>
-        <div className="text-xs mt-2 text-gray-400">入力画面の「ターゲット学生」タブで新しいターゲット層（A〜E）に切り替えると表示されます。</div>
+        <div className="text-xs mt-2 text-gray-400">入力画面の「ターゲット」タブで新しいターゲット層（A〜E）に切り替えると表示されます。</div>
       </div>
     );
   }
@@ -12708,9 +12709,9 @@ const TargetMovePanel = ({ data }) => {
   const fit = calcTargetFit(data, master);
   if (fit.layers.length === 0) {
     return (
-      <div className="section-card p-8 text-center text-gray-500" style={{ minHeight: '400px' }}>
+      <div className="section-card p-8 flex flex-col items-center justify-center text-center text-gray-500" style={{ minHeight: '650px' }}>
         <div className="text-lg font-bold mb-2">動き方</div>
-        <div className="text-sm">入力画面の「ターゲット学生」タブでターゲット層を選ぶと表示されます。</div>
+        <div className="text-sm">入力画面の「ターゲット」タブでターゲット層を選び、「採用手法」タブで注力順位を入れると表示されます。</div>
       </div>
     );
   }
