@@ -435,7 +435,7 @@
         tk = res.data;
         if (!tk) throw new Error('この診断はまだ保存されていないため、URLを作れません。保存してからもう一度お試しください。');
       }
-      var base = 'https://gakusapo-andm.github.io/bb-shindan/customer/';
+      var base = 'https://shindan.gakusapo-andm.com/customer/';
       return base + '?id=' + encodeURIComponent(id) + '&tk=' + encodeURIComponent(tk)
         + (size ? '&size=' + size : '') + (role === 'exec' ? '&role=exec' : '');
     };
